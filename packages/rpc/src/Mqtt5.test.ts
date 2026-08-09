@@ -102,6 +102,39 @@ test('a plain MQTT 5 client with no msgrpc code can serve an msgrpc call', async
     await device.endAsync()
 })
 
+test('batched calls survive the MQTT 5 layout, which has no representation for a batch', async (t) => {
+    if (skipWithoutBroker(t)) return
+    const prefix = prefixFor('batch-v5')
+    class Meter {
+        async read(tag: string) {
+            return `${tag}=1`
+        }
+    }
+    const server = new RpcServer({ name: peer('batchServer'), transports: [{ brokerurl: BROKER_URL, sessionExpirySeconds: TEST_SESSION_EXPIRY, prefix }] })
+    await server.ready()
+    server.exposeClassInstance(new Meter(), 'meter')
+
+    // batchCalls is on by default, so this is what any ordinary caller now does. The v5 layout
+    // pairs a request with its reply through MQTT's own correlation data - one publish, one
+    // correlation - so it has no frame for a batch, and `toOutboundFrame` answers undefined for
+    // one. Before the transport learned to unpack them, that undefined was reported as unroutable
+    // and the whole frame dropped: all six calls below timed out, on the plant transport only,
+    // where every socket.io test went on passing.
+    const client = new RpcClient(undefined, {
+        name: peer('batchAsker'),
+        defaultTarget: peer('batchServer'),
+        transport: new MqttTransport(peer('batchAsker'), BROKER_URL, { prefix, sessionExpirySeconds: TEST_SESSION_EXPIRY })
+    })
+    await client.ready()
+    const meter = await client.proxy<Meter>('meter')
+
+    const answers = await Promise.all(['a', 'b', 'c', 'd', 'e', 'f'].map((tag) => meter.read(tag)))
+    t.deepEqual(answers, ['a=1', 'b=1', 'c=1', 'd=1', 'e=1', 'f=1'], 'every call in the batch is answered, each against its own correlation')
+
+    await client.close()
+    await server.close()
+})
+
 test('a plain MQTT 5 client can call an msgrpc server', async (t) => {
     if (skipWithoutBroker(t)) return
     const prefix = prefixFor('interop-call')

@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+### Calls issued together travel in one frame
+
+A `POST` carries its type, a uuid, the namespace, the method name and the params, and MQTT adds a request topic, a response topic and correlation data beneath it — so moving one `float64` spends far more on saying where it is going than on the number, and reading three hundred tags one at a time is tens of kilobytes of envelope for a couple of kilobytes of values. Calls issued in one microtask now go as a single `BATCH` frame.
+
+**On by default**, which is the point: batching that has to be discovered is batching most code never gets. `batchCalls: false` on `RpcClient` or `RpcServer` is the escape hatch, and the only reason to reach for it is a peer built before this version, which cannot unpack a `BATCH`. There is no negotiation, so that has to be said rather than detected. Servers from this version understand `BATCH` whether or not they send one, so only an old *server* needs a caller told.
+
+It saves bytes rather than round trips, and the two are worth keeping apart: calls issued concurrently are already pipelined, so twenty cost one round trip whether or not they share a frame — what they did not share was twenty envelopes. On MQTT it saves exchanges as well, each publish carrying its own topics and its own acknowledgement. It cannot help a caller that awaits in a loop, because the second call is not issued until the first has answered; that is what plural methods like `rpcWrites` and a projection's path list are for.
+
+**A batch is an envelope and never a transaction.** The receiver unpacks it and feeds every payload through the ordinary dispatch, which is what keeps idempotency, semantics, `authorize()`, the owner fence and the deadline working per call — one failing settles one call, and nothing is shared but the frame. A batch nested inside a batch is refused rather than unpacked.
+
 ### The AI grants document: closed by default, on every node
 
 What an AI principal may do here is now a small declarative document rather than something an authorizer has to be written to express — because a console can render data and cannot render a callback, and a reviewer can diff a file and cannot diff a decision made inside somebody's `authorize`.

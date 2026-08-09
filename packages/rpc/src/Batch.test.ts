@@ -74,7 +74,7 @@ test('twenty calls issued together cross as one frame, and answer individually',
     await hub.close()
 })
 
-test('without opting in, nothing changes - which is what an older peer depends on', async (t) => {
+test('batchCalls: false is the escape hatch for a peer that cannot answer a BATCH', async (t) => {
     const hub = new RpcServer({ name: peer('hub3906'), transports: [{ port: 3906, host: '127.0.0.1' }] })
     await hub.ready()
     const relayed = framesAt(hub)
@@ -83,13 +83,37 @@ test('without opting in, nothing changes - which is what an older peer depends o
     device.exposeClassInstance(new Meter())
     await device.ready()
 
-    // No batchCalls, so this is a client of the shape every existing one has.
-    const client = new RpcClient('http://localhost:3906', { name: peer('asker3906'), defaultTarget: peer('meter3906') })
+    // Batching is on by default now, so turning it off is the deliberate act. The reason to is a
+    // property of the far end - a peer built before BATCH existed cannot unpack one - and there is
+    // no negotiation, so the caller has to be told.
+    const client = new RpcClient('http://localhost:3906', { name: peer('asker3906'), defaultTarget: peer('meter3906'), batchCalls: false })
     const meter = await client.proxy<Meter>('meter')
     await Promise.all(Array.from({ length: 5 }, (_, index) => meter.read(`tag.${index}`)))
 
-    t.is(relayed.filter((type) => type === RpcMessageType.batch).length, 0, 'a peer that did not ask for batching must never be sent one')
-    t.is(relayed.filter((type) => type === RpcMessageType.CallInstanceMethod).length, 5)
+    t.is(relayed.filter((type) => type === RpcMessageType.batch).length, 0, 'nothing may be wrapped once a caller has said it must not be')
+    t.is(relayed.filter((type) => type === RpcMessageType.CallInstanceMethod).length, 5, 'five calls, five frames, exactly as before batching existed')
+
+    await client.close()
+    await device.close()
+    await hub.close()
+})
+
+test('batching is on without being asked for, which is what makes it worth having', async (t) => {
+    const hub = new RpcServer({ name: peer('hub3909'), transports: [{ port: 3909, host: '127.0.0.1' }] })
+    await hub.ready()
+    const relayed = framesAt(hub)
+
+    const device = new RpcServer({ name: peer('meter3909'), transports: [{ connect: 'http://localhost:3909' }] })
+    device.exposeClassInstance(new Meter())
+    await device.ready()
+
+    // No batchCalls anywhere. The point of a default is that nobody has to have heard of it.
+    const client = new RpcClient('http://localhost:3909', { name: peer('asker3909'), defaultTarget: peer('meter3909') })
+    const meter = await client.proxy<Meter>('meter')
+    await Promise.all(Array.from({ length: 8 }, (_, index) => meter.read(`tag.${index}`)))
+
+    t.is(relayed.filter((type) => type === RpcMessageType.batch).length, 1)
+    t.is(relayed.filter((type) => type === RpcMessageType.CallInstanceMethod).length, 0)
 
     await client.close()
     await device.close()

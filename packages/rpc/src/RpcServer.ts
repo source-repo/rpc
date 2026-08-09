@@ -95,16 +95,16 @@ export interface RpcServerOptions {
     /** How long this server's own outgoing calls wait. See proxy(). */
     callTimeout?: number
     /**
-     * Send calls issued in one tick as one frame instead of one frame each.
+     * Send calls issued in one tick as one frame instead of one frame each. **On by default.**
      *
-     * Off by default because a peer that has never heard of `BATCH` cannot answer one, and this
-     * library takes unusual care that an old peer and a new one keep working - so a caller does not
-     * get to start speaking a new frame type unilaterally. Turn it on where both ends are current.
+     * It saves bytes rather than round trips, and the difference is worth keeping straight: calls
+     * issued concurrently are already pipelined, so twenty of them cost one round trip either way,
+     * but twenty envelopes for twenty numbers is most of the traffic. On MQTT it saves exchanges
+     * too, each publish carrying its own topics and its own acknowledgement. It cannot help a
+     * caller awaiting in a loop - nothing at this layer can, which is what plural methods are for.
      *
-     * It saves bytes rather than round trips: concurrent calls are already pipelined, so twenty of
-     * them cost one round trip either way, but twenty envelopes for twenty numbers is most of the
-     * traffic. On MQTT it saves exchanges too, each publish carrying its own topics and its own
-     * acknowledgement. It cannot help a caller awaiting in a loop - nothing at this layer can.
+     * Set it `false` to talk to a peer built before `BATCH` existed, which cannot answer one. That
+     * is the only reason to, and it is a property of the far end rather than of this caller.
      */
     batchCalls?: boolean
     /** Describes what exposed methods accept, so arguments off the wire can be checked. */
@@ -214,7 +214,7 @@ export class RpcServerBase implements IManageRpc {
         // socket.io's server and the MQTT client to reach a hub it dials.
         this.rpc = new RpcServerHandler(this.options.name)
         this.caller = new RpcClientHandler(this.options.name, [], this.options.callTimeout ?? defaultCallTimeout)
-        this.caller.batchCalls = this.options.batchCalls ?? false
+        this.caller.batchCalls = this.options.batchCalls ?? true
         this.switch = new Switch([this.rpc, this.caller])
         // One registry for this server's modules only. The transports record which peer they saw a
         // message from; the switch reads it back to route the reply out of the same transport.

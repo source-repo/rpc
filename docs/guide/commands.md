@@ -102,12 +102,11 @@ The queue is also where the deadline is read: a command that waited behind other
 
 A POST carries its type, a uuid, the namespace, the method name and the params; MQTT adds a request topic, a response topic and correlation data beneath that. So moving one `float64` spends far more on saying where it is going than on the number — reading three hundred tags one at a time is tens of kilobytes of envelope to move a couple of kilobytes of values.
 
-```typescript
-new RpcClient('http://bus:7843', { batchCalls: true })
-new RpcServer({ …, batchCalls: true })          // for the calls this peer makes
-```
+Calls issued in one tick therefore travel in one `BATCH` frame, and **this is on by default** — nobody has to have heard of it. A lone call in a tick is never wrapped, because wrapping it would spend exactly the envelope this is here to save.
 
-Calls issued in one tick then travel in one `BATCH` frame. A lone call in a tick is never wrapped, because wrapping it would spend exactly the envelope this is here to save.
+```typescript
+new RpcClient('http://bus:7843', { batchCalls: false })   // only for a peer that cannot unpack one
+```
 
 **It buys bytes, not round trips, and the difference is worth keeping straight.** Calls issued concurrently are already pipelined — twenty of them cost one round trip whether or not they share a frame. What they did not share was twenty envelopes. On MQTT it does save exchanges as well, since each publish carries its own topics and its own acknowledgement.
 
@@ -115,7 +114,7 @@ Calls issued in one tick then travel in one `BATCH` frame. A lone call in a tick
 
 **A batch is an envelope and never a transaction.** There is no atomicity and no shared authorization. Each payload carries its own id, ttl, idempotency key and fence; each passes `authorize()` on its own; each is answered separately, and one failing settles one call. The server unpacks the frame and feeds every payload through the ordinary path, which is what keeps all of that true without the batching layer knowing anything about it.
 
-**Off by default, and that is compatibility rather than caution.** A peer that has never heard of `BATCH` cannot answer one, so a caller does not get to start speaking a new frame type unilaterally. Turn it on where both ends are known to be current.
+**A peer built before `BATCH` existed cannot unpack one**, and there is no negotiation — the caller has to be told, with `batchCalls: false`. That is the one reason to set it, and it is a property of the far end rather than of the caller. Servers understand `BATCH` from this version onward whether or not they send it, so a new server answers an old client and a new client, and only an old *server* needs the flag turned off against it.
 
 ## Errors
 

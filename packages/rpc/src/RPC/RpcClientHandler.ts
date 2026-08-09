@@ -113,11 +113,8 @@ export class RpcClientHandler extends MessageModule<Message<RpcMessage>, RpcMess
     /**
      * Send calls issued in one tick as one frame, rather than one frame each.
      *
-     * **Off by default, and that is a compatibility decision rather than caution about the
-     * mechanism.** A peer that has never heard of `BATCH` cannot answer one, and this library takes
-     * unusual care that an old peer and a new one keep working - so a client cannot start speaking
-     * a frame type unilaterally. Turn it on where both ends are known to be current; it can become
-     * the default once the floor version is.
+     * **On by default.** A peer built before `BATCH` existed cannot answer one, so this is set
+     * `false` to talk to such a peer - a property of the far end rather than of this caller.
      *
      * What it buys is bytes rather than round trips, and the distinction is worth keeping straight.
      * Calls issued concurrently are already pipelined, so twenty of them cost one round trip either
@@ -129,7 +126,7 @@ export class RpcClientHandler extends MessageModule<Message<RpcMessage>, RpcMess
      * the first has answered. That is not a limitation to fix here: it is why plural methods like
      * `rpcWrites` and the projection path list exist.
      */
-    batchCalls = false
+    batchCalls = true
 
     /** Calls waiting for the end of this tick, grouped by where they are going. */
     private readonly outbound = new Map<string, { payload: RpcMessage; settled: { resolve: () => void; reject: (e: unknown) => void } }[]>()

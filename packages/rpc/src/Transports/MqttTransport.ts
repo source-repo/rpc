@@ -20,6 +20,7 @@ import {
     toOutboundFrame
 } from './Mqtt5Frame.js'
 import { isUsableShape } from './Presence.js'
+import { RpcMessageType, type RpcBatchPayload, type RpcMessage } from '../RPC/Messages.js'
 
 /** v1 is the $-header layout; v2 is the MQTT 5 property layout, so the two never share a topic. */
 export const defaultTopicPrefix = { 4: 'msgrpc/v1', 5: 'msgrpc/v2' } as const
@@ -935,6 +936,23 @@ export class MqttTransport extends GenericModule<Message, unknown, Message, unkn
 
     /** Maps an RPC message onto the MQTT 5 packet layout. See docs/mqtt5-frame-spec.md. */
     private async publishV5(message: Message, source: string, target: string) {
+        const carried = message.payload as RpcMessage | undefined
+        if (carried?.type === RpcMessageType.batch) {
+            // Unpacked here rather than given a layout of its own, because the v5 spec pairs a
+            // request with its reply through MQTT's *own* correlation data - one publish, one
+            // correlation. A batch has as many correlations as it has calls, so representing it
+            // would mean a second pairing rule beside the one the spec already has.
+            //
+            // The consequence is worth stating plainly: batching saves nothing on this transport
+            // today, and this is where it would pay most, since every publish carries its own
+            // topics and its own acknowledgement. That wants designing rather than smuggling in.
+            //
+            // What it must not do is what it did before this: `toOutboundFrame` has no case for a
+            // batch, so the frame came back undefined and the whole thing was dropped as
+            // unroutable - every call in it timing out with nothing said about why.
+            for (const one of (carried as RpcBatchPayload).payloads ?? []) await this.publishV5({ ...message, payload: one } as Message, source, target)
+            return
+        }
         const frame = toOutboundFrame(message)
         if (!frame) {
             this.emit(TransportEvent.unroutable, { source, target, reason: 'no MQTT 5 representation for this message' })
