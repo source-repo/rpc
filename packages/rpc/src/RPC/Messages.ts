@@ -11,11 +11,35 @@ export enum RpcMessageType {
     CallInstanceMethod = 'POST',
     success = 'SUCCESS',
     error = 'ERROR',
-    event = 'EVENT'
+    event = 'EVENT',
+    /**
+     * Several payloads in one frame. An envelope and nothing more: the receiver unpacks it and
+     * feeds each payload through the ordinary path, so every per-call rule still applies per call.
+     */
+    batch = 'BATCH'
 }
 
 export interface RpcMessage extends Payload {
     type: RpcMessageType
+}
+
+/**
+ * Calls that went out together, because one frame carrying twenty of them costs one frame's
+ * overhead rather than twenty.
+ *
+ * A POST carries its type, a uuid, the namespace, the method name and the params, and MQTT adds a
+ * request topic, a response topic and correlation data underneath it - so moving a `float64` spends
+ * far more on the envelope than on the number. Twenty small calls in one envelope pay that once.
+ *
+ * **A batch is not a transaction, and nothing here should ever suggest it is.** There is no
+ * atomicity, no shared authorization and no ordering promise beyond the order the payloads are
+ * dispatched in - which is the same order N separate frames would have arrived in. Each carries its
+ * own id, ttl, idempotency key and fence, and each is answered separately, because those are
+ * properties of a call rather than of the envelope that happened to carry it.
+ */
+export interface RpcBatchPayload extends RpcMessage {
+    type: RpcMessageType.batch
+    payloads: RpcMessage[]
 }
 
 export interface RpcCallInstanceMethodPayload extends RpcMessage {

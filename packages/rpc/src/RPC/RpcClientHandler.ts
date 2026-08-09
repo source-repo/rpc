@@ -7,7 +7,8 @@ import {
     RpcCallInstanceMethodPayload,
     RpcMessage,
     RpcSuccessPayload,
-    RpcMessageType
+    RpcMessageType,
+    type RpcBatchPayload
 } from './RpcServerHandler.js'
 import { EventEmitter } from 'events'
 import { v4 as uuidv4 } from 'uuid'
@@ -109,6 +110,70 @@ export class RpcClientHandler extends MessageModule<Message<RpcMessage>, RpcMess
     responseTimeoutMap = new Map<string, NodeJS.Timeout>()
     /** Contract versions this client was built against, by namespace, declared on each call. */
     schemaVersions?: { [namespace: string]: string | undefined }
+    /**
+     * Send calls issued in one tick as one frame, rather than one frame each.
+     *
+     * **Off by default, and that is a compatibility decision rather than caution about the
+     * mechanism.** A peer that has never heard of `BATCH` cannot answer one, and this library takes
+     * unusual care that an old peer and a new one keep working - so a client cannot start speaking
+     * a frame type unilaterally. Turn it on where both ends are known to be current; it can become
+     * the default once the floor version is.
+     *
+     * What it buys is bytes rather than round trips, and the distinction is worth keeping straight.
+     * Calls issued concurrently are already pipelined, so twenty of them cost one round trip either
+     * way - what they do not share is twenty envelopes, and on a POST moving a single number the
+     * envelope is most of the frame. On MQTT it does save exchanges too, since each publish carries
+     * its own topics and its own QoS acknowledgement.
+     *
+     * It cannot help a caller that awaits in a loop, because the second call is not issued until
+     * the first has answered. That is not a limitation to fix here: it is why plural methods like
+     * `rpcWrites` and the projection path list exist.
+     */
+    batchCalls = false
+
+    /** Calls waiting for the end of this tick, grouped by where they are going. */
+    private readonly outbound = new Map<string, { payload: RpcMessage; settled: { resolve: () => void; reject: (e: unknown) => void } }[]>()
+    private flushQueued = false
+
+    /**
+     * Hand a call to the transport, or hold it for the flush at the end of this tick.
+     *
+     * The promise settles when the *frame* is accepted, which is what the caller above needs to
+     * know: it records the request as sent, or fails it as never having left.
+     */
+    private enqueueCall(payload: RpcMessage, remote: string | undefined): Promise<void> {
+        if (!this.batchCalls) return this.sendPayload(payload, MessageType.RequestMessage, this.name, remote)
+        return new Promise<void>((resolve, reject) => {
+            const key = remote ?? ''
+            const held = this.outbound.get(key)
+            if (held) held.push({ payload, settled: { resolve, reject } })
+            else this.outbound.set(key, [{ payload, settled: { resolve, reject } }])
+            if (this.flushQueued) return
+            this.flushQueued = true
+            // A microtask rather than a timer: everything issued by one synchronous stretch of code
+            // and by the promise callbacks it schedules travels together, and nothing waits on a
+            // clock. A lone call is delayed by a microtask, which is not a delay anybody can time.
+            queueMicrotask(() => this.flushCalls())
+        })
+    }
+
+    private flushCalls() {
+        this.flushQueued = false
+        const groups = [...this.outbound.entries()]
+        this.outbound.clear()
+        for (const [key, held] of groups) {
+            const remote = key === '' ? undefined : key
+            // One call goes as itself. Wrapping a single payload would spend the envelope this
+            // exists to save, and would make every peer speak BATCH to talk to a batching client.
+            const frame: RpcMessage = held.length === 1 ? held[0].payload : ({ type: RpcMessageType.batch, payloads: held.map((one) => one.payload) } as RpcBatchPayload)
+            this.sendPayload(frame, MessageType.RequestMessage, this.name, remote).then(
+                () => held.forEach((one) => one.settled.resolve()),
+                // The frame never left, so none of the calls in it did.
+                (e) => held.forEach((one) => one.settled.reject(e))
+            )
+        }
+    }
+
     /** Remote subscriptions held by this client, replayed by resubscribe() after a reconnect. */
     subscriptions = new Map<string, { remote?: string; instanceName: string; event: string; projection?: unknown }>()
     eventEmitter: { [index: string]: unknown } = new EventEmitter() as unknown as { [index: string]: unknown }
@@ -316,7 +381,7 @@ export class RpcClientHandler extends MessageModule<Message<RpcMessage>, RpcMess
                         this.takePending(payload.id)?.reject(new RpcError('Timeout', `no response to ${instanceName}.${method} within ${timeoutMs} ms`))
                     }, timeoutMs)
                 )
-            this.sendPayload(payload, MessageType.RequestMessage, this.name, remote).then(
+            this.enqueueCall(payload, remote).then(
                 () => {
                     // Recorded only once the transport has accepted it, and only while the call is
                     // still pending - a reply may well have arrived and settled it already.

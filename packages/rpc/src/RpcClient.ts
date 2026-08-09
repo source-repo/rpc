@@ -21,6 +21,19 @@ export interface RpcClientOptions {
     useMsgPack: boolean
     /** How long a call waits for a response before rejecting with an RpcError of code 'Timeout'. */
     callTimeout: number
+    /**
+     * Send calls issued in one tick as one frame instead of one frame each.
+     *
+     * Off by default because a peer that has never heard of `BATCH` cannot answer one, and this
+     * library takes unusual care that an old peer and a new one keep working - so a caller does not
+     * get to start speaking a new frame type unilaterally. Turn it on where both ends are current.
+     *
+     * It saves bytes rather than round trips: concurrent calls are already pipelined, so twenty of
+     * them cost one round trip either way, but twenty envelopes for twenty numbers is most of the
+     * traffic. On MQTT it saves exchanges too, each publish carrying its own topics and its own
+     * acknowledgement. It cannot help a caller awaiting in a loop - nothing at this layer can.
+     */
+    batchCalls?: boolean
     /** How long ready() waits for the transport to connect before throwing. 0 waits forever. */
     readyTimeout: number
     /** Reject in-flight calls as soon as the link drops instead of waiting out their timeouts. */
@@ -163,6 +176,7 @@ export class RpcClient extends EventEmitter {
         // wire format such as MQTT 5 needs to see the message, not bytes a converter already flattened.
         transport.codec = codecFor(this.options.useMsgPack)
         this.rpcClient = new RpcClientHandler(this.options.name, [transport], this.options.callTimeout)
+        this.rpcClient.batchCalls = this.options.batchCalls ?? false
         if (this.options.schema)
             this.rpcClient.schemaVersions = Object.fromEntries(
                 Object.entries(this.options.schema.namespaces).map(([namespace, described]) => [namespace, described.version])

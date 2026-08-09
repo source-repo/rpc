@@ -8,7 +8,8 @@ import {
     RpcMessageType,
     RpcMethodSemantics,
     RpcSuccessPayload,
-    toRemoteError
+    toRemoteError,
+    type RpcBatchPayload
 } from './Messages.js'
 export * from './Messages.js'
 import { v4 as uuidv4 } from 'uuid'
@@ -446,6 +447,26 @@ export class RpcServerHandler extends MessageModule<Message<RpcMessage>, RpcMess
     }
 
     override async receivePayload(payload: RpcMessage, source: string, target: string) {
+        // A batch is unpacked here and nowhere else, and each payload then takes the ordinary path.
+        // That is the whole design: idempotency, semantics, authorize(), the owner fence and the
+        // deadline are properties of a *call*, so they keep working per call without this knowing
+        // anything about them. A batch that authorized once for everything inside it would be a
+        // hole, and one that ran its contents atomically would be a promise nothing here can keep.
+        if (payload.type === RpcMessageType.batch) {
+            for (const carried of (payload as RpcBatchPayload).payloads ?? []) {
+                // One level only. A batch inside a batch buys nothing and is the shape a malicious
+                // or broken peer would use to make a small frame cost an unbounded amount of work.
+                if (carried?.type === RpcMessageType.batch) {
+                    await this.reportDispatchFailure(carried, source, new Error('a batch may not contain another batch'))
+                    continue
+                }
+                // Started in order and not awaited, which is exactly what N separate frames
+                // arriving back to back already did - awaiting here would serialise a batch behind
+                // its own slowest handler and make batching a way to make things worse.
+                void this.receivePayload(carried, source, target).catch((e) => this.emit('handlerError', { source, target, error: e }))
+            }
+            return
+        }
         try {
             await this.dispatch(payload, source, target)
         } catch (e) {
