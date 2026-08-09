@@ -46,7 +46,9 @@ import {
     RpcComponent,
     type RpcComponentData,
     type RpcComponentExposeOptions,
-    type RpcComponentSnapshot
+    type RpcComponentSnapshot,
+    type RpcProjectionEntry,
+    type RpcProjectionSlice
 } from './Component.js'
 import { RpcSchema, validateParams, validateValue, type ComponentSchema } from './Schema.js'
 import { describeProblems, namespaceProblems } from './Compatibility.js'
@@ -74,7 +76,7 @@ export class EventProxy {
         public target: string,
         public instanceName: string,
         /** This subscriber's narrowing of the component snapshot, when it asked for one. */
-        public projection?: readonly (readonly string[])[]
+        public projection?: readonly RpcProjectionEntry[]
     ) {}
     attach() {
         this.instance.on(this.event, this.listener)
@@ -97,26 +99,42 @@ const eventProxyKey = (instanceName: string, event: string, source: string) => `
  * silently getting all three hundred is the one failure this feature exists to prevent, and it
  * would look like the feature working until somebody measured the wire.
  */
-const readProjection = (carried: unknown): readonly (readonly string[])[] | undefined | Error => {
+const readProjection = (carried: unknown): readonly RpcProjectionEntry[] | undefined | Error => {
     if (carried === undefined || carried === null) return undefined
-    if (!Array.isArray(carried)) return new Error('a component projection is an array of paths, each an array of segments')
-    for (const path of carried)
-        if (!Array.isArray(path) || path.some((segment) => typeof segment !== 'string'))
-            return new Error('a component projection is an array of paths, each an array of string segments')
+    if (!Array.isArray(carried)) return new Error('a component projection is an array of entries, each a path or a { path, offset, limit } slice')
+    const isSegments = (value: unknown) => Array.isArray(value) && value.every((segment) => typeof segment === 'string')
+    for (const entry of carried) {
+        if (isSegments(entry)) continue
+        const slice = entry as RpcProjectionSlice | null
+        if (!slice || typeof slice !== 'object' || !isSegments(slice.path))
+            return new Error('a component projection entry is a path of string segments, or a slice naming one as `path`')
+        // Bounds are checked rather than clamped, for the same reason a timeout is: a negative
+        // offset is a caller holding it wrong, and quietly reading it as zero produces a page
+        // nobody asked for and no way to notice.
+        for (const [name, value] of [
+            ['offset', slice.offset],
+            ['limit', slice.limit]
+        ] as const)
+            if (value !== undefined && (!Number.isInteger(value) || value < 0)) return new Error(`a projection slice's ${name} must be a non-negative integer, not ${String(value)}`)
+    }
     // Empty asks for nothing, which is almost certainly a caller that built its path list wrongly -
     // and answering with an empty snapshot forever would look exactly like a component gone quiet.
     if (!carried.length) return new Error('a component projection naming no paths would subscribe to nothing; omit it to receive the whole snapshot')
-    return carried as readonly (readonly string[])[]
+    return carried as readonly RpcProjectionEntry[]
 }
 
 /** Whether two projections ask for the same thing, so a re-subscribe can tell a change from a replay. */
-const sameProjection = (a: readonly (readonly string[])[] | undefined, b: readonly (readonly string[])[] | undefined) => {
+const sameProjection = (a: readonly RpcProjectionEntry[] | undefined, b: readonly RpcProjectionEntry[] | undefined) => {
     if (!a || !b) return a === b
     if (a.length !== b.length) return false
     // Order-sensitive, deliberately: two lists differing only in order describe the same
     // subscription, but treating them as different costs one re-subscribe where treating them as
     // the same when they are not costs correctness. A client sends a stable order anyway.
-    return a.every((path, index) => path.length === b[index].length && path.every((segment, at) => segment === b[index][at]))
+    //
+    // Compared by value rather than identity, and a paged caller depends on it: turning a page
+    // changes only the offset, and a comparison that missed that would leave the subscriber on
+    // page one while its grid showed page two.
+    return a.every((entry, index) => JSON.stringify(entry) === JSON.stringify(b[index]))
 }
 
 export type BindObject = {

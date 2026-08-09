@@ -107,6 +107,97 @@ test('the whole snapshot is still the default, and one peer holds one projection
     await server.close()
 })
 
+test('a record can be paged without ever being fetched whole', async (t) => {
+    const server = new RpcServer({ name: peer('field3904'), transports: [{ port: 3904, host: '127.0.0.1' }] })
+    server.exposeClassInstance(new Field())
+    await server.ready()
+
+    const client = new RpcClient('http://localhost:3904', { name: peer('asker3904'), defaultTarget: peer('field3904') })
+    // The case the whole thing exists for: three hundred tags whose keys are data, not type. The
+    // contract says `{ [tag: string]: number }` and stops, so a caller cannot name page two - the
+    // only path reaching those entries is the record itself, which is all three hundred.
+    const page = await client.component<Field>('field', undefined, { paths: [{ path: ['state', 'tags'], offset: 0, limit: 50 }] })
+    const store = page[rpcComponent]
+
+    const view = store.getSnapshot()
+    t.is(Object.keys(view.state.tags).length, 50, 'a page, not the record')
+    t.is(view.state.tags['tag.000'], 0)
+    t.is(view.state.tags['tag.049'], 49)
+    t.is(view.state.tags['tag.050'] as number | undefined, undefined, 'and nothing beyond it')
+
+    // The one thing a caller cannot work out for itself: how many pages there are. Its own entries
+    // say what is on this page and nothing about the size of the set they came from.
+    t.deepEqual(view.slices?.length, 1)
+    t.is(view.slices?.[0].total, 300)
+    t.is(view.slices?.[0].offset, 0)
+    t.is(view.slices?.[0].keys.length, 50)
+
+    await store.close()
+    await client.close()
+    await server.close()
+})
+
+test('turning a page is a re-projection, and the keys keep a stable order across one', async (t) => {
+    const server = new RpcServer({ name: peer('field3912'), transports: [{ port: 3912, host: '127.0.0.1' }] })
+    server.exposeClassInstance(new Field())
+    await server.ready()
+
+    const client = new RpcClient('http://localhost:3912', { name: peer('asker3912'), defaultTarget: peer('field3912') })
+    const first = await client.component<Field>('field', undefined, { paths: [{ path: ['state', 'tags'], offset: 0, limit: 10 }] })
+    t.deepEqual(Object.keys(first[rpcComponent].getSnapshot().state.tags).sort().slice(0, 2), ['tag.000', 'tag.001'])
+    await first[rpcComponent].close()
+
+    // Only the offset changed. sameProjection compares by value rather than identity, and a paged
+    // caller depends on exactly that: a comparison that missed it would leave the subscription on
+    // page one while the grid showed page two, which is the kind of wrong that looks like working.
+    const second = await client.component<Field>('field', undefined, { paths: [{ path: ['state', 'tags'], offset: 10, limit: 10 }] })
+    const view = second[rpcComponent].getSnapshot()
+    const keys = Object.keys(view.state.tags).sort()
+    t.is(keys.length, 10)
+    t.is(keys[0], 'tag.010', 'the next page, sorted so an offset means the same thing twice running')
+    t.is(view.slices?.[0].offset, 10)
+    t.is(view.slices?.[0].total, 300, 'and the size of the set is still reported')
+
+    await second[rpcComponent].close()
+    await client.close()
+    await server.close()
+})
+
+test('a slice of something that is not a record is nothing, said out loud', async (t) => {
+    const server = new RpcServer({ name: peer('field3913'), transports: [{ port: 3913, host: '127.0.0.1' }] })
+    server.exposeClassInstance(new Field())
+    await server.ready()
+
+    const client = new RpcClient('http://localhost:3913', { name: peer('asker3913'), defaultTarget: peer('field3913') })
+    const opened = await client.component<Field>('field', undefined, { paths: [{ path: ['state', 'fast'], limit: 5 }] })
+    const view = opened[rpcComponent].getSnapshot()
+
+    // Reported as an empty slice rather than omitted, so "the record is not there" and "nobody
+    // asked" stay different answers - the same reason a projected snapshot says it is projected.
+    t.deepEqual(view.state, {})
+    t.is(view.slices?.[0].total, 0)
+    t.deepEqual(view.slices?.[0].keys, [])
+
+    await opened[rpcComponent].close()
+    await client.close()
+    await server.close()
+})
+
+test('a slice with a bad offset is refused rather than read as zero', async (t) => {
+    const server = new RpcServer({ name: peer('field3914'), transports: [{ port: 3914, host: '127.0.0.1' }] })
+    server.exposeClassInstance(new Field())
+    await server.ready()
+
+    const client = new RpcClient('http://localhost:3914', { name: peer('asker3914'), defaultTarget: peer('field3914') })
+    // Clamping a negative offset to zero would hand back a page nobody asked for, with nothing to
+    // notice it by - the same judgement the per-call timeout makes about a negative number.
+    const refused = await t.throwsAsync(client.component<Field>('field', undefined, { paths: [{ path: ['state', 'tags'], offset: -1, limit: 5 }] }))
+    t.regex(String(refused?.message), /offset must be a non-negative integer/)
+
+    await client.close()
+    await server.close()
+})
+
 test('a projection that names nothing is refused, rather than subscribing to silence', async (t) => {
     const server = new RpcServer({ name: peer('field3903'), transports: [{ port: 3903, host: '127.0.0.1' }] })
     server.exposeClassInstance(new Field())

@@ -1,5 +1,13 @@
 import { TransportEvent } from './Core.js'
-import { componentSnapshotEvent, type RpcComponent, type RpcComponentAuthority, type RpcComponentData, type RpcComponentSnapshot } from './Component.js'
+import {
+    componentSnapshotEvent,
+    isProjectionSlice,
+    type RpcComponent,
+    type RpcComponentAuthority,
+    type RpcComponentData,
+    type RpcComponentSnapshot,
+    type RpcProjectionEntry
+} from './Component.js'
 import type { RpcCallOptions, RpcClientHandler, WithOptions } from './RpcClientHandler.js'
 
 /**
@@ -53,7 +61,7 @@ export interface RpcComponentOptions {
      * One peer holds one subscription per component, so opening a second view of the same component
      * with different paths is refused rather than silently served the first one's.
      */
-    paths?: readonly (readonly string[])[]
+    paths?: readonly RpcProjectionEntry[]
 }
 
 
@@ -73,7 +81,7 @@ export type RpcComponentProxy<T extends RpcComponentLike> = T & {
 
 /** The proxy surface a channel drives: the snapshot event, through the ordinary event machinery. */
 type Subscribable = {
-    on(event: string, handler: (snapshot: unknown) => void, projection?: readonly (readonly string[])[]): Promise<unknown>
+    on(event: string, handler: (snapshot: unknown) => void, projection?: readonly RpcProjectionEntry[]): Promise<unknown>
     off(event: string, handler: (snapshot: unknown) => void): Promise<unknown>
 }
 
@@ -103,7 +111,7 @@ class ComponentChannel {
         readonly target: string | undefined,
         private readonly release: () => void,
         /** What this channel asked for, when it asked for less than everything. */
-        readonly projection?: readonly (readonly string[])[]
+        readonly projection?: readonly RpcProjectionEntry[]
     ) {
         this.inner = client.proxy<object>(namespace, target)
         this.first = new Promise((resolve) => (this.settleFirst = resolve))
@@ -180,14 +188,16 @@ class ComponentChannel {
 }
 
 /** Whether two projections ask for the same thing. Mirrors the server's comparison exactly. */
-const sameProjection = (a: readonly (readonly string[])[] | undefined, b: readonly (readonly string[])[] | undefined) => {
+const sameProjection = (a: readonly RpcProjectionEntry[] | undefined, b: readonly RpcProjectionEntry[] | undefined) => {
     if (!a || !b) return a === b
     if (a.length !== b.length) return false
-    return a.every((path, index) => path.length === b[index].length && path.every((segment, at) => segment === b[index][at]))
+    return a.every((entry, index) => JSON.stringify(entry) === JSON.stringify(b[index]))
 }
 
-const describeProjection = (projection: readonly (readonly string[])[] | undefined) =>
-    projection ? projection.map((path) => path.join('.')).join(', ') : 'the whole snapshot'
+const describeProjection = (projection: readonly RpcProjectionEntry[] | undefined) =>
+    projection
+        ? projection.map((entry) => (isProjectionSlice(entry) ? `${entry.path.join('.')}[${entry.offset ?? 0}..${entry.limit === undefined ? '' : (entry.offset ?? 0) + entry.limit}]` : entry.join('.'))).join(', ')
+        : 'the whole snapshot'
 
 /**
  * One channel per (target, namespace), shared by every component() call for it and reference
@@ -213,7 +223,7 @@ export class ComponentChannels {
             })
     }
 
-    async open(namespace: string, target: string | undefined, projection?: readonly (readonly string[])[]): Promise<ComponentChannel> {
+    async open(namespace: string, target: string | undefined, projection?: readonly RpcProjectionEntry[]): Promise<ComponentChannel> {
         // NUL as the separator: it cannot occur in a peer or namespace id. Escaped, never the byte.
         const key = `${target ?? ''}\u0000${namespace}`
         let channel = this.channels.get(key)

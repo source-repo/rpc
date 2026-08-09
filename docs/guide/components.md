@@ -79,6 +79,28 @@ A path is spelled from the root it starts at, so the first segment is `props` or
 
 **A partial snapshot says that it is partial.** The view carries `projection`, the list of paths it contains. Without it a narrowed subscription and a component that had dropped half its state would be the same bytes, and anything merging them would be inventing. A whole snapshot carries no `projection` at all, so nothing reads it as partial.
 
+### Paging a record you cannot enumerate
+
+A path names what the contract knows, and a record is where the contract stops knowing: it says `{ [tag: string]: Reading }` and nothing about which tags exist, because **a record's keys are data, not type**. So a caller wanting fifty of three hundred tags cannot name them — the only path that reaches them is the record itself, which is all three hundred, and asking for everything to find out what to ask for is the thing projections exist to avoid.
+
+A projection entry may therefore name a record and a window over it:
+
+```typescript
+const page = await client.component<Field>('field', 'bakery', {
+    paths: [{ path: ['state', 'tags'], offset: 0, limit: 50 }]
+})
+
+page[rpcComponent].getSnapshot().slices        // [{ path, offset: 0, keys: […50], total: 300 }]
+```
+
+Keys and values arrive **together**, deliberately. Asking for the key list and then asking again for that page's values would be two round trips per page — nothing on a pipeline, and unusable on a link whose round trip is measured in minutes.
+
+`total` is reported because it is the one thing a caller cannot work out for itself: its entries say what is on this page and nothing about the size of the set they came from. Nothing in the contract can say either.
+
+**Keys come back sorted**, and the order is part of the contract rather than an accident. Insertion order is a property of how the component happened to build its state, so page 2 could hold something different after a restart that populated the record in another sequence — a caller paging through would see one entry twice and another not at all, with nothing to indicate it.
+
+Turning a page is a re-projection: the same subscription with a different offset. A slice naming something that is not a record yields an empty slice rather than an error, so "the record is not there" and "nobody asked" stay different answers. A negative or fractional `offset` or `limit` is refused rather than clamped, for the same reason a negative timeout is — a silently adjusted page is one nobody asked for and no way to notice.
+
 A path that reaches nothing is simply absent rather than an error — state is data, and a tag that has not appeared yet is a legitimate thing to watch for. An empty path list *is* refused, because subscribing to nothing looks exactly like a component that has gone quiet, and that is the wrong thing to spend a night on.
 
 **One peer holds one subscription per component.** The server keys a subscription by instance, event and caller, so a second view of the same component with different paths would be one subscription whose contents depended on who opened first. That is refused, naming both projections, rather than silently serving the other one's paths. Re-subscribing with different paths — the same peer changing its mind — replaces the projection rather than merging, so a narrowing is always possible; a union would keep sending what nobody watches any more.

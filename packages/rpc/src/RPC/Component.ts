@@ -47,6 +47,14 @@ export interface RpcComponentSnapshot<P extends RpcComponentData, S extends RpcC
     /** Optional on the wire: a snapshot from a server older than the lease simply has no holder. */
     readonly authority?: RpcComponentAuthority
     /**
+     * What each sliced record actually held, so a caller can page it without having to ask twice.
+     *
+     * `total` is the only thing a caller cannot work out for itself: the entries it received tell
+     * it what is on this page and nothing about how many pages there are. A record's keys are data
+     * rather than type, so nothing in the contract can say either.
+     */
+    readonly slices?: readonly RpcProjectedSlice[]
+    /**
      * The paths this snapshot carries, when it carries only some of them. Absent means the whole
      * thing, which is what every snapshot was before projections existed and still is by default.
      *
@@ -55,8 +63,55 @@ export interface RpcComponentSnapshot<P extends RpcComponentData, S extends RpcC
      * that could not tell them apart would read a narrowed subscription as a component that had
      * dropped half its state, and a cache merging them would be inventing.
      */
-    readonly projection?: readonly (readonly string[])[]
+    readonly projection?: readonly RpcProjectionEntry[]
 }
+
+/**
+ * One thing a subscriber asked for: a path, or a path into a record with a window over its entries.
+ *
+ * A plain path is the ordinary case and stays a plain array, so nothing that already worked changes
+ * shape. The slice form exists because **a record's keys are data, not type**: the contract says
+ * `{ [tag: string]: Reading }` and stops there, so a caller wanting fifty of three hundred tags
+ * cannot name them - the only path that reaches them is the record itself, which is all three
+ * hundred, and asking for everything to find out what to ask for is the thing projections exist to
+ * avoid.
+ *
+ * Keys and values come back together deliberately. Asking for the key list and then asking again
+ * for the values of a page would be two round trips per page, which is nothing on a pipeline and
+ * unusable on a link whose round trip is measured in minutes.
+ */
+export type RpcProjectionEntry = readonly string[] | RpcProjectionSlice
+
+export interface RpcProjectionSlice {
+    /** The record to page. A path that does not reach a record yields nothing rather than erring. */
+    readonly path: readonly string[]
+    /** How many entries to skip, in key order. Defaults to none. */
+    readonly offset?: number
+    /** How many to take. Absent means all of them from `offset`, which is how a caller says "the rest". */
+    readonly limit?: number
+}
+
+/** What one sliced record held, and how much of it there was. */
+export interface RpcProjectedSlice {
+    readonly path: readonly string[]
+    readonly offset: number
+    readonly keys: readonly string[]
+    /** Entries in the record, which is what a caller needs to know how many pages exist. */
+    readonly total: number
+}
+
+/** A slice entry, distinguished from a plain path without narrowing on a property that could collide. */
+export const isProjectionSlice = (entry: RpcProjectionEntry): entry is RpcProjectionSlice => !Array.isArray(entry)
+
+/**
+ * Keys in a stable, agreed order, because an offset means nothing without one.
+ *
+ * Sorted rather than insertion-ordered: insertion order is a property of how the component happened
+ * to build its state, so page 2 could hold something different after a restart that populated the
+ * record in another sequence - and a caller paging through would see an entry twice and another not
+ * at all, with nothing to indicate it.
+ */
+export const projectionKeyOrder = (record: RpcComponentData) => Object.keys(record).sort()
 
 /**
  * The event name a component's snapshots travel under. Reserved the way `$with` is: the `$` prefix
@@ -188,11 +243,13 @@ export const componentSnapshot = (component: object): RpcComponentSnapshot<RpcCo
  */
 export const projectSnapshot = (
     snapshot: RpcComponentSnapshot<RpcComponentData, RpcComponentData>,
-    paths: readonly (readonly string[])[]
+    entries: readonly RpcProjectionEntry[]
 ): RpcComponentSnapshot<RpcComponentData, RpcComponentData> => {
     const props: RpcComponentData = {}
     const state: RpcComponentData = {}
-    for (const path of paths) {
+    const slices: RpcProjectedSlice[] = []
+    for (const entry of entries) {
+        const path = isProjectionSlice(entry) ? entry.path : entry
         if (!path.length) continue
         // `props` and `state` are the two roots a path may start at, so the first segment chooses
         // which - the same spelling a reader uses, and the same one `sets` uses on the write side.
@@ -200,9 +257,36 @@ export const projectSnapshot = (
         const from = root === 'props' ? snapshot.props : root === 'state' ? snapshot.state : undefined
         const into = root === 'props' ? props : root === 'state' ? state : undefined
         if (!from || !into) continue
-        copyPath(from, into, rest)
+        if (!isProjectionSlice(entry)) {
+            copyPath(from, into, rest)
+            continue
+        }
+        const record = resolvePath(from, rest)
+        // A path that reaches no record yields nothing rather than erring, for the same reason a
+        // path reaching no value does: state is data, and a record a caller expects may not have
+        // been populated yet. Reported as a slice of zero rather than omitted, so the difference
+        // between "not there" and "never asked" stays visible.
+        if (record === undefined || record === null || typeof record !== 'object' || Array.isArray(record)) {
+            slices.push({ path, offset: entry.offset ?? 0, keys: [], total: 0 })
+            continue
+        }
+        const ordered = projectionKeyOrder(record as RpcComponentData)
+        const offset = Math.max(0, Math.trunc(entry.offset ?? 0))
+        const taken = entry.limit === undefined ? ordered.slice(offset) : ordered.slice(offset, offset + Math.max(0, Math.trunc(entry.limit)))
+        for (const key of taken) copyPath(from, into, [...rest, key])
+        slices.push({ path, offset, keys: taken, total: ordered.length })
     }
-    return { ...snapshot, props, state, projection: paths }
+    return { ...snapshot, props, state, projection: entries, ...(slices.length ? { slices } : {}) }
+}
+
+/** Walk to whatever a path names, or undefined where it reaches nothing. */
+const resolvePath = (from: RpcComponentData, path: readonly string[]): unknown => {
+    let at: unknown = from
+    for (const segment of path) {
+        if (at === null || typeof at !== 'object' || !(segment in (at as RpcComponentData))) return undefined
+        at = (at as RpcComponentData)[segment]
+    }
+    return at
 }
 
 /**
