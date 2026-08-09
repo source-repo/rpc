@@ -10,6 +10,8 @@ A `POST` carries its type, a uuid, the namespace, the method name and the params
 
 It saves bytes rather than round trips, and the two are worth keeping apart: calls issued concurrently are already pipelined, so twenty cost one round trip whether or not they share a frame — what they did not share was twenty envelopes. On MQTT it saves exchanges as well, each publish carrying its own topics and its own acknowledgement. It cannot help a caller that awaits in a loop, because the second call is not issued until the first has answered; that is what plural methods like `rpcWrites` and a projection's path list are for.
 
+**Bounded at both ends, because a peer may be a very small computer.** A frame is decoded whole before any of it dispatches, so an unbounded batch is an unbounded buffer on the receiver, and the mailbox bound does not help — that limits a queue, by which point the frame is already held. The sender splits beyond `maxBatchCalls` (64); a receiver refuses more than `maxIncomingBatchCalls` (256) and answers every call in the frame `InvalidParams` rather than dropping them, since a sender's own bound is not protection. The default costs little: N calls save N−1 envelopes out of N, so sixteen captures 94% of the maximum possible saving and sixty-four captures 98%.
+
 **A batch is an envelope and never a transaction.** The receiver unpacks it and feeds every payload through the ordinary dispatch, which is what keeps idempotency, semantics, `authorize()`, the owner fence and the deadline working per call — one failing settles one call, and nothing is shared but the frame. A batch nested inside a batch is refused rather than unpacked.
 
 ### The AI grants document: closed by default, on every node

@@ -128,6 +128,22 @@ export class RpcClientHandler extends MessageModule<Message<RpcMessage>, RpcMess
      */
     batchCalls = true
 
+    /**
+     * The most calls one frame may carry. Beyond it the flush sends several.
+     *
+     * A bound matters more than it looks, because the receiver may be a small embedded unit: a
+     * frame has to be received and decoded *whole* before any of it can be dispatched, so an
+     * unbounded batch is an unbounded buffer on a device that may have kilobytes. The mailbox bound
+     * does not help - that limits what waits in a queue, and by then the frame has already been
+     * held in memory and decoded.
+     *
+     * 64 costs almost nothing, because the saving saturates quickly. Batching N calls saves N-1
+     * envelopes out of N, so sixteen already captures 94% of everything batching could ever save
+     * and sixty-four captures 98%. Paying an unbounded memory cost on the far end for the last two
+     * percent would be a poor trade even if every peer were a server.
+     */
+    maxBatchCalls = 64
+
     /** Calls waiting for the end of this tick, grouped by where they are going. */
     private readonly outbound = new Map<string, { payload: RpcMessage; settled: { resolve: () => void; reject: (e: unknown) => void } }[]>()
     private flushQueued = false
@@ -158,16 +174,22 @@ export class RpcClientHandler extends MessageModule<Message<RpcMessage>, RpcMess
         this.flushQueued = false
         const groups = [...this.outbound.entries()]
         this.outbound.clear()
+        const limit = Math.max(1, this.maxBatchCalls)
         for (const [key, held] of groups) {
             const remote = key === '' ? undefined : key
-            // One call goes as itself. Wrapping a single payload would spend the envelope this
-            // exists to save, and would make every peer speak BATCH to talk to a batching client.
-            const frame: RpcMessage = held.length === 1 ? held[0].payload : ({ type: RpcMessageType.batch, payloads: held.map((one) => one.payload) } as RpcBatchPayload)
-            this.sendPayload(frame, MessageType.RequestMessage, this.name, remote).then(
-                () => held.forEach((one) => one.settled.resolve()),
-                // The frame never left, so none of the calls in it did.
-                (e) => held.forEach((one) => one.settled.reject(e))
-            )
+            for (let at = 0; at < held.length; at += limit) {
+                const chunk = held.slice(at, at + limit)
+                // One call goes as itself. Wrapping a single payload would spend the envelope this
+                // exists to save, and would make every peer speak BATCH to talk to a batching
+                // client - including the last chunk of a split, which may well be one call.
+                const frame: RpcMessage =
+                    chunk.length === 1 ? chunk[0].payload : ({ type: RpcMessageType.batch, payloads: chunk.map((one) => one.payload) } as RpcBatchPayload)
+                this.sendPayload(frame, MessageType.RequestMessage, this.name, remote).then(
+                    () => chunk.forEach((one) => one.settled.resolve()),
+                    // The frame never left, so none of the calls in it did.
+                    (e) => chunk.forEach((one) => one.settled.reject(e))
+                )
+            }
         }
     }
 

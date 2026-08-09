@@ -315,6 +315,15 @@ export class RpcServerHandler extends MessageModule<Message<RpcMessage>, RpcMess
     allowTopologyMutation = false
     /** Set by RpcServer: whether methods declaring `sets: '*'` are honoured at all. Default no. */
     allowStatePathWrites = false
+    /**
+     * The most calls this peer will accept in one batch, refusing the whole frame beyond it.
+     *
+     * Generous against what a sender will produce - the default sender bound is 64 - because the
+     * two are set independently and a peer should not refuse an ordinary caller. It exists for the
+     * case where the sender's bound is not this peer's business: a constrained unit can lower it,
+     * and lowering it is the whole point of it being a number rather than a constant.
+     */
+    maxIncomingBatchCalls = 256
     /** Check what handlers return as well as what callers send. Off by default: it is a self-check. */
     validateResults = false
     /**
@@ -453,7 +462,29 @@ export class RpcServerHandler extends MessageModule<Message<RpcMessage>, RpcMess
         // anything about them. A batch that authorized once for everything inside it would be a
         // hole, and one that ran its contents atomically would be a promise nothing here can keep.
         if (payload.type === RpcMessageType.batch) {
-            for (const carried of (payload as RpcBatchPayload).payloads ?? []) {
+            const carriedAll = (payload as RpcBatchPayload).payloads ?? []
+            // The sender's own bound is not protection: it is a different program, possibly a
+            // different version, possibly hostile. This peer decides what it will take, which
+            // matters most where it matters most - a small embedded unit has to hold and decode a
+            // frame whole before it can dispatch any of it, so an unbounded batch is an unbounded
+            // buffer. Answered per call rather than dropped, because by here the frame is already
+            // decoded and leaving the caller to time out would tell it nothing about why.
+            if (carriedAll.length > this.maxIncomingBatchCalls) {
+                const why = `this peer accepts at most ${this.maxIncomingBatchCalls} calls in one batch, and this one carried ${carriedAll.length}`
+                this.emit('handlerError', { source, payload, error: new Error(why) })
+                // InvalidParams rather than Exception, because the difference decides what the
+                // caller does next: this will fail identically however many times it is retried,
+                // and the caller has to send fewer at a time instead.
+                for (const carried of carriedAll) {
+                    const id = (carried as RpcCallInstanceMethodPayload)?.id
+                    if (!id) continue
+                    await this.sendPayload({ type: RpcMessageType.error, id, code: 'InvalidParams', error: toRemoteError(new Error(why)) } as RpcErrorPayload, MessageType.ErrorMessage, this.name, source).catch(
+                        () => undefined
+                    )
+                }
+                return
+            }
+            for (const carried of carriedAll) {
                 // One level only. A batch inside a batch buys nothing and is the shape a malicious
                 // or broken peer would use to make a small frame cost an unbounded amount of work.
                 if (carried?.type === RpcMessageType.batch) {

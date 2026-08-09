@@ -114,6 +114,10 @@ new RpcClient('http://bus:7843', { batchCalls: false })   // only for a peer tha
 
 **A batch is an envelope and never a transaction.** There is no atomicity and no shared authorization. Each payload carries its own id, ttl, idempotency key and fence; each passes `authorize()` on its own; each is answered separately, and one failing settles one call. The server unpacks the frame and feeds every payload through the ordinary path, which is what keeps all of that true without the batching layer knowing anything about it.
 
+**A batch is bounded at both ends, because the far end may be a very small computer.** A frame has to be received and decoded *whole* before any of it can be dispatched, so an unbounded batch is an unbounded buffer on the receiver — and the mailbox bound does not help, since that limits what waits in a queue, by which point the frame is already held in memory. The sender splits beyond `maxBatchCalls` (64), and the receiver refuses a frame carrying more than `maxIncomingBatchCalls` (256), answering every call in it `InvalidParams` rather than dropping them — the sender's own bound is not protection, being a different program and possibly a different version. A constrained unit lowers its own number.
+
+The default costs almost nothing, because the saving saturates fast: batching N calls saves N−1 envelopes out of N, so sixteen already captures 94% of everything batching could ever save and sixty-four captures 98%. Paying unbounded memory on the far end for the last two percent would be a poor trade even if every peer were a server.
+
 **A peer built before `BATCH` existed cannot unpack one**, and there is no negotiation — the caller has to be told, with `batchCalls: false`. That is the one reason to set it, and it is a property of the far end rather than of the caller. Servers understand `BATCH` from this version onward whether or not they send it, so a new server answers an old client and a new client, and only an old *server* needs the flag turned off against it.
 
 ## Errors

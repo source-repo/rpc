@@ -120,6 +120,72 @@ test('batching is on without being asked for, which is what makes it worth havin
     await hub.close()
 })
 
+test('a batch is bounded, because the far end may be a very small computer', async (t) => {
+    const hub = new RpcServer({ name: peer('hub3910'), transports: [{ port: 3910, host: '127.0.0.1' }] })
+    await hub.ready()
+    const relayed = framesAt(hub)
+
+    const device = new RpcServer({ name: peer('meter3910'), transports: [{ connect: 'http://localhost:3910' }] })
+    device.exposeClassInstance(new Meter())
+    await device.ready()
+
+    const client = new RpcClient('http://localhost:3910', { name: peer('asker3910'), defaultTarget: peer('meter3910') })
+    await client.ready()
+    // Lowered from the default 64 so the split is visible in a test that stays small. A device with
+    // kilobytes of RAM has to hold and decode a frame whole before it can dispatch any of it, so an
+    // unbounded batch is an unbounded buffer on the far end - and the mailbox bound does not help,
+    // because that limits what waits in a queue, by which point the frame has already been held.
+    client.rpcClient!.maxBatchCalls = 4
+
+    const meter = await client.proxy<Meter>('meter')
+    const answers = await Promise.all(Array.from({ length: 10 }, (_, index) => meter.read(`tag.${index}`)))
+    t.is(answers.length, 10, 'splitting is invisible to the caller')
+    t.is(answers[9], 'tag.9=1')
+
+    // Ten calls at four to a frame: two full batches and a remainder of two.
+    t.is(relayed.filter((type) => type === RpcMessageType.batch).length, 3)
+    t.is(relayed.filter((type) => type === RpcMessageType.CallInstanceMethod).length, 0)
+
+    await client.close()
+    await device.close()
+    await hub.close()
+})
+
+test('a receiver refuses a batch larger than it accepts, and says so per call', async (t) => {
+    const hub = new RpcServer({ name: peer('hub3911'), transports: [{ port: 3911, host: '127.0.0.1' }] })
+    await hub.ready()
+
+    const device = new RpcServer({ name: peer('meter3911'), transports: [{ connect: 'http://localhost:3911' }] })
+    device.exposeClassInstance(new Meter())
+    await device.ready()
+    // What a constrained unit would do. The sender's own bound is not protection: it is a different
+    // program, possibly a different version, possibly hostile.
+    device.rpc.maxIncomingBatchCalls = 3
+
+    const client = new RpcClient('http://localhost:3911', { name: peer('asker3911'), defaultTarget: peer('meter3911') })
+    await client.ready()
+    const meter = await client.proxy<Meter>('meter')
+
+    const settled = await Promise.allSettled(Array.from({ length: 6 }, (_, index) => meter.read(`tag.${index}`)))
+    t.true(
+        settled.every((one) => one.status === 'rejected'),
+        'the whole frame is refused; nothing in it half-ran'
+    )
+    // Answered rather than dropped: by the time the count is known the frame is decoded anyway, and
+    // leaving six callers to time out would tell them nothing about why.
+    const reason = (settled[0] as PromiseRejectedResult).reason as { code?: string; message?: string }
+    t.is(reason.code, 'InvalidParams', 'not Exception - retrying this unchanged fails identically')
+    t.regex(String(reason.message), /at most 3 calls in one batch/)
+
+    // And it still works when the caller sends within the bound.
+    client.rpcClient!.maxBatchCalls = 3
+    t.deepEqual(await Promise.all([meter.read('a'), meter.read('b')]), ['a=1', 'b=1'])
+
+    await client.close()
+    await device.close()
+    await hub.close()
+})
+
 test('a batch is an envelope, not a transaction: one failure settles one call', async (t) => {
     const hub = new RpcServer({ name: peer('hub3907'), transports: [{ port: 3907, host: '127.0.0.1' }] })
     await hub.ready()
