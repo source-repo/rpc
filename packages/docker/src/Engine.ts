@@ -89,6 +89,11 @@ export class DockerEngine {
         return this.get('/containers/json?all=1')
     }
 
+    /** Whether an image is present locally, which is what decides if a test can run without a pull. */
+    async inspectImage(image: string): Promise<{ Id: string }> {
+        return this.get(`/images/${encodeURIComponent(image)}/json`)
+    }
+
     /** What the daemon says about one container, for the fields the list does not carry. */
     async inspect(id: string): Promise<DockerInspect> {
         return this.get(`/containers/${encodeURIComponent(id)}/json`)

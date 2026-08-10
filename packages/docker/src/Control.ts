@@ -84,7 +84,10 @@ export class DockerWriteEngine {
             call.on('error', (e: NodeJS.ErrnoException) =>
                 reject(e.code === 'ENOENT' || e.code === 'ECONNREFUSED' ? new Error(`no Docker daemon at ${this.socketPath}`) : e)
             )
-            call.end()
+            // The body goes with the end, which is the whole of it - setting content-length and
+            // then sending nothing leaves the daemon waiting for bytes that never arrive, and it
+            // surfaces as a timeout rather than as anything that names the cause.
+            call.end(payload)
         })
     }
 }
@@ -99,7 +102,12 @@ export class DockerControl extends RpcComponent<{ socketPath: string; manages: n
         const engine = new DockerEngine(options)
         super({ socketPath: engine.socketPath, manages: options.manage?.length ?? 0 }, { lastAt: 0 })
         this.engine = engine
-        this.write = new DockerWriteEngine(engine.socketPath, options.timeoutMs ?? 5_000)
+        // Longer than a read on purpose. `stop` is a graceful shutdown: the daemon sends SIGTERM
+        // and waits its own grace period - ten seconds by default - before SIGKILL, so a five
+        // second client timeout is shorter than the operation's own contract and gives up on a
+        // container that was going to stop perfectly well. A process that is PID 1 with no signal
+        // handler, which is most `CMD` lines, always takes the full grace.
+        this.write = new DockerWriteEngine(engine.socketPath, options.timeoutMs ?? 30_000)
         // A rule constraining nothing would match everything, which is the opposite of what an
         // allow-list is for. Refused where it was written rather than quietly matching nothing:
         // silently matching nothing is just as wrong and is discovered much later, by somebody

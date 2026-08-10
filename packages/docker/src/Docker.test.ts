@@ -1,4 +1,5 @@
 import test from 'ava'
+import { randomUUID } from 'node:crypto'
 import { access } from 'node:fs/promises'
 import { DEFAULT_SOCKET, DockerEngine, DockerService } from './index.js'
 import { DockerControl } from './Control.js'
@@ -157,4 +158,82 @@ test('a container name is constrained, and the node prefixes what it makes', asy
         const refused = await t.throwsAsync(create.run({ image: 'postgres', name }))
         t.regex(String(refused?.message), /not a usable container name/, name)
     }
+})
+
+/**
+ * The write tiers against a real daemon.
+ *
+ * Everything created here is named under one prefix unique to the run and removed again, whatever
+ * the outcome - a test suite that leaves containers behind on somebody's machine is a test suite
+ * they stop running. Skipped without a daemon, and `SOURCE_RPC_REQUIRE_DOCKER=1` turns that skip
+ * into a failure like the read half above.
+ */
+const LIVE_IMAGE = 'alpine'
+const prefix = `srpc-test-${randomUUID().slice(0, 8)}-`
+
+const localImage = async () => {
+    try {
+        await new DockerEngine({ socketPath: process.env.DOCKER_SOCKET }).inspectImage(LIVE_IMAGE)
+        return true
+    } catch {
+        return false
+    }
+}
+
+test('a created container can be controlled, and only within the fence', async (t) => {
+    if (!daemon || !(await localImage())) {
+        t.pass(`no daemon, or ${LIVE_IMAGE} not present locally`)
+        return
+    }
+
+    const create = new DockerCreate({ socketPath: process.env.DOCKER_SOCKET, images: [{ repository: LIVE_IMAGE }], namePrefix: prefix })
+    const control = new DockerControl({ socketPath: process.env.DOCKER_SOCKET, manage: [{ namePrefix: prefix }] })
+    let made: string | undefined
+
+    try {
+        // Long-running so there is something to stop, and trivial so it costs nothing.
+        const { name } = await create.run({ image: LIVE_IMAGE, name: 'one', args: ['sleep', '300'], labels: { purpose: 'test' } })
+        made = name
+        t.true(name.startsWith(prefix), 'the node prefixes what it makes, so nothing collides and everything is findable')
+
+        // The two tiers compose without either knowing about the other: what create made is inside
+        // the fence control was given, because both were pointed at the same prefix.
+        const listed = (await control.dataRequest('getList', ['managed'], {})) as { ids: string[]; total: number }
+        t.true(listed.ids.includes(name))
+        t.is(listed.total, 1, 'and the fence is a fence - nothing else on this host is in it')
+
+        t.is(await control.stop(name), 'ok')
+        await t.notThrowsAsync(control.start(name))
+        await t.notThrowsAsync(control.restart(name))
+
+        // The whole point of the allow-list, checked against a container that really exists and is
+        // really outside the fence rather than against a name nobody has.
+        const outside = (await new DockerEngine({ socketPath: process.env.DOCKER_SOCKET }).containers()).find((one) => !(one.Names?.[0] ?? '').includes(prefix))
+        if (outside) {
+            const refused = await t.throwsAsync(control.stop((outside.Names?.[0] ?? '').replace(/^\//, '')))
+            t.regex(String(refused?.message), /not a container this node manages/)
+        }
+
+        t.is(await control.remove(name), 'ok')
+        made = undefined
+        const after = (await control.dataRequest('getList', ['managed'], {})) as { total: number }
+        t.is(after.total, 0)
+    } finally {
+        // Whatever happened above, nothing is left behind.
+        if (made) await control.remove(made).catch(() => undefined)
+    }
+})
+
+test('an image outside the allow-list is refused before the daemon is asked', async (t) => {
+    if (!daemon) {
+        t.pass('no Docker daemon reachable')
+        return
+    }
+    const create = new DockerCreate({ socketPath: process.env.DOCKER_SOCKET, images: [{ repository: LIVE_IMAGE }], namePrefix: prefix })
+
+    // `mongo` is present on this host, so a refusal here is the allow-list working rather than the
+    // daemon failing to find an image - which is the distinction that makes this test worth having.
+    const refused = await t.throwsAsync(create.run({ image: 'mongo', name: 'nope' }))
+    t.regex(String(refused?.message), /not on this node's image allow-list/)
+    t.deepEqual(await create.mine().then((names) => names.filter((name) => name.startsWith(prefix))), [], 'and nothing was made')
 })
