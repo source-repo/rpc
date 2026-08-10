@@ -12,3 +12,7 @@ docs/.vitepress/.temp
 # Scratch space visiting agents tend to create in-repo; their droppings must not reach a commit
 tmp/
 examples/display-context/dist/
+
+# Worktrees the agent tooling creates. They are git repositories of their own and must never be
+# committed into this one - git records them as a gitlink that no clone can resolve.
+.claude/worktrees/
