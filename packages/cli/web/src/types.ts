@@ -55,6 +55,13 @@ export interface DescribedTopology {
     label?: string
 }
 
+/** One of the component's own methods, said to apply to a row. Never a capability of its own. */
+export interface DescribedAction {
+    method: string
+    label?: string
+    confirm?: boolean
+}
+
 /** One collection a component serves that its contract cannot describe: a table, a queue, a store. */
 export interface DescribedResource {
     path: string[]
@@ -62,6 +69,7 @@ export interface DescribedResource {
     verbs: string[]
     shape?: 'list' | 'tree'
     label?: string
+    actions?: DescribedAction[]
 }
 
 /** An observable component's shape: structure and a live count, never the snapshot itself. */

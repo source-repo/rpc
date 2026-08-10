@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { leavesUnder, scopeTree, typeAt, type ScopeNode } from './scope'
+import { actionsFor, leavesUnder, scopeTree, typeAt, type ScopeNode } from './scope'
 import type { DescribedComponent, TypeNode } from './types'
 
 /**
@@ -166,5 +166,38 @@ describe('typeAt', () => {
 
     it('will not walk into a record, because its keys are not in the contract', () => {
         expect(typeAt(oven, ['state', 'tags', 'tag.017'], types)).toBeUndefined()
+    })
+})
+
+describe('what may be done to a row', () => {
+    const component: DescribedComponent = {
+        subscribers: 0,
+        resources: [
+            {
+                path: ['deadLetters'],
+                verbs: ['getList'],
+                actions: [
+                    { method: 'retryDeadLetter', label: 'retry' },
+                    { method: 'discardDeadLetter', confirm: true },
+                    { method: 'nonesuch', label: 'typo' }
+                ]
+            }
+        ]
+    }
+    const methods = [{ name: 'retryDeadLetter' }, { name: 'discardDeadLetter' }]
+
+    it('offers only actions whose method the contract actually publishes', () => {
+        // A typo in a declaration would otherwise draw a control that always fails, which is worse
+        // than no control: an operator finds out by trying it on a plant.
+        expect(actionsFor(component, ['deadLetters'], methods)?.map((action) => action.method)).toEqual(['retryDeadLetter', 'discardDeadLetter'])
+    })
+
+    it("carries the author's own judgement about which are final", () => {
+        expect(actionsFor(component, ['deadLetters'], methods)?.[1].confirm).toBe(true)
+    })
+
+    it('has nothing to say about a resource it does not name, or a path that is not one', () => {
+        expect(actionsFor(component, ['state', 'tags'], methods)).toBeUndefined()
+        expect(actionsFor({ subscribers: 0 }, ['deadLetters'], methods)).toBeUndefined()
     })
 })

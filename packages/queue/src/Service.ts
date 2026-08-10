@@ -257,6 +257,16 @@ export class WorkQueueService<TTask> extends RpcComponent<WorkQueueProps, WorkQu
                 path: ['deadLetters'],
                 label: 'Dead letters',
                 verbs: ['getList', 'getMany'],
+                // The two things anybody looking at this screen actually wants to do, said to
+                // belong to a row. Both are ordinary @rpc methods that existed before this and are
+                // authorized like any other call - what is added here is only which rows they are
+                // about, which is the one thing a viewer cannot work out.
+                actions: [
+                    { method: 'retryDeadLetter', label: 'retry' },
+                    // The author's judgement rather than the console's: discarding a task is the
+                    // end of it, and nothing about the name says so to a viewer.
+                    { method: 'discardDeadLetter', label: 'discard', confirm: true }
+                ],
                 row: {
                     kind: 'object',
                     fields: {

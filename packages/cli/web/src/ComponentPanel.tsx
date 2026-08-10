@@ -3,8 +3,8 @@ import { rpcComponent, type RpcComponentData, type RpcComponentLike, type RpcCom
 import { staticSource, storeSource, type EditAffordance } from './ValueTree'
 import { ScopeTree } from './ScopeTree'
 import { ValueGrid, type FetchPage } from './ValueGrid'
-import { leavesUnder, scopeTree } from './scope'
-import type { DescribedComponent, DescribedMethod, TypeNode } from './types'
+import { actionsFor, leavesUnder, scopeTree } from './scope'
+import type { DescribedAction, DescribedComponent, DescribedMethod, TypeNode } from './types'
 
 /**
  * An observable component, rendered from the library's own store and against its own contract.
@@ -222,6 +222,32 @@ export const ComponentPanel = ({
     }
 
     /**
+     * Doing it: an ordinary call to the component's own method, with the row's id.
+     *
+     * Nothing is written locally on success, for the same reason an editor writes nothing - the
+     * only report that the component agrees is what it says next time it is asked. Which is now,
+     * rather than a period from now: `settled` moves and the page it belongs to refetches.
+     */
+    const runAction = async (action: DescribedAction, id: string) => {
+        const link = server.current
+        if (!link) return
+        // The author says which of its methods are final; a console guessing from the word
+        // "discard" would be guessing about a plant.
+        if (action.confirm && !window.confirm(`${action.method}(${id})?`)) return
+        setPending(id)
+        setFailed(undefined)
+        try {
+            const proxy = await link.proxy<Record<string, (...args: unknown[]) => Promise<unknown>>>(namespace, peer)
+            await proxy[action.method](id)
+            setSettled((count) => count + 1)
+        } catch (e) {
+            setFailed({ path: id, message: (e as { message?: string }).message ?? String(e) })
+        } finally {
+            setPending(undefined)
+        }
+    }
+
+    /**
      * One page of one collection, asked for rather than subscribed to.
      *
      * Read from the link at call time like every other call this panel makes, so a page turn during
@@ -316,7 +342,7 @@ export const ComponentPanel = ({
                     </div>
                     <div className="value-table">
                         <h4>{scope.join('.')}</h4>
-                        <ValueGrid component={component} types={types} scope={scope} source={source} edit={edit} fetchPage={fetchPage} period={period} settled={settled} />
+                        <ValueGrid component={component} types={types} scope={scope} source={source} edit={edit} fetchPage={fetchPage} period={period} settled={settled} actionsFor={(path) => actionsFor(component, path, methods)} onAction={(action, id) => void runAction(action, id)} />
                     </div>
                 </div>
             )}

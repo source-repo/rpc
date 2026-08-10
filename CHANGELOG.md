@@ -26,6 +26,16 @@ A component serving its own resources answers through one `dataRequest(method, r
 
 The console's grid can now be ordered by the key or by any field the row type declares, ascending or descending. Drawn from the type rather than from a row, so the choices are the same on an empty collection as on a full one — and the order is the peer's, over the whole matched set, because an order applied to the fifty rows already on screen would disagree with itself the moment a page was turned.
 
+### A row of a resource can be acted on
+
+A viewer could browse a collection it had never heard of and do nothing to it. An editor resolves from `sets`, and a row of a store-backed resource has no state path for any method to claim — so the console could page, filter and order a queue's dead letters and not retry one, while `retryDeadLetter` and `discardDeadLetter` sat there declared, authorized and unreachable.
+
+A resource may now say which of the component's own methods apply to a row. That adds no capability: each is an ordinary `@rpc` method that already existed, and the declaration carries the one fact a viewer cannot work out — which method is about which row, exactly as `sets` does for a field. A value is still never written; a method is still called.
+
+The id is the only argument. `confirm` is the author's judgement about its own method rather than a console's guess from the name. And a viewer checks the method exists before drawing anything for it, because a typo in a declaration would otherwise produce a control that fails only when somebody tries it on a plant.
+
+`@source-repo/queue` declares both of its dead-letter actions, which is what proved it.
+
 ### And which half of it was slow
 
 `queryMs` and `countMs` beside the total, for a component that can tell the two apart. They are one number for a record held in memory — filtering produces the matched set and `total` is its length, so the count is a byproduct that costs nothing. They are two very different numbers over a real table, where `LIMIT 50` comes off an index and `COUNT(*)` over the same predicate walks it, and the second is routinely most of the time.

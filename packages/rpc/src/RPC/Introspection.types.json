@@ -1643,6 +1643,16 @@
             "kind": "string"
           },
           "optional": true
+        },
+        "actions": {
+          "type": {
+            "kind": "array",
+            "items": {
+              "kind": "ref",
+              "name": "RpcDataAction"
+            }
+          },
+          "optional": true
         }
       }
     },
@@ -1666,6 +1676,28 @@
           "value": "getManyReference"
         }
       ]
+    },
+    "RpcDataAction": {
+      "kind": "object",
+      "fields": {
+        "method": {
+          "type": {
+            "kind": "string"
+          }
+        },
+        "label": {
+          "type": {
+            "kind": "string"
+          },
+          "optional": true
+        },
+        "confirm": {
+          "type": {
+            "kind": "boolean"
+          },
+          "optional": true
+        }
+      }
     },
     "DescribedTopology": {
       "kind": "object",

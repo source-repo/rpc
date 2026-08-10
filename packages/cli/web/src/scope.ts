@@ -1,4 +1,4 @@
-import type { DescribedComponent, TypeNode } from './types'
+import type { DescribedAction, DescribedComponent, DescribedMethod, TypeNode } from './types'
 
 /**
  * What is a container and what is a value, decided once from the contract and nothing else.
@@ -193,4 +193,21 @@ export const typeAt = (component: DescribedComponent, path: string[], types?: Ty
         at = resolveOnce(member.type, types, at.seen)
     }
     return at.type
+}
+
+/**
+ * What may be done to a row of the resource at this path - and only what can actually be done.
+ *
+ * A declared action names one of the component's own methods, so it is checked against the methods
+ * `describe()` published before anything is drawn for it. A typo in a declaration would otherwise
+ * produce a control that always fails, which is worse than no control at all: an operator would
+ * find out it does not work by trying it on a plant.
+ *
+ * That check is also what keeps the declaration honest about what it is. An action adds no
+ * capability - it says which existing method is about which row - so an action naming a method that
+ * does not exist is not a half-working feature, it is a statement that was never true.
+ */
+export const actionsFor = (component: DescribedComponent, path: string[], methods: readonly DescribedMethod[]): DescribedAction[] | undefined => {
+    const resource = component.resources?.find((declared) => declared.path.length === path.length && declared.path.every((segment, at) => segment === path[at]))
+    return resource?.actions?.filter((action) => methods.some((method) => method.name === action.method))
 }

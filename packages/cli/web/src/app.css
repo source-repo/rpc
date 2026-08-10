@@ -1429,6 +1429,31 @@ textarea.control {
     color: var(--warn);
 }
 
+/* A row and what may be done to it. The buttons follow the editors' rule - present on hover or
+   focus, so a page of fifty rows is not also a wall of fifty pairs of buttons. */
+.collection-row {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+}
+
+.collection-row > :first-child {
+    flex: 1;
+    min-width: 0;
+}
+
+.row-actions {
+    display: flex;
+    gap: 4px;
+    opacity: 0;
+    transition: opacity 0.1s;
+}
+
+.collection-row:hover .row-actions,
+.collection-row:focus-within .row-actions {
+    opacity: 1;
+}
+
 .pager {
     display: flex;
     align-items: center;

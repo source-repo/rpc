@@ -229,6 +229,31 @@ export type RpcResource = readonly string[]
  * *serves* collections, and only the component knows which. So a viewer draws the scope tree from
  * the contract and this list together, and neither is guessed from the other.
  */
+/**
+ * One of the component's own methods, said to apply to a row of this resource.
+ *
+ * It adds no capability whatsoever. The method is an ordinary `@rpc` method that already exists,
+ * already appears in `describe()`, and is already ruled on by `authorize()`, the owner fence and
+ * idempotency. What this carries is the one fact a viewer cannot work out for itself: *which*
+ * existing method belongs to *which* row - exactly what `sets` does for a field, one level up.
+ *
+ * Which is what keeps the rule intact: a value is still never written, a method is still called.
+ */
+export interface RpcDataAction {
+    /** The method to call, by the name `describe()` publishes. */
+    readonly method: string
+    /** What to put on the button. The method name where there is nothing better. */
+    readonly label?: string
+    /**
+     * Whether the component considers this destructive enough to ask first.
+     *
+     * The author's to say, not the viewer's to guess. A console inferring it from the word
+     * "discard" would be guessing about a plant, and would be wrong the first time somebody named
+     * a method `archive`.
+     */
+    readonly confirm?: boolean
+}
+
 export interface RpcDataResource {
     /** How `$data` names it. A single segment for a resource of its own, never `props` or `state`. */
     readonly path: RpcResource
@@ -244,6 +269,13 @@ export interface RpcDataResource {
     readonly shape?: 'list' | 'tree'
     /** What to call it on a screen, where the path is not what a person would read. */
     readonly label?: string
+    /**
+     * What can be done to a row, as methods this component already declares.
+     *
+     * Each is called with the row's id and nothing else - `retryDeadLetter(taskId)` is the shape
+     * every real case has so far, and anything richer is a form rather than an action.
+     */
+    readonly actions?: readonly RpcDataAction[]
 }
 
 /**

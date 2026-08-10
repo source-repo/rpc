@@ -4,7 +4,7 @@ import { leavesUnder, typeAt, type ScopeLeaf } from './scope'
 import { staticSource, ValueTree, type EditAffordance, type ValueSource } from './ValueTree'
 import { compileFilter } from './filter'
 import { useDebounced, usePolled, useWaitedSeconds } from './polled'
-import type { DescribedComponent, TypeNode } from './types'
+import type { DescribedAction, DescribedComponent, TypeNode } from './types'
 
 /**
  * The right pane: values, flat, one row each.
@@ -46,7 +46,9 @@ const Collection = ({
     pageSize,
     edit,
     settled,
-    filter
+    filter,
+    actions,
+    onAction
 }: {
     leaf: ScopeLeaf
     types?: { [name: string]: TypeNode }
@@ -57,6 +59,9 @@ const Collection = ({
     settled: number
     /** Compiled once by the pane above, so both halves of the grid answer the same search. */
     filter?: RpcFilter
+    /** What the component says may be done to a row of this resource, already checked to exist. */
+    actions?: DescribedAction[]
+    onAction?: (action: DescribedAction, id: string) => void
 }) => {
     const [page, setPage] = useState(0)
     const [sort, setSort] = useState<RpcSort | undefined>()
@@ -187,7 +192,21 @@ const Collection = ({
                 </p>
             )}
             {data?.ids.map((id) => (
-                <ValueTree key={id} name={`${label}.${id}`} source={source} type={values} types={types} path={[...leaf.path, id]} edit={edit} depth={1} />
+                <div className="collection-row" key={id}>
+                    <ValueTree name={`${label}.${id}`} source={source} type={values} types={types} path={[...leaf.path, id]} edit={edit} depth={1} />
+                    {/* Named calls, not verbs of ours: what is committed is the component's own
+                        method, and the button exists because the component said that method is
+                        about this row. Same rule as an editor drawn from `sets`, one level up. */}
+                    {actions?.length ? (
+                        <span className="row-actions">
+                            {actions.map((action) => (
+                                <button key={action.method} className="toggle" title={`calls ${action.method}(${id})`} onClick={() => onAction?.(action, id)}>
+                                    {action.label ?? action.method}
+                                </button>
+                            ))}
+                        </span>
+                    ) : null}
+                </div>
             ))}
             {/* Three different nothings, and an operator has to be able to tell them apart: a
                 collection with no entries, a search that matched none of them, and a page that ran
@@ -206,6 +225,8 @@ export const ValueGrid = ({
     fetchPage,
     period,
     settled,
+    actionsFor,
+    onAction,
     pageSize = 50
 }: {
     component: DescribedComponent
@@ -219,6 +240,9 @@ export const ValueGrid = ({
     period: number | undefined
     /** Bumped whenever a call settles, so a page that a command may have changed is asked again. */
     settled: number
+    /** What may be done to a row of the resource at this path, if anything. */
+    actionsFor: (path: string[]) => DescribedAction[] | undefined
+    onAction?: (action: DescribedAction, id: string) => void
     pageSize?: number
 }) => {
     const [typed, setTyped] = useState('')
@@ -275,7 +299,19 @@ export const ValueGrid = ({
             ))}
             {filter && all.length > 0 && plain.length === 0 && <p className="muted">no field matches</p>}
             {collections.map((leaf) => (
-                <Collection key={leaf.path.join('.')} leaf={leaf} types={types} fetchPage={fetchPage} period={period} pageSize={pageSize} edit={edit} settled={settled} filter={filter} />
+                <Collection
+                    key={leaf.path.join('.')}
+                    leaf={leaf}
+                    types={types}
+                    fetchPage={fetchPage}
+                    period={period}
+                    pageSize={pageSize}
+                    edit={edit}
+                    settled={settled}
+                    filter={filter}
+                    actions={actionsFor(leaf.path)}
+                    onAction={onAction}
+                />
             ))}
             {leaves.length === 0 && <p className="muted">nothing under this node</p>}
         </div>

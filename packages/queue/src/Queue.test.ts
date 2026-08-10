@@ -427,3 +427,33 @@ test('the dead-letter backlog is a resource a viewer can browse, filter and page
     await consumer.close({ drain: false, timeoutMs: 1000 })
     service.close()
 })
+
+test('a dead letter says what can be done to it, in methods that already existed', async (t) => {
+    const service = new WorkQueueService<{ job: string }>('jobs', QUICK)
+    const queue = workQueueOver<{ job: string }>(service, 'jobs')
+
+    await queue.enqueue({ job: 'poison' })
+    const consumer = await queue.consume(
+        async () => {
+            throw new Error('this task cannot be done')
+        },
+        { consumerId: 'worker-1', waitMs: 300 }
+    )
+    await waitFor(async () => (await queue.stats()).deadLettered === 1, 8000)
+
+    const [resource] = service.dataResources()
+    t.deepEqual(
+        resource.actions?.map((action) => action.method),
+        ['retryDeadLetter', 'discardDeadLetter']
+    )
+    t.is(resource.actions?.[0].label, 'retry')
+    t.true(resource.actions?.[1].confirm, 'the author says which of its own methods are final')
+
+    // The declaration adds no capability: these are the same methods, called the same way, and a
+    // viewer offering them is offering what the component already published.
+    const page = (await service.dataRequest('getList', ['deadLetters'], {})) as { ids: string[] }
+    t.is((await service.retryDeadLetter(page.ids[0])).status, 'ok')
+
+    await consumer.close({ drain: false, timeoutMs: 1000 })
+    service.close()
+})

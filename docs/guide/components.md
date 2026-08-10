@@ -171,6 +171,25 @@ Pages are zero-based, so `page * pageSize` needs no adjustment anywhere. A page 
 
 Every answer carries the `epoch` and `revision` it was drawn from, so a page and a subscription can be compared rather than merely coexist, and a restart is visible to a caller paging through.
 
+### What may be done to a row
+
+A resource can say which of the component's **own methods** apply to a row of it:
+
+```typescript
+{ path: ['deadLetters'], verbs: ['getList'], actions: [
+    { method: 'retryDeadLetter', label: 'retry' },
+    { method: 'discardDeadLetter', label: 'discard', confirm: true }
+] }
+```
+
+This adds no capability at all. Each is an ordinary `@rpc` method that already exists, already appears in `describe()`, and is already ruled on by `authorize()`, the owner fence and idempotency. What the declaration carries is the one fact a viewer cannot work out for itself — *which* existing method is about *which* row — and that is exactly what `sets` does for a field, one level up. The rule is unchanged: a value is never written, a method is called.
+
+Without it a viewer can browse a resource and do nothing to it, because an editor resolves from `sets` and a store-backed resource has no state path for any method to claim.
+
+Each action is called with the row's id and nothing else. `confirm` is the author's judgement about its own method, not a viewer's guess from the name — a console inferring it from the word "discard" would be guessing about a plant, and would be wrong the first time somebody wrote `archive`.
+
+A viewer **checks the method exists** before offering it. A typo in a declaration would otherwise draw a control that always fails, which is worse than no control: an operator finds out by trying it.
+
 ### How long it took, and which half
 
 Every answer carries `ms`, filled in by the dispatcher whoever served the resource. A component that can separate the two halves also reports `queryMs` and `countMs`.
