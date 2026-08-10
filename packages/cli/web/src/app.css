@@ -1421,6 +1421,14 @@ textarea.control {
     margin-left: 0;
 }
 
+/* The two numbers a stalled pane needs: how long this has been waiting, and how long the peer says
+   it spent. Their difference is the link, and without the second a slow query and a dead link look
+   identical from a browser. */
+.waiting,
+.slow {
+    color: var(--warn);
+}
+
 .pager {
     display: flex;
     align-items: center;

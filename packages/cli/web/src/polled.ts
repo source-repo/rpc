@@ -34,8 +34,27 @@ export interface Polled<T> {
     error?: string
     /** A fetch is in flight, which the pane says rather than showing nothing. */
     fetching: boolean
+    /** When the fetch in flight began, so a pane can say how long it has been waiting. */
+    since?: number
     /** Ask now, out of band, and restart the period from the answer. */
     refresh: () => void
+}
+
+/**
+ * Seconds spent waiting, ticking once a second and only while something is being waited for.
+ *
+ * A pane that says `asking…` and nothing else is indistinguishable from a pane that has died,
+ * which during development is most of the time somebody spends wondering what is wrong. A number
+ * that is visibly climbing says the opposite of a number that is not there.
+ */
+export const useWaitedSeconds = (since: number | undefined) => {
+    const [, tick] = useState(0)
+    useEffect(() => {
+        if (since === undefined) return
+        const timer = setInterval(() => tick((count) => count + 1), 1000)
+        return () => clearInterval(timer)
+    }, [since])
+    return since === undefined ? undefined : Math.floor((Date.now() - since) / 1000)
 }
 
 /**
@@ -67,6 +86,7 @@ export const usePolled = <T,>(request: () => Promise<T>, periodMs: number | unde
     const [data, setData] = useState<T | undefined>()
     const [error, setError] = useState<string | undefined>()
     const [fetching, setFetching] = useState(false)
+    const [since, setSince] = useState<number | undefined>()
     // The request as of this render, read at call time rather than captured, so the period never
     // holds a closure over a page number the operator has already moved off.
     const latest = useRef(request)
@@ -86,6 +106,7 @@ export const usePolled = <T,>(request: () => Promise<T>, periodMs: number | unde
             clear()
             if (stopped) return
             setFetching(true)
+            setSince(Date.now())
             try {
                 const answer = await latest.current()
                 if (stopped) return
@@ -99,6 +120,7 @@ export const usePolled = <T,>(request: () => Promise<T>, periodMs: number | unde
             } finally {
                 if (!stopped) {
                     setFetching(false)
+                    setSince(undefined)
                     if (periodMs !== undefined && document.visibilityState === 'visible') timer.current = setTimeout(() => void run(), periodMs)
                 }
             }
@@ -117,5 +139,5 @@ export const usePolled = <T,>(request: () => Promise<T>, periodMs: number | unde
         }
     }, [key, periodMs])
 
-    return { data, error, fetching, refresh: useCallback(() => cycle.current(), []) }
+    return { data, error, fetching, since, refresh: useCallback(() => cycle.current(), []) }
 }

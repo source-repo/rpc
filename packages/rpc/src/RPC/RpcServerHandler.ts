@@ -50,7 +50,7 @@ import {
     type RpcProjectionEntry,
     type RpcProjectionSlice
 } from './Component.js'
-import { declaredResource, getList, getMany, getManyReference, readDataRequest, type RpcDataResources, type RpcGetListParams, type RpcGetManyParams, type RpcGetManyReferenceParams } from './DataProvider.js'
+import { declaredResource, getList, getMany, getManyReference, readDataRequest, SLOW_DATA_REQUEST_MS, type RpcDataResources, type RpcGetListParams, type RpcGetManyParams, type RpcGetManyReferenceParams } from './DataProvider.js'
 import { RpcSchema, validateParams, validateValue, type ComponentSchema } from './Schema.js'
 import { describeProblems, namespaceProblems } from './Compatibility.js'
 
@@ -732,13 +732,27 @@ export class RpcServerHandler extends MessageModule<Message<RpcMessage>, RpcMess
                         await this.sendError(payload.id, source, 'InvalidParams', `$data: ${request.resource.join('.')} answers ${declared.verbs.join(', ')}, not ${request.method}`)
                         return
                     }
-                    const result = declared
+                    // Timed by the dispatcher rather than by whoever answered, so the number is
+                    // there however the resource was served and no implementor has to remember it.
+                    // It exists for the failure that is otherwise invisible: from a browser, a
+                    // request slow enough to notice looks exactly like a link that has gone.
+                    const began = Date.now()
+                    const answer = declared
                         ? await (inst as unknown as RpcDataResources).dataRequest(request.method, request.resource, request.params)
                         : request.method === 'getMany'
                           ? getMany(inst, request.resource, request.params as RpcGetManyParams)
                           : request.method === 'getManyReference'
                             ? getManyReference(inst, request.resource, request.params as RpcGetManyReferenceParams)
                             : getList(inst, request.resource, request.params as RpcGetListParams)
+                    const spent = Date.now() - began
+                    // Said on the peer, because this is the one thing a console cannot see: the
+                    // library-served path sorts and filters synchronously, so a large enough
+                    // collection holds the event loop and *everything* this peer does stops -
+                    // snapshots included. From the outside that is indistinguishable from a dead
+                    // link, and the only place that knows better is here.
+                    if (spent >= SLOW_DATA_REQUEST_MS)
+                        this.emit('slowRequest', { source, path: payload.path, method: request.method, resource: request.resource, ms: spent, served: declared ? 'component' : 'library' })
+                    const result = answer && typeof answer === 'object' ? { ...(answer as object), ms: spent } : answer
                     await this.respond(payload.id, source, { type: RpcMessageType.success, result, id: payload.id } as RpcSuccessPayload, MessageType.ResponseMessage)
                 } else await this.sendError(payload.id, source, map ? 'MethodNotFound' : 'ClassNotFound', `${payload.path}.${payload.method} is not exposed`)
                 return

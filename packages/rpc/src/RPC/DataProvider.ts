@@ -54,12 +54,38 @@ export interface RpcGetManyParams {
  */
 const MAX_GET_MANY_IDS = 1000
 
-export interface RpcGetManyResult {
+export interface RpcGetManyResult extends RpcDataTiming {
     /** The ids that were found, in the order they were asked for. */
     readonly ids: readonly string[]
     readonly data: readonly unknown[]
     readonly epoch: string
     readonly revision: number
+}
+
+/**
+ * How long the peer spent answering, in milliseconds.
+ *
+ * Filled in by the dispatcher rather than by the component, so it is there whoever answered and no
+ * implementor has to remember it. It exists for the failure that is otherwise invisible: a request
+ * that takes long enough to be noticed looks, from a browser, exactly like a link that has gone -
+ * and the one number that tells those apart is how long the *peer* thought it took.
+ *
+ * Wall time, so it includes waiting on a store as well as work done on the loop. A large number
+ * means slow rather than necessarily blocking; `slowRequest` on the server is what names the peer
+ * that stalled itself.
+ */
+/**
+ * How long a request may take before the peer says so, unprompted.
+ *
+ * A quarter of a second is already a visible stall on something that also publishes snapshots, and
+ * during development it is the difference between "the console is broken" and "that query is slow".
+ * Deliberately not configurable: a threshold somebody has to find and raise is one nobody sets, and
+ * this only ever emits an event - it refuses nothing and slows nothing down.
+ */
+export const SLOW_DATA_REQUEST_MS = 250
+
+export interface RpcDataTiming {
+    readonly ms?: number
 }
 
 /**
@@ -137,7 +163,7 @@ export interface RpcGetManyReferenceParams extends RpcGetListParams {
     readonly id: string | number
 }
 
-export interface RpcGetListResult {
+export interface RpcGetListResult extends RpcDataTiming {
     /** The rows of this page, in key order. */
     readonly data: readonly unknown[]
     /**

@@ -3,7 +3,7 @@ import { matchesFilter, type RpcFilter, type RpcGetListResult, type RpcSort } fr
 import { leavesUnder, typeAt, type ScopeLeaf } from './scope'
 import { staticSource, ValueTree, type EditAffordance, type ValueSource } from './ValueTree'
 import { compileFilter } from './filter'
-import { useDebounced, usePolled } from './polled'
+import { useDebounced, usePolled, useWaitedSeconds } from './polled'
 import type { DescribedComponent, TypeNode } from './types'
 
 /**
@@ -92,7 +92,7 @@ const Collection = ({
     // makes the file binary to everything that sniffs content: grep matches and prints nothing,
     // and git stops diffing it. See CLAUDE.md - this has cost this repository time twice.
     const question = [label, page, pageSize, settled, ordering].join('\u0001')
-    const { data, error, fetching } = usePolled(() => fetchPage(leaf.path, page, pageSize, filter, sort), period, question)
+    const { data, error, fetching, since } = usePolled(() => fetchPage(leaf.path, page, pageSize, filter, sort), period, question)
 
     /**
      * The answer as something a row can read from.
@@ -113,6 +113,9 @@ const Collection = ({
         [data, leaf.path]
     )
 
+    // Ticking while a fetch is in flight, and absent otherwise. A pane that says `asking…` and
+    // nothing else looks exactly like one that has died.
+    const waited = useWaitedSeconds(since)
     const total = data?.total ?? 0
     const pages = pageSize > 0 ? Math.ceil(total / pageSize) : 1
 
@@ -125,6 +128,12 @@ const Collection = ({
                     {/* Said out loud rather than shown as a blank: the rows below are the last
                         answer, and an operator has to know which of the two they are reading. */}
                     {fetching && data ? ' · refreshing' : ''}
+                    {/* Two different numbers, and both are worth having. How long this has been
+                        waiting says the request is alive; how long the peer spent says where the
+                        time went - and their difference is the link. Without the second, a slow
+                        query and a dead link look the same from here. */}
+                    {waited !== undefined && waited > 0 && <span className="waiting"> {waited}s</span>}
+                    {!fetching && data?.ms !== undefined && data.ms >= 250 && <span className="slow"> · peer {data.ms} ms</span>}
                 </span>
                 {/* Ordering is the peer's, over the whole matched set - an order applied to the
                     fifty rows already here would be an order over nothing, and would disagree with
@@ -163,7 +172,11 @@ const Collection = ({
                     </span>
                 )}
             </div>
-            {error && <p className="component-error">{error}</p>}
+            {error && (
+                <p className="component-error">
+                    {label}: {error}
+                </p>
+            )}
             {data?.ids.map((id) => (
                 <ValueTree key={id} name={`${label}.${id}`} source={source} type={values} types={types} path={[...leaf.path, id]} edit={edit} depth={1} />
             ))}

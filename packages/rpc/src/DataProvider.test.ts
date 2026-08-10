@@ -483,3 +483,45 @@ test('getManyReference is getList with the join already in hand', async (t) => {
     await client.close()
     await server.close()
 })
+
+test('an answer says how long the peer spent, and a peer that stalled itself says so', async (t) => {
+    const server = new RpcServer({ name: peer('slow3932'), transports: [{ port: 3932, host: '127.0.0.1' }], exposeIntrospection: true })
+
+    /** A resource that takes its time, which is the case this exists to make visible. */
+    @rpcNamespace('slow')
+    class Slow extends RpcComponent<{ label: string }, { ready: boolean }> implements RpcDataResources {
+        constructor() {
+            super({ label: 's' }, { ready: true })
+        }
+        dataResources() {
+            return [{ path: ['sludge'], verbs: ['getList'] as const }]
+        }
+        async dataRequest() {
+            await new Promise((resolve) => setTimeout(resolve, 400))
+            return { ids: ['a'], data: [1], total: 1, epoch: 'e', revision: 1 }
+        }
+    }
+
+    const stalls: { ms: number; served: string; resource: string[] }[] = []
+    server.rpc.on('slowRequest', (report: { ms: number; served: string; resource: string[] }) => stalls.push(report))
+    server.exposeClassInstance(new Slow())
+    await server.ready()
+
+    const client = new RpcClient('http://localhost:3932', { name: peer('asker3932'), defaultTarget: peer('slow3932') })
+    const proxy = await client.proxy<{ $data(method: 'getList', resource: readonly string[]): Promise<{ ms?: number }> }>('slow')
+
+    // The number that tells a slow answer from a dead link. Without it, a browser cannot tell which
+    // of the two it is looking at, and that is most of the time somebody spends wondering.
+    const answer = await proxy.$data('getList', ['sludge'])
+    t.true((answer.ms ?? 0) >= 400, `the peer reported ${answer.ms} ms`)
+
+    // And the half a console cannot see: the peer saying it held itself up. Emitted where the time
+    // went, because from outside a stalled peer and an absent one look identical.
+    t.is(stalls.length, 1)
+    t.true(stalls[0].ms >= 400)
+    t.is(stalls[0].served, 'component')
+    t.deepEqual([...stalls[0].resource], ['sludge'])
+
+    await client.close()
+    await server.close()
+})

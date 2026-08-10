@@ -95,6 +95,16 @@ What the box compiles to is **data, never a program**: `{ field: 'quality', op: 
 
 Typing settles before it asks, so eight keystrokes are one question. The count beside the pager is the number of *matches*, and the three ways a page can be empty stay distinguishable: `empty`, `nothing matches`, and `past the end` for a set that shrank while it was being read.
 
+### When nothing is happening, it says so
+
+A pane that reads `asking…` and nothing else is indistinguishable from one that has died, and that is most of the time anybody spends wondering what is wrong. So it shows two numbers instead of one.
+
+**How long it has been waiting**, ticking, while a fetch is in flight. **How long the peer says it spent**, once the answer lands and only when that is long enough to matter. Their difference is the link — and without the second, a slow query and a dead link look identical from a browser.
+
+The peer reports the other half itself. A `slowRequest` event fires on the server when a `$data` request takes long enough to have held it up, naming the resource, the time and whether the component or the library answered. That belongs there rather than here, because the library-served path filters and sorts **synchronously**: a large enough collection holds the event loop, and everything that peer does stops — snapshots included. From outside, a peer stalled on its own query and a peer that has gone are the same silence.
+
+An error names the resource it was asking about, rather than only what went wrong.
+
 ### How often it asks
 
 A subscription's rate belongs to the component — its commit rate and its publish bound. On a slow link that is backwards, so the pages are polled at a period the person watching sets: 1s, 5s, 30s, or manual with a refresh.

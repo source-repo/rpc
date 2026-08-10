@@ -26,6 +26,16 @@ A component serving its own resources answers through one `dataRequest(method, r
 
 The console's grid can now be ordered by the key or by any field the row type declares, ascending or descending. Drawn from the type rather than from a row, so the choices are the same on an empty collection as on a full one — and the order is the peer's, over the whole matched set, because an order applied to the fifty rows already on screen would disagree with itself the moment a page was turned.
 
+### A slow answer stops looking like a dead link
+
+Development is where this bites: something is not well designed yet, a pane sits there for a minute, and nothing anywhere says why. Two numbers and one event fix most of it.
+
+Every `$data` answer now carries **`ms`, how long the peer spent**, filled in by the dispatcher so it is there whoever served the resource and no implementor has to remember it. The console shows it beside the rows, and shows **how long it has been waiting** while a fetch is in flight. Their difference is the link; without the second number a slow query and a dead link are the same thing from a browser.
+
+The peer reports the half a console cannot see. **`slowRequest`** fires on the server when a request takes long enough to have held it up, naming the resource, the time, and whether the component or the library answered. That matters because the library-served path filters and sorts **synchronously**: a large enough collection holds the event loop and everything that peer does stops, snapshots included, and from outside that is indistinguishable from a peer that has gone.
+
+An error in the grid names the resource it was asking about rather than only what went wrong.
+
 ### `getManyReference`, which is one-to-many and almost no code
 
 The rows of one resource that point at one row of another: the orders of this customer, the readings of this tag. Served as `getList` with the reference and-ed onto whatever filter the caller sent, rather than as a second implementation — so paging, ordering, the count of matches and the treatment of a page past the end are identical by construction rather than by having been written twice the same way. `total` is the count of referencing rows, which is what a pager under a record needs, and a caller's own filter narrows further rather than replacing the reference.
