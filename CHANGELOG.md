@@ -16,6 +16,16 @@ The filter is a closed grammar and never an expression: `{ field, op, operand }`
 
 `RpcProjectionSlice` keeps its job as the **live window** on a record — it pushes, where this answers — and is now the primitive for a program that wants to watch a range rather than browse one.
 
+### `getMany`, and an order the operator picks
+
+`$data('getMany', resource, { ids })` answers rows a caller already named. Plural from the start, and that is the whole point: a page of fifty rows each naming a customer is fifty lookups, and fifty calls is fifty envelopes and — on MQTT — fifty exchanges. One call for the page is what makes a reference field affordable at all, and resolving a foreign key to a value is the next thing it buys.
+
+Rows come back in the order asked. An id reaching nothing is **absent** rather than null, because "this row is gone" and "this row has no value" are different facts and one of them means a reference is dangling. No `total`, since nothing here is a page. Bounded at 1000 ids, because it arrives from the network.
+
+A component serving its own resources answers through one `dataRequest(method, resource, params)` rather than a method per verb, for the reason `$data` is one verb: `getManyReference` then becomes a value it already switches on rather than a method every implementor has to grow.
+
+The console's grid can now be ordered by the key or by any field the row type declares, ascending or descending. Drawn from the type rather than from a row, so the choices are the same on an empty collection as on a full one — and the order is the peer's, over the whole matched set, because an order applied to the fifty rows already on screen would disagree with itself the moment a page was turned.
+
 ### A component may serve collections its contract cannot describe
 
 A record in `props` or `state` needs nothing declared: it is in the published type, so a viewer finds it by reading the contract. A table, a document collection or a queue is the other kind — **what resources exist is itself data**, discovered when the component connects to its store, so it cannot be extracted from source and has to be said at runtime.

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { matchesFilter, type RpcFilter, type RpcGetListResult } from '@source-repo/rpc'
+import { matchesFilter, type RpcFilter, type RpcGetListResult, type RpcSort } from '@source-repo/rpc'
 import { leavesUnder, typeAt, type ScopeLeaf } from './scope'
 import { staticSource, ValueTree, type EditAffordance, type ValueSource } from './ValueTree'
 import { compileFilter } from './filter'
@@ -29,7 +29,7 @@ import type { DescribedComponent, TypeNode } from './types'
  */
 
 /** How a page is fetched. Supplied by whoever holds the link, so this component opens nothing. */
-export type FetchPage = (resource: readonly string[], page: number, pageSize: number, filter?: RpcFilter) => Promise<RpcGetListResult>
+export type FetchPage = (resource: readonly string[], page: number, pageSize: number, filter?: RpcFilter, sort?: RpcSort) => Promise<RpcGetListResult>
 
 /**
  * One collection, paged.
@@ -59,17 +59,29 @@ const Collection = ({
     filter?: RpcFilter
 }) => {
     const [page, setPage] = useState(0)
+    const [sort, setSort] = useState<RpcSort | undefined>()
     const label = leaf.path.join('.')
-    const filterKey = JSON.stringify(filter ?? null)
+    const values = leaf.type?.kind === 'record' ? leaf.type.values : leaf.type?.kind === 'array' ? leaf.type.items : undefined
+    const ordering = JSON.stringify([filter ?? null, sort ?? null])
 
     // Adjusted during the render that noticed it, rather than in an effect afterwards. An effect
     // would let one request go out for page five of a set the filter has just emptied, and a second
     // for page zero - two questions where the operator asked one, on the link least able to spare it.
-    const [asked, setAsked] = useState(filterKey)
-    if (asked !== filterKey) {
-        setAsked(filterKey)
+    // A new order does the same: page five of an old order holds nothing an operator asked to see.
+    const [asked, setAsked] = useState(ordering)
+    if (asked !== ordering) {
+        setAsked(ordering)
         setPage(0)
     }
+
+    /**
+     * What may be ordered by: the id, and whatever the contract says a row holds.
+     *
+     * Drawn from the row type rather than from a row, so the choices exist before any data arrives
+     * and are the same on an empty collection as on a full one - and so a field that is null in
+     * every row currently loaded is still offered, which a value-driven list could not manage.
+     */
+    const sortable = values?.kind === 'object' ? Object.keys(values.fields) : []
 
     // What identifies the question, so turning a page starts a new one and a re-render does not.
     // `settled` is in it because a call that has just changed something makes this a different
@@ -79,8 +91,8 @@ const Collection = ({
     // The separator is written as an escape and never as the byte. A literal control character
     // makes the file binary to everything that sniffs content: grep matches and prints nothing,
     // and git stops diffing it. See CLAUDE.md - this has cost this repository time twice.
-    const question = [label, page, pageSize, settled, filterKey].join('\u0001')
-    const { data, error, fetching } = usePolled(() => fetchPage(leaf.path, page, pageSize, filter), period, question)
+    const question = [label, page, pageSize, settled, ordering].join('\u0001')
+    const { data, error, fetching } = usePolled(() => fetchPage(leaf.path, page, pageSize, filter, sort), period, question)
 
     /**
      * The answer as something a row can read from.
@@ -103,7 +115,6 @@ const Collection = ({
 
     const total = data?.total ?? 0
     const pages = pageSize > 0 ? Math.ceil(total / pageSize) : 1
-    const values = leaf.type?.kind === 'record' ? leaf.type.values : leaf.type?.kind === 'array' ? leaf.type.items : undefined
 
     return (
         <div className="collection">
@@ -114,6 +125,29 @@ const Collection = ({
                     {/* Said out loud rather than shown as a blank: the rows below are the last
                         answer, and an operator has to know which of the two they are reading. */}
                     {fetching && data ? ' · refreshing' : ''}
+                </span>
+                {/* Ordering is the peer's, over the whole matched set - an order applied to the
+                    fifty rows already here would be an order over nothing, and would disagree with
+                    itself the moment a page was turned. */}
+                <span className="sorter">
+                    <select
+                        className="period"
+                        value={sort?.field ?? ''}
+                        title="order the whole matched set, not this page"
+                        onChange={(event) => setSort(event.target.value ? { field: event.target.value, order: sort?.order ?? 'ASC' } : undefined)}
+                    >
+                        <option value="">by key</option>
+                        {sortable.map((field) => (
+                            <option key={field} value={field}>
+                                by {field}
+                            </option>
+                        ))}
+                    </select>
+                    {sort && (
+                        <button className="toggle" title={sort.order === 'DESC' ? 'descending' : 'ascending'} onClick={() => setSort({ ...sort, order: sort.order === 'DESC' ? 'ASC' : 'DESC' })}>
+                            {sort.order === 'DESC' ? '▾' : '▴'}
+                        </button>
+                    )}
                 </span>
                 {pages > 1 && (
                     <span className="pager">

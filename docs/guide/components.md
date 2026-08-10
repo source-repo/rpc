@@ -140,11 +140,11 @@ A record in `props` or `state` needs nothing declared: it is in the published ty
 ```typescript
 class Store extends RpcComponent<StoreProps, StoreState> implements RpcDataResources {
     dataResources() {
-        return [{ path: ['customers'], verbs: ['getList'], label: 'Customers', row: customerRow }]
+        return [{ path: ['customers'], verbs: ['getList', 'getMany'], label: 'Customers', row: customerRow }]
     }
 
-    dataList(resource: readonly string[], params: RpcGetListParams) {
-        return this.query(resource, params)      // whatever the store actually is
+    dataRequest(method: RpcDataMethod, resource: readonly string[], params: RpcGetListParams | RpcGetManyParams) {
+        return this.query(method, resource, params)      // whatever the store actually is
     }
 }
 ```
@@ -171,7 +171,17 @@ Pages are zero-based, so `page * pageSize` needs no adjustment anywhere. A page 
 
 Every answer carries the `epoch` and `revision` it was drawn from, so a page and a subscription can be compared rather than merely coexist, and a restart is visible to a caller paging through.
 
-Writes are ordinary declared methods that happen to have standard names, so `authorize()`, the owner fence and idempotency all apply per call and none of it is special-cased. `getOne`, `getMany` and the relational verbs — resolving foreign keys to values, one-to-many under a record — are the same shape pointed at a second resource, and are not served yet.
+### Rows a caller already knows the ids of
+
+```typescript
+const rows = await field.$data('getMany', ['state', 'tags'], { ids: ['tag.007', 'tag.001'] })
+```
+
+Plural from the start, and that is the whole point: a page of fifty rows each naming a customer is fifty lookups, and fifty calls is fifty envelopes and — on MQTT — fifty exchanges. One `getMany` for the page is what makes a reference field affordable at all, and it is the same instinct `rpcWrites` and a projection's path list already apply by hand.
+
+Rows come back **in the order asked**, so a caller pairing them to the fields that named them does not have to sort them itself. An id that reaches nothing is **absent** rather than filled with a null, because "this row is gone" and "this row has no value" are different facts and one of them means a reference is dangling. There is no `total`: nothing here is a page, so nothing here has a count of pages. The request is bounded at 1000 ids, since it arrives from the network and ten thousand in one frame is a caller that meant to page.
+
+Writes are ordinary declared methods that happen to have standard names, so `authorize()`, the owner fence and idempotency all apply per call and none of it is special-cased. `getOne` and `getManyReference` — one-to-many under a record — are the same shape pointed at a second resource, and are not served yet.
 
 ## Publishing bounds
 

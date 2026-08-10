@@ -1,6 +1,6 @@
 import test from 'ava'
 import { randomUUID } from 'crypto'
-import { rpc, rpcNamespace, rpcComponent, RpcClient, RpcComponent, RpcServer, type Introspection, type RpcComponentProxy, type RpcDataResources, type RpcGetListParams, type RpcGetListResult } from './index.js'
+import { rpc, rpcNamespace, rpcComponent, RpcClient, RpcComponent, RpcServer, type Introspection, type RpcComponentProxy, type RpcDataMethod, type RpcDataResources, type RpcGetManyParams, type RpcGetListParams } from './index.js'
 
 /**
  * Paging a collection by asking for it, which is the half a projection cannot do.
@@ -306,14 +306,19 @@ class Store extends RpcComponent<{ label: string }, { connected: boolean }> impl
 
     dataResources() {
         return [
-            { path: ['customers'], verbs: ['getList'] as const, label: 'Customers', row: { kind: 'object' as const, fields: { name: { type: { kind: 'string' as const } } } } },
+            { path: ['customers'], verbs: ['getList', 'getMany'] as const, label: 'Customers', row: { kind: 'object' as const, fields: { name: { type: { kind: 'string' as const } } } } },
             { path: ['orders'], verbs: ['getManyReference'] as const }
         ]
     }
 
-    dataList(resource: readonly string[], params: RpcGetListParams): RpcGetListResult {
-        const ids = Object.keys(this.customers).slice(0, params.pagination?.pageSize ?? undefined)
-        return { ids, data: ids.map((id) => this.customers[id as keyof typeof this.customers]), total: 3, epoch: 'store', revision: 1 }
+    dataRequest(method: RpcDataMethod, resource: readonly string[], params: RpcGetListParams | RpcGetManyParams) {
+        const row = (id: string) => this.customers[id as keyof typeof this.customers]
+        if (method === 'getMany') {
+            const ids = (params as RpcGetManyParams).ids.filter(row)
+            return { ids, data: ids.map(row), epoch: 'store', revision: 1 }
+        }
+        const ids = Object.keys(this.customers).slice(0, (params as RpcGetListParams).pagination?.pageSize ?? undefined)
+        return { ids, data: ids.map(row), total: 3, epoch: 'store', revision: 1 }
     }
 }
 
@@ -337,7 +342,7 @@ test('a component may serve collections its contract cannot describe', async (t)
     t.is(store?.component?.resources?.[0].row?.kind, 'object')
 
     // And the same verb reaches it, answered by the component rather than from its state.
-    const proxy = await client.proxy<{ $data(method: 'getList', resource: readonly string[], params?: RpcGetListParams): Promise<RpcGetListResult> }>('store')
+    const proxy = await client.proxy<RpcComponentProxy<Store>>('store')
     const page = await proxy.$data('getList', ['customers'], { pagination: { page: 0, pageSize: 2 } })
     t.deepEqual([...page.ids], ['c1', 'c2'])
     t.deepEqual(page.data[0], { name: 'Acme Ltd' })
@@ -348,12 +353,53 @@ test('a component may serve collections its contract cannot describe', async (t)
     const wrong = await t.throwsAsync(proxy.$data('getList', ['orders']))
     t.regex(String(wrong?.message), /answers getManyReference, not getList/)
 
+    // And the verbs it does claim reach it, through the one hook shaped like the wire verb.
+    const named = await proxy.$data('getMany', ['customers'], { ids: ['c3', 'c1'] })
+    t.deepEqual([...named.ids], ['c3', 'c1'])
+    t.deepEqual(named.data[0], { name: 'Cyberdyne' })
+
     // A path the component did not declare still falls through to its state, which is what keeps an
     // ordinary component working without implementing anything - and what stops a component that
     // serves resources from losing access to its own.
     const fromState = await proxy.$data('getList', ['state'])
     t.deepEqual([...fromState.ids], ['connected'], 'served from the state by the base class, not by dataList')
     t.is(fromState.total, 1)
+
+    await client.close()
+    await server.close()
+})
+
+test('getMany answers rows a caller already named, in one call rather than one each', async (t) => {
+    const server = new RpcServer({ name: peer('field3930'), transports: [{ port: 3930, host: '127.0.0.1' }] })
+    server.exposeClassInstance(new Field())
+    await server.ready()
+
+    const client = new RpcClient('http://localhost:3930', { name: peer('asker3930'), defaultTarget: peer('field3930') })
+    const field = await client.proxy<FieldProxy>('field')
+
+    const some = await field.$data('getMany', ['state', 'tags'], { ids: ['tag.007', 'tag.001', 'tag.299'] })
+    t.deepEqual([...some.ids], ['tag.007', 'tag.001', 'tag.299'], 'in the order asked, so a caller need not re-sort them')
+    t.deepEqual(some.data[0], { value: 7, unit: '°C', quality: 'good' })
+
+    // Absent rather than null, so "this row is gone" and "this row has no value" stay different
+    // answers - one of them means a reference is dangling, which is worth being able to see.
+    const partly = await field.$data('getMany', ['state', 'tags'], { ids: ['tag.002', 'nosuchtag'] })
+    t.deepEqual([...partly.ids], ['tag.002'])
+    t.is(partly.data.length, 1)
+
+    // The reason it is plural. Fifty rows naming fifty customers is one call and one envelope here,
+    // where fifty getOnes would be fifty of each - and on MQTT fifty exchanges as well.
+    const fifty = Array.from({ length: 50 }, (_, index) => `tag.${String(index).padStart(3, '0')}`)
+    const batch = await field.$data('getMany', ['state', 'tags'], { ids: fifty })
+    t.is(batch.ids.length, 50)
+
+    // Bounded, because this arrives from the network: ten thousand ids in one frame is a caller
+    // that meant to page instead.
+    const flood = await t.throwsAsync(field.$data('getMany', ['state', 'tags'], { ids: Array.from({ length: 1001 }, (_, index) => String(index)) }))
+    t.regex(String(flood?.message), /bounded at 1000 ids/)
+
+    const empty = await t.throwsAsync(field.$data('getMany', ['state', 'tags'], { ids: [] }))
+    t.regex(String(empty?.message), /non-empty array of string ids/)
 
     await client.close()
     await server.close()

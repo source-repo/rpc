@@ -50,7 +50,7 @@ import {
     type RpcProjectionEntry,
     type RpcProjectionSlice
 } from './Component.js'
-import { declaredResource, getList, readDataRequest, type RpcDataResources } from './DataProvider.js'
+import { declaredResource, getList, getMany, readDataRequest, type RpcDataResources, type RpcGetListParams, type RpcGetManyParams } from './DataProvider.js'
 import { RpcSchema, validateParams, validateValue, type ComponentSchema } from './Schema.js'
 import { describeProblems, namespaceProblems } from './Compatibility.js'
 
@@ -732,7 +732,11 @@ export class RpcServerHandler extends MessageModule<Message<RpcMessage>, RpcMess
                         await this.sendError(payload.id, source, 'InvalidParams', `$data: ${request.resource.join('.')} answers ${declared.verbs.join(', ')}, not ${request.method}`)
                         return
                     }
-                    const result = declared ? await (inst as unknown as RpcDataResources).dataList(request.resource, request.params) : getList(inst, request.resource, request.params)
+                    const result = declared
+                        ? await (inst as unknown as RpcDataResources).dataRequest(request.method, request.resource, request.params)
+                        : request.method === 'getMany'
+                          ? getMany(inst, request.resource, request.params as RpcGetManyParams)
+                          : getList(inst, request.resource, request.params as RpcGetListParams)
                     await this.respond(payload.id, source, { type: RpcMessageType.success, result, id: payload.id } as RpcSuccessPayload, MessageType.ResponseMessage)
                 } else await this.sendError(payload.id, source, map ? 'MethodNotFound' : 'ClassNotFound', `${payload.path}.${payload.method} is not exposed`)
                 return

@@ -31,10 +31,36 @@ import type { TypeNode } from './Schema.js'
  * them itself instead.
  */
 
-/** What a caller may ask for. Only `getList` is served today; the rest are named so a refusal can say so. */
+/** What a caller may ask for. The unserved ones are named so a refusal can say what is. */
 export type RpcDataMethod = 'getList' | 'getOne' | 'getMany' | 'getManyReference'
 
-const served: readonly RpcDataMethod[] = ['getList']
+const served: readonly RpcDataMethod[] = ['getList', 'getMany']
+
+/**
+ * Rows by id, which is how a foreign key becomes a value.
+ *
+ * Plural from the start, and that is the whole point of it: a page of fifty rows each naming a
+ * customer is fifty lookups, and fifty calls is fifty envelopes and - on MQTT - fifty exchanges.
+ * One `getMany` for the page is the same instinct `rpcWrites` and a projection's path list already
+ * apply by hand, and it is what a reference field on a grid needs to be affordable at all.
+ */
+export interface RpcGetManyParams {
+    readonly ids: readonly string[]
+}
+
+/**
+ * A bound, because this arrives from the network. Fifty rows referencing fifty distinct customers
+ * is the shape it is for; ten thousand ids in one frame is a caller that meant to page instead.
+ */
+const MAX_GET_MANY_IDS = 1000
+
+export interface RpcGetManyResult {
+    /** The ids that were found, in the order they were asked for. */
+    readonly ids: readonly string[]
+    readonly data: readonly unknown[]
+    readonly epoch: string
+    readonly revision: number
+}
 
 /**
  * What a condition may do. A closed set, and deliberately not an expression.
@@ -171,8 +197,15 @@ export interface RpcDataResource {
 export interface RpcDataResources {
     /** What this component serves. Read at describe time, so it may change as the store does. */
     dataResources(): readonly RpcDataResource[]
-    /** Answer one page of one of them. Reached only for a path `dataResources()` named. */
-    dataList(resource: RpcResource, params: RpcGetListParams): RpcGetListResult | Promise<RpcGetListResult>
+    /**
+     * Answer one request against one of them. Reached only for a path `dataResources()` named, and
+     * only for a verb that resource claimed.
+     *
+     * Shaped like the wire verb rather than one method per verb, for the reason `$data` is: adding
+     * `getManyReference` is then a value a component already switches on rather than a method every
+     * implementor has to grow.
+     */
+    dataRequest(method: RpcDataMethod, resource: RpcResource, params: RpcGetListParams | RpcGetManyParams): unknown | Promise<unknown>
 }
 
 /**
@@ -183,7 +216,7 @@ export interface RpcDataResources {
  * for resources it never listed could not be found at all.
  */
 export const servesDataResources = (instance: object): instance is RpcDataResources =>
-    typeof (instance as RpcDataResources).dataResources === 'function' && typeof (instance as RpcDataResources).dataList === 'function'
+    typeof (instance as RpcDataResources).dataResources === 'function' && typeof (instance as RpcDataResources).dataRequest === 'function'
 
 /** The declared resource a path names, if any. Paths into the component's own state match nothing. */
 export const declaredResource = (instance: object, resource: RpcResource): RpcDataResource | undefined =>
@@ -208,8 +241,14 @@ export const readDataRequest = (method: unknown, resource: unknown, params: unkn
         return new Error(`$data: ${String(method)} is not served here - this component answers ${served.join(', ')}`)
     if (!Array.isArray(resource) || !resource.length || !resource.every((segment) => typeof segment === 'string'))
         return new Error('$data: a resource is a non-empty path of string segments, such as ["state","tags"]')
-    const given = (params ?? {}) as RpcGetListParams
+    const given = (params ?? {}) as RpcGetListParams & RpcGetManyParams
     if (typeof given !== 'object') return new Error('$data: params is an object, or absent')
+    if (method === 'getMany') {
+        if (!Array.isArray(given.ids) || !given.ids.length || !given.ids.every((id) => typeof id === 'string'))
+            return new Error('$data: getMany takes a non-empty array of string ids')
+        if (given.ids.length > MAX_GET_MANY_IDS) return new Error(`$data: getMany is bounded at ${MAX_GET_MANY_IDS} ids; ask for a page instead`)
+        return { method: method as RpcDataMethod, resource: resource as RpcResource, params: given }
+    }
     const pagination = given.pagination
     if (pagination !== undefined) {
         if (typeof pagination !== 'object' || pagination === null) return new Error('$data: pagination is { page, pageSize }')
@@ -400,6 +439,24 @@ const compare = (a: unknown, b: unknown): number => {
  * over sorted keys is a contiguous range rather than a scan, which is what makes this affordable on
  * something larger than a record held in memory.
  */
+/**
+ * The rows a caller already knows the ids of.
+ *
+ * Ids that reach nothing are **absent from the answer** rather than filled with a null, so a caller
+ * can tell "this row is gone" from "this row has no value", which on a plant are different facts and
+ * one of them means a reference is dangling. Answered in the order asked, so a caller pairing rows
+ * back to the fields that named them does not have to sort them itself.
+ *
+ * There is no `total`: a caller that named the ids knows how many it asked for, and how many came
+ * back is `ids.length`. Nothing here is a page, so nothing here has a count of pages.
+ */
+export const getMany = (component: object, resource: RpcResource, params: RpcGetManyParams): RpcGetManyResult => {
+    const snapshot = componentSnapshot(component)
+    const collection = collectionAt(snapshot, resource) ?? {}
+    const found = params.ids.filter((id) => Object.prototype.hasOwnProperty.call(collection, id))
+    return { ids: found, data: found.map((id) => collection[id]), epoch: snapshot.epoch, revision: snapshot.revision }
+}
+
 export const getList = (component: object, resource: RpcResource, params: RpcGetListParams): RpcGetListResult => {
     const snapshot = componentSnapshot(component)
     const collection = collectionAt(snapshot, resource) ?? {}

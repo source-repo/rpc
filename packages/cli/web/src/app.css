@@ -1408,6 +1408,19 @@ textarea.control {
     padding: 1px 5px;
 }
 
+/* Beside the pager, because the two together are how a set of rows is navigated: which slice, and
+   in what order. Both are the peer's answers rather than rearrangements of what is already here. */
+.sorter {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    margin-left: auto;
+}
+
+.sorter + .pager {
+    margin-left: 0;
+}
+
 .pager {
     display: flex;
     align-items: center;

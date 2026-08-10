@@ -227,11 +227,11 @@ export const ComponentPanel = ({
      * Read from the link at call time like every other call this panel makes, so a page turn during
      * a reconnect uses the link that exists then rather than one captured when the pane opened.
      */
-    const fetchPage: FetchPage = async (resource, page, pageSize, filter) => {
+    const fetchPage: FetchPage = async (resource, page, pageSize, filter, sort) => {
         const link = server.current
         if (!link) throw new Error('no link')
         const proxy = await link.proxy<DataProxy>(namespace, peer)
-        return proxy.$data('getList', resource, { pagination: { page, pageSize }, ...(filter ? { filter } : {}) })
+        return proxy.$data('getList', resource, { pagination: { page, pageSize }, ...(filter ? { filter } : {}), ...(sort ? { sort } : {}) })
     }
 
     /**
