@@ -460,11 +460,42 @@ export const getMany = (component: object, resource: RpcResource, params: RpcGet
 export const getList = (component: object, resource: RpcResource, params: RpcGetListParams): RpcGetListResult => {
     const snapshot = componentSnapshot(component)
     const collection = collectionAt(snapshot, resource) ?? {}
-    const keys = projectionKeyOrder(collection)
-    const matched = params.filter ? keys.filter((id) => matchesFilter(params.filter as RpcFilter, collection[id], id)) : keys
+    return {
+        ...pageEntries(
+            projectionKeyOrder(collection).map((id) => [id, collection[id]] as const),
+            params
+        ),
+        epoch: snapshot.epoch,
+        revision: snapshot.revision
+    }
+}
+
+/**
+ * Filter, order and cut a page out of rows a caller already holds.
+ *
+ * Exported for the component that fetched its rows from somewhere else - a table, a queue, a file -
+ * and now has to answer the same question about them. Sharing this rather than each store
+ * reimplementing it is the same argument as `matchesFilter`: a `getList` that meant something
+ * slightly different depending on which component answered it would be worse than one that was
+ * missing, because nothing would show which of the two you were looking at.
+ *
+ * **Order matters and none of the three is interchangeable.** A filter applied after paging would be
+ * a filter over fifty rows pretending to be one over three hundred; an order applied to the page
+ * alone would be an order over nothing.
+ *
+ * Note what this does *not* promise. The wire carries only matches - that is what the pull is for -
+ * but whether the peer could push the filter down into its store, or had to read the rows and then
+ * discard most of them, is the store's business and invisible from here. A component over a real
+ * database should do this as a query; one over a bounded in-memory backlog is right to read it and
+ * hand it here.
+ */
+export const pageEntries = (entries: readonly (readonly [string, unknown])[], params: RpcGetListParams): { ids: string[]; data: unknown[]; total: number } => {
+    const rows = new Map(entries)
+    const keys = entries.map(([id]) => id)
+    const matched = params.filter ? keys.filter((id) => matchesFilter(params.filter as RpcFilter, rows.get(id), id)) : keys
     const ordered = params.sort
         ? [...matched].sort((a, b) => {
-              const by = compare(fieldOf(collection[a], a, params.sort?.field), fieldOf(collection[b], b, params.sort?.field))
+              const by = compare(fieldOf(rows.get(a), a, params.sort?.field), fieldOf(rows.get(b), b, params.sort?.field))
               // Ties fall back to key order, so a sort on a field half the rows share does not
               // shuffle between requests and hand the operator the same row on two pages.
               return (by || compare(a, b)) * (params.sort?.order === 'DESC' ? -1 : 1)
@@ -473,11 +504,5 @@ export const getList = (component: object, resource: RpcResource, params: RpcGet
     const { page = 0, pageSize } = params.pagination ?? {}
     const from = page * (pageSize ?? 0)
     const ids = pageSize === undefined ? ordered : ordered.slice(from, from + pageSize)
-    return {
-        data: ids.map((id) => collection[id]),
-        ids,
-        total: ordered.length,
-        epoch: snapshot.epoch,
-        revision: snapshot.revision
-    }
+    return { ids, data: ids.map((id) => rows.get(id)), total: ordered.length }
 }

@@ -26,6 +26,18 @@ A component serving its own resources answers through one `dataRequest(method, r
 
 The console's grid can now be ordered by the key or by any field the row type declares, ascending or descending. Drawn from the type rather than from a row, so the choices are the same on an empty collection as on a full one — and the order is the peer's, over the whole matched set, because an order applied to the fifty rows already on screen would disagree with itself the moment a page was turned.
 
+### The queue serves its dead letters, and finds two things out
+
+`@source-repo/queue` is the first component to implement `dataResources()`, so the DataProvider stops being proved only against a record held in memory. Its dead-letter backlog is now a resource a viewer can page, filter and order — the state's counts say how many failed, and this says which.
+
+**An offset page over a cursor store is a walk.** The queue's store lists dead letters by `after`, so there is no way to begin at row 200 without having seen the 200 before it; the service reads the backlog and answers from it, which is affordable because retry policy bounds that backlog and it is meant to be drained rather than accumulated. A store where that is not true should page itself. Worth knowing before a component over a real table is written — and worth `$data` growing a cursor for eventually, which `ra-tree`'s own listing shape already argues for.
+
+**Filtering on the peer is a claim about the wire, not about the store.** Only matches cross the link, which is what the pull is for, but the read behind them was unfiltered here. A component over a database should push the predicate down; one over a bounded in-memory backlog is right not to.
+
+Two smaller ones: the row type has to be **written out by hand**, because a resource is named at runtime and nothing connects it to the TypeScript interface the extractor could otherwise describe — a real cost of the interface rather than an oversight. And a store-backed component stamps its answers from its own component snapshot, so a restart stays visible to a caller paging through.
+
+`pageEntries` is exported for this: a component that fetched rows from somewhere else filters, orders and pages them through the library's own code rather than reimplementing it, for the same reason `matchesFilter` is shared. A `getList` that meant something slightly different depending on which component answered it would be worse than one that was missing.
+
 ### A component may serve collections its contract cannot describe
 
 A record in `props` or `state` needs nothing declared: it is in the published type, so a viewer finds it by reading the contract. A table, a document collection or a queue is the other kind — **what resources exist is itself data**, discovered when the component connects to its store, so it cannot be extracted from source and has to be said at runtime.

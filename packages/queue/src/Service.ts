@@ -1,9 +1,10 @@
-import { RpcComponent, rpc, type ExposeOptions } from '@source-repo/rpc'
+import { componentSnapshot, pageEntries, RpcComponent, rpc, type ExposeOptions, type RpcDataMethod, type RpcDataResource, type RpcGetListParams, type RpcGetManyParams } from '@source-repo/rpc'
 import type {
     AcquireRequest,
     AcquireResult,
     AdminMutationResult,
     CompleteRequest,
+    DeadLetterEntry,
     DeadLetterPage,
     EnqueueRequest,
     EnqueueResult,
@@ -235,6 +236,91 @@ export class WorkQueueService<TTask> extends RpcComponent<WorkQueueProps, WorkQu
     @rpc({ semantics: 'query' })
     async listDeadLetters(options?: PageOptions): Promise<DeadLetterPage> {
         return this.store.listDeadLetters(this.queueName, options ?? {})
+    }
+
+    /**
+     * What this queue serves a viewer, beyond the counts in its state.
+     *
+     * The dead-letter backlog is the one collection here worth browsing: the counts say *how many*
+     * failed, and an operator looking at a queue wants to know *which*. It is declared rather than
+     * discovered from the state, because the tasks are in the store and not in the snapshot - which
+     * is exactly the case `dataResources()` exists for.
+     *
+     * The row type is written out by hand, and that is a real cost of this interface rather than an
+     * oversight: `DeadLetterEntry` is a TypeScript interface the extractor could describe, but a
+     * resource is named at runtime, so nothing connects the two automatically. It has to be kept in
+     * step with the interface above it, and a viewer draws its columns from this and not from that.
+     */
+    dataResources(): readonly RpcDataResource[] {
+        return [
+            {
+                path: ['deadLetters'],
+                label: 'Dead letters',
+                verbs: ['getList', 'getMany'],
+                row: {
+                    kind: 'object',
+                    fields: {
+                        taskId: { type: { kind: 'string' } },
+                        attempts: { type: { kind: 'number' } },
+                        failedAt: { type: { kind: 'number' } },
+                        failure: { type: { kind: 'string' } },
+                        priority: { type: { kind: 'number' } },
+                        payloadBytes: { type: { kind: 'number' } }
+                    }
+                }
+            }
+        ]
+    }
+
+    /**
+     * Answer a viewer's question about the dead-letter backlog.
+     *
+     * **An offset page over a cursor store is a walk**, and that is worth naming rather than hiding.
+     * `listDeadLetters` pages by `after`, so there is no way to begin at row 200 without having seen
+     * the 200 before it; the backlog is bounded by retry policy and is meant to be drained rather
+     * than accumulated, so reading it whole to answer one page is affordable here. A store where it
+     * is not should page itself and hand back one page, not the backlog.
+     *
+     * Filtering and ordering then happen through the library's own `pageEntries`, so `quality:bad`
+     * over a queue means exactly what it means over a component's record. What that does *not*
+     * claim is that the filter reached the store: the wire carries only matches, which is what the
+     * pull is for, but the read behind it was unfiltered and a real database should push it down.
+     */
+    async dataRequest(method: RpcDataMethod, _resource: readonly string[], params: RpcGetListParams | RpcGetManyParams) {
+        const entries = await this.allDeadLetters()
+        if (method === 'getMany') {
+            const wanted = new Set((params as RpcGetManyParams).ids)
+            const found = entries.filter(([id]) => wanted.has(id))
+            return { ids: found.map(([id]) => id), data: found.map(([, row]) => row), ...this.stamp() }
+        }
+        return { ...pageEntries(entries, params as RpcGetListParams), ...this.stamp() }
+    }
+
+    /**
+     * Where the answer came from, taken from the component's own snapshot rather than invented.
+     *
+     * A restart is a new epoch, and that is the whole reason an answer carries one: a caller paging
+     * through a backlog needs to know the set was rebuilt under it. Making something up here would
+     * have looked identical and told nobody anything.
+     */
+    private stamp() {
+        const snapshot = componentSnapshot(this)
+        return { epoch: snapshot.epoch, revision: snapshot.revision }
+    }
+
+    /** The backlog, walked. Bounded by the store's own page clamp and by the retry policy above it. */
+    private async allDeadLetters(): Promise<(readonly [string, DeadLetterEntry])[]> {
+        const entries: (readonly [string, DeadLetterEntry])[] = []
+        let after: string | undefined
+        // Bounded so a store that never stops handing back a cursor cannot spin here forever - a
+        // wrong answer is recoverable and a wedged queue service is not.
+        for (let pages = 0; pages < 200; pages++) {
+            const page: DeadLetterPage = await this.store.listDeadLetters(this.queueName, after ? { after } : {})
+            for (const entry of page.entries) entries.push([entry.taskId, entry] as const)
+            if (!page.next) break
+            after = page.next
+        }
+        return entries
     }
 
     @rpc({ semantics: 'idempotent-command' })

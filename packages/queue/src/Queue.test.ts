@@ -379,3 +379,51 @@ test('socket.io: a latest task resolves the source host context when execution s
     await blind.close({ drain: false, timeoutMs: 1000 })
     await dispose()
 })
+
+test('the dead-letter backlog is a resource a viewer can browse, filter and page', async (t) => {
+    const service = new WorkQueueService<{ job: string }>('jobs', QUICK)
+    const queue = workQueueOver<{ job: string }>(service, 'jobs')
+
+    // Six poisoned tasks, two of which fail differently, so a filter has something to find.
+    for (let index = 0; index < 6; index++) await queue.enqueue({ job: `poison-${index}` })
+    const consumer = await queue.consume(
+        async (task) => {
+            throw new Error(Number(task.job.split('-')[1]) % 3 === 0 ? 'disk full' : 'this task cannot be done')
+        },
+        { consumerId: 'worker-1', waitMs: 300 }
+    )
+    await waitFor(async () => (await queue.stats()).deadLettered === 6, 15000)
+
+    // What a viewer that has never heard of a queue is told: one collection, its row shape, and the
+    // verbs it answers. The counts in the state say how many failed; this says which.
+    const [resource] = service.dataResources()
+    t.deepEqual([...resource.path], ['deadLetters'])
+    t.is(resource.label, 'Dead letters')
+    t.deepEqual([...resource.verbs], ['getList', 'getMany'])
+    t.is(resource.row?.kind, 'object')
+
+    // Paged, and the count is of the whole backlog rather than of the page - which is what a pager
+    // reads, and which the store's cursor listing cannot say on its own.
+    const first = (await service.dataRequest('getList', ['deadLetters'], { pagination: { page: 0, pageSize: 4 } })) as { ids: string[]; total: number }
+    t.is(first.ids.length, 4)
+    t.is(first.total, 6)
+    const second = (await service.dataRequest('getList', ['deadLetters'], { pagination: { page: 1, pageSize: 4 } })) as { ids: string[]; total: number }
+    t.is(second.ids.length, 2, 'the tail, and an offset the cursor store has no way to express')
+    t.is(new Set([...first.ids, ...second.ids]).size, 6, 'so two pages never overlap')
+
+    // Filtered on the peer, with the same grammar and the same matcher a component's record uses -
+    // which is the point of sharing them: `failure:disk` means one thing across every resource.
+    const disks = (await service.dataRequest('getList', ['deadLetters'], { filter: { field: 'failure', op: 'contains', operand: 'disk' } })) as { ids: string[]; total: number }
+    t.is(disks.total, 2, 'poison-0 and poison-3')
+
+    // Ordered over the matched set rather than over a page, and by a field of the row.
+    const worst = (await service.dataRequest('getList', ['deadLetters'], { sort: { field: 'attempts', order: 'DESC' }, pagination: { page: 0, pageSize: 1 } })) as { data: { attempts: number }[] }
+    t.is(worst.data[0].attempts, 2)
+
+    // And rows by id, which is what a reference field needs: one call for a page of them.
+    const named = (await service.dataRequest('getMany', ['deadLetters'], { ids: [first.ids[2], first.ids[0]] })) as { ids: string[] }
+    t.is(named.ids.length, 2)
+
+    await consumer.close({ drain: false, timeoutMs: 1000 })
+    service.close()
+})
