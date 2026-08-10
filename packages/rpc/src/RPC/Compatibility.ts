@@ -166,6 +166,22 @@ const methodProblems = (name: string, caller: MethodSchema, current: MethodSchem
     if (caller.returns && current.returns && !assignable(current.returns, caller.returns, types))
         problems.push({ where: `${name} return`, reason: 'widened, so a value this contract may return is not one the caller expects' })
 
+    // The deferred payload is a return by another route, so it is covariant for the same reason -
+    // and it is compared at all because otherwise a method whose eventual result changed shape
+    // would pass every check, `returns` describing only the ticket that carried it.
+    if (caller.deferred?.result && current.deferred?.result && !assignable(current.deferred.result, caller.deferred.result, types))
+        problems.push({ where: `${name} deferred result`, reason: 'widened, so a value this contract may answer with is not one the caller expects' })
+    if (caller.deferred?.progress && current.deferred?.progress && !assignable(current.deferred.progress, caller.deferred.progress, types))
+        problems.push({ where: `${name} deferred progress`, reason: 'widened, so an update this contract may report is not one the caller expects' })
+    // A method that used to answer in the call and now answers through a ticket has moved its
+    // result out of the reply a caller is waiting on. Every type may still line up and the caller
+    // still breaks, which is the same shape of change as semantics below.
+    if (!caller.deferred !== !current.deferred)
+        problems.push({
+            where: `${name} reply`,
+            reason: current.deferred ? 'became deferred, so the result no longer arrives in the call' : 'stopped being deferred, so a caller holding a ticket has nothing to hold'
+        })
+
     // Semantics may become safer to repeat but not more dangerous. A caller told it was calling a
     // query is entitled to have retried freely, and code written on that promise is still out there
     // - so a method quietly becoming a command is a breaking change even though every type still

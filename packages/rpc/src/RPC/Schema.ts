@@ -61,6 +61,19 @@ export interface MethodSchema {
     /** Checked only when result validation is on. */
     returns?: TypeNode
     /**
+     * What a deferred method eventually answers, and what its progress carries.
+     *
+     * Present exactly when the method replies through the ticket channel rather than in the call.
+     * `returns` still describes what the *call* answers - a correlation id and an expiry - because
+     * that is what actually crosses the wire when the method is invoked. This carries the rest, so
+     * a result type that changes incompatibly is still a breaking change.
+     *
+     * A field of the method rather than a kind of `TypeNode`, because a ticket is a property of how
+     * a method replies and not a value a field could hold: nothing would ever nest one inside an
+     * object, and the type language stays closed.
+     */
+    deferred?: { result: TypeNode; progress?: TypeNode }
+    /**
      * What calling this does to the world: `query`, `idempotent-command` or
      * `non-repeatable-command`. Part of the contract because it is a promise to the caller, not an
      * implementation detail - it decides whether an uncertain answer may be retried, and a server

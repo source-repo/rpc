@@ -62,6 +62,26 @@ const nameOf = (type: Type) => {
 
 const isPromise = (type: Type) => type.getSymbol()?.getName() === 'Promise'
 
+/**
+ * A deferred reply, recognised by name the same way a Promise is.
+ *
+ * A ticket cannot be described as a value, and should not be: as a TypeScript type it is an
+ * awaitable, subscribable handle, and `on`, `off` and `then` are functions that cannot be checked
+ * on the wire - so extraction refuses it, correctly, and would refuse every deferred method with it.
+ *
+ * What actually travels when such a method is called is a correlation id and an expiry. That is what
+ * `returns` describes, and the payload the caller eventually receives is carried beside it in
+ * `deferred`, so a result type that changes incompatibly is still a breaking change rather than
+ * something the contract stopped watching.
+ */
+const isTicket = (type: Type) => type.getSymbol()?.getName() === 'RpcTicket'
+
+/** What a call to a deferred method answers: correlation, and when the ticket lapses. */
+const TICKET_ON_THE_WIRE: TypeNode = {
+    kind: 'object',
+    fields: { id: { type: { kind: 'string' } }, expiresAt: { type: { kind: 'number' } } }
+}
+
 export const typeToNode = (type: Type, context: Context, depth = 0): TypeNode => {
     if (depth > 24) return fail(context, 'nests deeper than the extractor follows')
 
@@ -310,7 +330,20 @@ const methodToSchema = (method: MethodDeclaration, context: Context): MethodSche
 
     let returnType = method.getReturnType()
     if (isPromise(returnType)) returnType = returnType.getTypeArguments()[0] ?? returnType
-    const returns = returnType.isVoid() || returnType.isUndefined() ? undefined : typeToNode(returnType, { ...context, where: `${context.where} return` })
+    const ticket = isTicket(returnType) ? returnType.getTypeArguments() : undefined
+    const deferred = ticket
+        ? {
+              result: typeToNode(ticket[0], { ...context, where: `${context.where} deferred result` }),
+              // A ticket that reports nothing types its progress as unknown, which describes as
+              // `any` - and carrying that would say the contract checked something it did not.
+              ...(ticket[1] && !ticket[1].isUnknown() ? { progress: typeToNode(ticket[1], { ...context, where: `${context.where} deferred progress` }) } : {})
+          }
+        : undefined
+    const returns = ticket
+        ? TICKET_ON_THE_WIRE
+        : returnType.isVoid() || returnType.isUndefined()
+          ? undefined
+          : typeToNode(returnType, { ...context, where: `${context.where} return` })
 
     const semantics = declaredSemantics(method, context)
     const effect = declaredEffect(method, context)
@@ -320,6 +353,7 @@ const methodToSchema = (method: MethodDeclaration, context: Context): MethodSche
         ...(paramNames.length ? { paramNames } : {}),
         ...(rest ? { rest } : {}),
         ...(returns ? { returns } : {}),
+        ...(deferred ? { deferred } : {}),
         ...(semantics ? { semantics } : {}),
         ...(effect ? { effect } : {}),
         ...(sets ? { sets } : {})

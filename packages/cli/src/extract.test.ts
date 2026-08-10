@@ -287,3 +287,29 @@ test('an injected invocation handle never reaches the contract, and the half-dec
     )
     t.is(schema.namespaces.local_spinner.methods.misspelled.effect, undefined, 'a refused effect is absent, never guessed')
 })
+
+test('a deferred method describes what the call answers and what the ticket will', (t) => {
+    const { schema, diagnostics } = extractSchema(fixture('deferred-tsconfig.json'))
+    t.deepEqual(diagnostics, [], 'a ticket should describe cleanly rather than be refused')
+
+    const start = schema.namespaces.jobs.methods.start
+    // What actually crosses the wire when the method is called: correlation, and when the ticket
+    // lapses. Not the payload - that arrives later, down the reply channel.
+    t.deepEqual(start.returns, {
+        kind: 'object',
+        fields: { id: { type: { kind: 'string' } }, expiresAt: { type: { kind: 'number' } } }
+    })
+
+    // And the payload is carried beside it, so a result type that changes incompatibly is still a
+    // breaking change rather than something the contract quietly stopped watching.
+    t.deepEqual(start.deferred, { result: { kind: 'ref', name: 'JobResult' }, progress: { kind: 'number' } })
+
+    // A ticket reporting nothing has no progress type. Carrying `any` would say the contract
+    // checked something it did not.
+    t.deepEqual(schema.namespaces.jobs.methods.sweep.deferred, { result: { kind: 'ref', name: 'JobResult' } })
+
+    // The whole reason this needed teaching: a ticket is an awaitable, subscribable handle, and
+    // `on`, `off` and `then` are functions. Described as a value it is refused, correctly - so
+    // without this every deferred method would have been refused with it.
+    t.false(JSON.stringify(schema).includes('"kind":"any"'), 'and nothing fell back to any')
+})

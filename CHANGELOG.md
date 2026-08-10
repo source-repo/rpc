@@ -26,6 +26,18 @@ A component serving its own resources answers through one `dataRequest(method, r
 
 The console's grid can now be ordered by the key or by any field the row type declares, ascending or descending. Drawn from the type rather than from a row, so the choices are the same on an empty collection as on a full one — and the order is the peer's, over the whole matched set, because an order applied to the fifty rows already on screen would disagree with itself the moment a page was turned.
 
+### A contract can describe a method that answers later
+
+Groundwork for deferred replies, and useful on its own because it is the part that decides whether the feature can be checked at all.
+
+A method returning `RpcTicket<T, P>` used to be **refused** by `extract`, correctly: as a TypeScript value a ticket is an awaitable, subscribable handle, and `on`, `off` and `then` are functions that cannot be checked on the wire. But what actually crosses the wire when such a method is called is a correlation id and an expiry — the payload arrives later, down the reply channel.
+
+So `returns` now describes what the *call* answers, `{ id, expiresAt }`, and the method carries `deferred: { result, progress? }` beside it. A field of the method rather than a new `TypeNode` kind, because a ticket is a property of how a method replies and not a value a field could hold — nothing would ever nest one inside an object, and the type language stays closed.
+
+Compatibility checks the deferred payload covariantly, exactly as it checks a return, so a result type that changes incompatibly is still a breaking change rather than something the contract quietly stopped watching. And a method that moves its result *into* or *out of* a ticket is itself breaking: every type can still line up while a caller waiting on the reply gets a correlation id instead, which is the same shape of change as a query becoming a command.
+
+A ticket that reports nothing carries no `progress`, rather than carrying `any` and claiming to have checked something.
+
 ### A name is claimed, not assigned
 
 `exposeClassInstance` overwrote whatever already held a namespace, with no check. `createRpcInstance` is exposed to the network and takes the instance name as a caller-chosen argument, so an authorized peer could create something called `plant` and silently displace the plant — every later call going to it, with nothing at either end saying so. An authorizer *could* inspect the requested name in `params`, but that is every application rebuilding a type system in a callback to close a hole the library left open.
