@@ -164,6 +164,15 @@ export interface ExposeOptions {
      */
     mailbox?: number
     /**
+     * Retire this exposure when the peer it was stood up for goes, after a grace window.
+     *
+     * **Off unless asked for, and never without a grace.** On MQTT `peerGone` is presence and a last
+     * will, and it flaps; a browser reloading comes back as a fresh peer; a link blip is not a
+     * reason to destroy work that is running fine. Binding compute lifetime to a socket is how a
+     * wifi handover cancels somebody's job, so the default is that nothing does this.
+     */
+    lifetime?: { peer: string; graceMs?: number }
+    /**
      * Displace whatever already holds this name, rather than being refused.
      *
      * Off by default because the refusal is the point: a silent overwrite is how an exposed plant
@@ -222,6 +231,15 @@ const chosenCode = (e: unknown): RpcErrorCode => {
  * class with three `@rpc` methods and no marks has a method map and nothing else, and a record full
  * of empty maps would cost more than the twelve maps did.
  */
+/**
+ * How long a peer-bound exposure outlives its peer by default.
+ *
+ * Long enough for a reload, a wifi handover or an MQTT presence flap - all of which look exactly
+ * like the peer leaving - and short enough that a genuinely departed peer does not leave work
+ * standing for the process lifetime.
+ */
+export const DEFAULT_LIFETIME_GRACE = 30_000
+
 export interface ExposedNamespace {
     instance?: object
     methods: Map<string, (...args: unknown[]) => void>
@@ -233,6 +251,8 @@ export interface ExposedNamespace {
     authority?: Set<string>
     injection?: Set<string>
     mailbox?: number
+    /** Whose departure retires this, and how long to wait first. Absent means nothing does. */
+    lifetime?: { peer: string; graceMs?: number }
     /** Created through `createRpcInstance` rather than exposed by the host's own code. */
     created?: boolean
     /**
@@ -278,6 +298,35 @@ export class RpcServerHandler extends MessageModule<Message<RpcMessage>, RpcMess
         }
         return true
     }
+
+    /**
+     * A peer this host stood things up for has gone, or come back.
+     *
+     * The grace window is the whole design. `peerGone` flaps on a presence-based transport, and a
+     * page that reloads is a new peer arriving moments after the old one left - so retiring on the
+     * event itself would destroy running work over a wifi handover. Waiting, and cancelling the
+     * wait when the peer returns, is what makes binding a lifetime to a peer safe enough to offer.
+     */
+    peerLifetime(peer: string, present: boolean) {
+        if (present) {
+            const waiting = this.lifetimeTimers.get(peer)
+            if (waiting) clearTimeout(waiting)
+            this.lifetimeTimers.delete(peer)
+            return
+        }
+        const bound = [...this.manageRpc.namespaces].filter(([, held]) => held.lifetime?.peer === peer)
+        if (!bound.length || this.lifetimeTimers.has(peer)) return
+        const grace = Math.max(...bound.map(([, held]) => held.lifetime?.graceMs ?? DEFAULT_LIFETIME_GRACE))
+        const timer = setTimeout(() => {
+            this.lifetimeTimers.delete(peer)
+            for (const [name, held] of this.manageRpc.namespaces) if (held.lifetime?.peer === peer) void this.retire(name)
+        }, grace)
+        timer.unref?.()
+        this.lifetimeTimers.set(peer, timer)
+    }
+
+    /** One pending grace per absent peer, so a flapping link does not stack timers. */
+    private readonly lifetimeTimers = new Map<string, ReturnType<typeof setTimeout>>()
 
     /** The peer waiting on this work has gone. A fact for the handler, never an instruction. */
     abandonFor(peer: string) {
@@ -929,6 +978,10 @@ export class RpcServerHandler extends MessageModule<Message<RpcMessage>, RpcMess
             return
         }
 
+        // Which incarnation this call was queued against. Phase one of a withdrawal removes the
+        // record, which stops new calls at the door - but a call already waiting holds a bound
+        // handler and would otherwise run happily into an instance nobody can reach any more.
+        const incarnation = this.manageRpc.at(payload.path)?.generation
         let superseded = false
         const entry = conflateKey
             ? {
@@ -949,6 +1002,24 @@ export class RpcServerHandler extends MessageModule<Message<RpcMessage>, RpcMess
             else this.executionWaiting.set(key, now - 1)
             if (conflateKey && this.conflatable.get(conflateKey) === entry) this.conflatable.delete(conflateKey)
             if (superseded) return
+            // Phase two: the name went, or something else stands under it now. Answered rather than
+            // run, and answered with a posture rather than a timeout - `OwnershipChanged` already
+            // means *certainly did not run*, which is exactly true here and is the one thing the
+            // caller needs to decide what to do next. Letting it die of its deadline instead would
+            // throw that away and call it an unknown outcome, which this library exists not to do.
+            //
+            // Reusing the code rather than adding a `Retired` beside it is deliberate: the posture
+            // is identical and only the cause differs, so a new code would cost every peer a fresh
+            // case to write for a decision it would make the same way. The message names the cause.
+            if (this.manageRpc.at(payload.path)?.generation !== incarnation) {
+                await this.sendError(
+                    payload.id,
+                    source,
+                    'OwnershipChanged',
+                    `${payload.path}.${payload.method} was queued against an instance that has since been retired, so it certainly did not run`
+                )
+                return
+            }
             await this.invoke(payload, source, arrived, handler)
         })
     }
@@ -1520,6 +1591,8 @@ export class ManageRpc implements IManageRpc {
         }
         const handles = declaredInjection(instance)
         if (handles.size) this.record(namespace).injection = handles
+        // Off unless the call site asks: the default is that nothing retires an exposure for you.
+        if (settings.lifetime) this.record(namespace).lifetime = settings.lifetime
         const mailbox = settings.mailbox ?? declared?.mailbox
         if (mailbox !== undefined) {
             if (!Number.isInteger(mailbox) || mailbox < 1) throw new Error(`exposeClassInstance: ${namespace} declares a mailbox of ${mailbox}; the bound is a positive count of waiting calls`)

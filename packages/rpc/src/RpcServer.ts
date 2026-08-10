@@ -414,7 +414,13 @@ export class RpcServerBase extends EventEmitter implements IManageRpc {
         // going means nothing will ever answer. Rejected rather than left to lapse at its expiry,
         // which could be half an hour away.
         for (const event of [TransportEvent.peerGone, TransportEvent.peerDisplaced])
-            transport.on(event, (peer: string) => this.caller.tickets.dropTarget(peer))
+            transport.on(event, (peer: string) => {
+                this.caller.tickets.dropTarget(peer)
+                // Anything stood up for that peer starts its grace. Cancelled if it comes back,
+                // which a reloading browser and a flapping MQTT presence both do.
+                this.rpc.peerLifetime(peer, false)
+            })
+        transport.on(TransportEvent.peerOnline, (peer: string) => this.rpc.peerLifetime(peer, true))
         for (const event of [TransportEvent.disconnected, TransportEvent.peerGone, TransportEvent.peerDisplaced, TransportEvent.connected])
             transport.on(event, (payload: unknown) => {
                 this.componentLifecycle.emit(event, payload)

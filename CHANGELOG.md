@@ -39,7 +39,11 @@ Withdrawing stops new calls at once, because every dispatch decision starts from
 
 Re-exposing the name is a **new incarnation at a bumped generation**, and so is a deliberate `{ replace: true }`. A name is not a thing; it is a place a thing stands, and a client replaying its subscriptions across a reconnect must not silently reattach to a different object wearing the old one.
 
-Nothing expires an instance on a timer, deliberately. An object retired out from under an author who still holds a reference is worse than a leak, because it exists and is unreachable.
+**A call already queued is answered rather than run.** Withdrawing stops new calls at the door, but one already waiting behind a serialised instance holds a bound handler and would otherwise run into something unreachable. It is refused `OwnershipChanged`, which already means *certainly did not run* — reused rather than joined by a new `Retired` code, because the posture is identical and only the cause differs, so a new code would cost every peer a case to write for a decision it makes the same way. Letting the call die of its deadline instead would have called that an unknown outcome, which is the distinction this library exists to preserve.
+
+**An exposure may be bound to a peer**, off by default and never without a grace window: `{ lifetime: { peer, graceMs } }`. On MQTT `peerGone` is presence and a last will and it flaps, and a reloading browser returns as a fresh peer moments later — retiring on the event itself is how a wifi handover cancels somebody's job.
+
+Nothing expires an instance on a timer otherwise. An object retired out from under an author who still holds a reference is worse than a leak, because it exists and is unreachable.
 
 ### Deferred replies: a long job can answer the caller that asked, and nobody else
 

@@ -121,3 +121,71 @@ test('a withdrawn name stops answering, tells its watchers, and comes back as a 
     await client.close()
     await server.close()
 })
+
+test('a call queued against a retired instance is told it certainly did not run', async (t) => {
+    const server = new RpcServer({ name: peer('drain3941'), transports: [{ port: 3941, host: '127.0.0.1' }] })
+
+    class Slow extends EventEmitter {
+        @rpc({ semantics: 'idempotent-command' })
+        async work(ms: number) {
+            await new Promise((resolve) => setTimeout(resolve, ms))
+            return 'ran'
+        }
+    }
+
+    // Serialised, so a second call waits behind the first rather than running beside it - which is
+    // what puts a call in the queue this test is about.
+    const handle = server.exposeClassInstance(new Slow(), 'slow', { execution: 'serial' })
+    await server.ready()
+
+    const client = new RpcClient('http://localhost:3941', { name: peer('asker3941'), defaultTarget: peer('drain3941') })
+    const slow = await client.proxy<Slow>('slow')
+
+    const first = slow.work(300)
+    await new Promise((resolve) => setTimeout(resolve, 40))
+    const queued = slow.work(1)
+
+    // Phase one stops new calls; phase two is this. The queued call holds a bound handler and would
+    // otherwise run happily into an instance nobody can reach any more.
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    await handle.withdraw()
+
+    t.is(await first, 'ran', 'the call already running is left alone')
+    const refused = await t.throwsAsync(queued)
+    // A posture rather than a timeout: OwnershipChanged already means *certainly did not run*,
+    // which is exactly true here and is the one thing the caller needs to decide what to do next.
+    t.is((refused as { code?: string })?.code, 'OwnershipChanged')
+    t.regex(String(refused?.message), /retired.*certainly did not run/)
+
+    await client.close()
+    await server.close()
+})
+
+test('an exposure bound to a peer outlives a flap and not a departure', async (t) => {
+    const server = new RpcServer({ name: peer('bound3942'), transports: [{ port: 3942, host: '127.0.0.1' }] })
+
+    class Job extends EventEmitter {
+        @rpc({ semantics: 'query' })
+        async where() {
+            return 'here'
+        }
+    }
+
+    server.exposeClassInstance(new Job(), 'bound', { lifetime: { peer: peer('owner3942'), graceMs: 120 } })
+    await server.ready()
+
+    // A flap: gone and back inside the grace. Retiring on the event itself would destroy running
+    // work over a wifi handover, which is why the window exists at all.
+    server.rpc.peerLifetime(peer('owner3942'), false)
+    await new Promise((resolve) => setTimeout(resolve, 60))
+    server.rpc.peerLifetime(peer('owner3942'), true)
+    await new Promise((resolve) => setTimeout(resolve, 150))
+    t.truthy(server.rpc.manageRpc.at('bound')?.instance, 'a peer that came back keeps its work')
+
+    // A departure: gone, and stays gone past the grace.
+    server.rpc.peerLifetime(peer('owner3942'), false)
+    await new Promise((resolve) => setTimeout(resolve, 250))
+    t.falsy(server.rpc.manageRpc.at('bound')?.instance, 'and one that does not, does not')
+
+    await server.close()
+})
