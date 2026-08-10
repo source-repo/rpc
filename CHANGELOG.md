@@ -16,6 +16,16 @@ The filter is a closed grammar and never an expression: `{ field, op, operand }`
 
 `RpcProjectionSlice` keeps its job as the **live window** on a record — it pushes, where this answers — and is now the primitive for a program that wants to watch a range rather than browse one.
 
+### The console draws scope and values as two panes
+
+One tree of everything is right for an oven and wrong for anything carrying hundreds of values, which plants have. The component panel is now a scope tree on the left and a flat grid on the right, and selecting a node narrows the grid to everything beneath it recursively, so the tree filters rather than navigates.
+
+**A record is a value leaf and never a tree node**: `tags: { [tag: string]: Reading }` is not in the tree at all, its entries are rows. That is principled rather than a size threshold — an object's members are named by the contract and a record's keys are data — and it is what makes the scope tree exactly the contract, drawn before a single value arrives and costing nothing on the wire however much data sits behind it.
+
+The same line decides how the grid is fed. Typed leaves are **subscribed** to, since the contract bounds how many there are, and this is the first thing in the repository to ask for a projection — the open end `4.5.0` left. Collection rows are **asked for** a page at a time. A panel pulling fifty rows while its subscription pushed all three hundred would look exactly like the feature working, so it never takes the whole snapshot.
+
+The filter box searches on the peer: a bare word matches the tag name, `field:word` narrows to a field, `&` and `|` combine — so `quality:bad` is answerable at all. Pages are polled at a period the operator sets, down to manual, because a subscription's rate belongs to the component and on a 1200 bit/s link a 50-row page is already seventeen seconds. The next fetch is scheduled when the previous settles rather than on a timer, nothing is asked while the tab is hidden, the last answer stays readable while a fetch is in flight, and a page refetches at once when a call settles.
+
 ### Calls issued together travel in one frame
 
 A `POST` carries its type, a uuid, the namespace, the method name and the params, and MQTT adds a request topic, a response topic and correlation data beneath it — so moving one `float64` spends far more on saying where it is going than on the number, and reading three hundred tags one at a time is tens of kilobytes of envelope for a couple of kilobytes of values. Calls issued in one microtask now go as a single `BATCH` frame.

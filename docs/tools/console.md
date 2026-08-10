@@ -63,11 +63,41 @@ JSON has no date and no byte string, so what is typed into a JSON box is walked 
 
 ### State, and what it is drawn from
 
-Press **observe** on a component and the panel fills with its props and state — not as a JSON blob, but as a tree built from the interfaces the contract publishes. `extract` reads a component's `Props` and `State` from the source, `describe()` carries them over, and the console has never seen the file: it knows `zones.top.setpoint` is a number and `door` is one of two words because the contract says so.
+Press **observe** on a component and the panel fills with its props and state — not as a JSON blob, but drawn from the interfaces the contract publishes. `extract` reads a component's `Props` and `State` from the source, `describe()` carries them over, and the console has never seen the file: it knows `zones.top.setpoint` is a number and `door` is one of two words because the contract says so.
 
-That is also why a field currently `null` is **labelled rather than omitted**. A tree drawn from the values alone cannot tell "this oven has no work order" from "this oven does not have work orders", and on a plant those are different facts.
+That is also why a field currently `null` is **labelled rather than omitted**. A panel drawn from the values alone cannot tell "this oven has no work order" from "this oven does not have work orders", and on a plant those are different facts.
 
 The status sits beside the values and keeps its meaning: a dropped link marks the picture stale and **keeps it readable**, with the revision and "last known 14:03" next to it. Nothing blanks.
+
+### Two panes: scope on the left, values on the right
+
+One tree of everything is right for an oven and wrong for anything carrying hundreds of values, which plants have. So the panel is two panes.
+
+The left holds **scope**: only the typed containers the contract enumerates, with `props` and `state` as the two roots of one tree. Selecting a node narrows the grid to everything beneath it — *recursively, all the way down* — so the tree acts as a filter rather than as a navigator, and finding a value never costs as many clicks as the state has depth.
+
+The right holds **values**, flat, one row each.
+
+**A record is a value leaf and never a tree node.** `tags: { [tag: string]: Reading }` does not appear in the scope tree at all; its entries are grid rows. That is principled rather than a threshold on size: an object's members are named by the contract, and a record's keys are *data*. Type ends, data begins, and the tree stops exactly there.
+
+Which yields the property worth holding onto: **the scope tree is exactly the contract, and costs nothing on the wire, ever.** It is drawn before a single value arrives, however much data sits behind it.
+
+The same line decides how the two halves of the grid are fed. **Typed leaves are subscribed to** — the contract bounds how many there are, so a [projection](../guide/components.md#asking-for-less-than-the-whole-state) naming them is cheap and stays current by itself. **Collection rows are asked for**, a page at a time, through [`$data`](../guide/components.md#asking-for-a-page-instead-of-watching-one). A panel that pulled fifty rows while its subscription pushed all three hundred would look exactly like the feature working, so it never takes the whole snapshot.
+
+### Filtering happens on the peer
+
+The box in a collection's header searches where the data is. A bare word matches the tag name, `field:word` narrows to a field of the row, `&` is and and `|` is or — so `quality:bad` is answerable at all, which it is not from the browser at any bandwidth: finding out which thirty of three hundred are bad is exactly what a local filter would have to receive all three hundred to discover. A search that matches nothing costs a sentence on the wire rather than a record.
+
+What the box compiles to is **data, never a program**: `{ field: 'quality', op: 'contains', operand: 'bad' }`, which the peer checks and can refuse. The console this grammar came from ended the same function with `new RegExp`, which is safe in a browser against an in-memory store and is a stall on a plant server that re-evaluates it on every request.
+
+Typing settles before it asks, so eight keystrokes are one question. The count beside the pager is the number of *matches*, and the three ways a page can be empty stay distinguishable: `empty`, `nothing matches`, and `past the end` for a set that shrank while it was being read.
+
+### How often it asks
+
+A subscription's rate belongs to the component — its commit rate and its publish bound. On a slow link that is backwards, so the pages are polled at a period the person watching sets: 1s, 5s, 30s, or manual with a refresh.
+
+`manual` is a real setting rather than a degenerate one. A row of value, unit and quality is about 50 bytes, so a 50-row page is roughly 20 kbit — seventeen seconds at 1200 bits/s, where a five-second period is not slow but arithmetically impossible. On a LAN one second is free. Same grid, one dial.
+
+Four details make the period behave rather than pile up: the next fetch is scheduled when the previous one **settles**, never on a fixed interval, so a five-second timer against a thirty-second round trip cannot end up with six requests in flight; nothing is asked while the tab is hidden, and returning to it asks at once; the last answer stays on screen while a fetch is in flight, marked *refreshing*, because last-known with its age on it is an answer and a blank is not; and a page refetches immediately when a call settles, since waiting out a period to learn whether the plant accepted `setSetpoint(180)` is the one place a period is plainly wrong.
 
 **Every leaf subscribes to its own path.** A component carrying 300 tags, one of which moves five times a second, would otherwise re-render 300 rows to move one number — so each leaf reads its own value through `useSyncExternalStore`, and a primitive that did not change bails out before React does any work. Branches subscribe to as little as they need to know their shape; the panel header reads only the status and whether data has arrived. Observing a 300-tag component for fifteen seconds, measured in headless Chrome:
 
