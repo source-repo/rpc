@@ -11,10 +11,10 @@
         "packages/*"
     ],
     "scripts": {
-        "build": "npm run build --workspace=@source-repo/rpc && npm run build --workspace=@source-repo/rpc-cli && npm run build --workspace=@source-repo/queue && npm run build --workspace=@source-repo/sparkplug",
+        "build": "npm run build --workspace=@source-repo/rpc && npm run build --workspace=@source-repo/rpc-cli && npm run build --workspace=@source-repo/queue && npm run build --workspace=@source-repo/sparkplug && npm run build --workspace=@source-repo/relational",
         "clean": "npm run clean --workspaces",
-        "test": "npm run test --workspace=@source-repo/rpc && npm run test --workspace=@source-repo/rpc-cli && npm run test --workspace=@source-repo/queue && npm run test --workspace=@source-repo/sparkplug",
-        "typecheck": "npm run typecheck --workspace=@source-repo/rpc && npm run typecheck --workspace=@source-repo/rpc-cli && npm run typecheck --workspace=@source-repo/queue && npm run typecheck --workspace=@source-repo/sparkplug && npm run typecheck:examples",
+        "test": "npm run test --workspace=@source-repo/rpc && npm run test --workspace=@source-repo/rpc-cli && npm run test --workspace=@source-repo/queue && npm run test --workspace=@source-repo/sparkplug && npm run test --workspace=@source-repo/relational",
+        "typecheck": "npm run typecheck --workspace=@source-repo/rpc && npm run typecheck --workspace=@source-repo/rpc-cli && npm run typecheck --workspace=@source-repo/queue && npm run typecheck --workspace=@source-repo/sparkplug && npm run typecheck --workspace=@source-repo/relational && npm run typecheck:examples",
         "typecheck:examples": "tsc --noEmit -p examples/display-context/tsconfig.contract.json",
         "lint": "eslint . --max-warnings 0",
         "docs:dev": "vitepress dev docs",
