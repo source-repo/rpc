@@ -107,4 +107,16 @@ Withdrawing stops new calls at once — a call arriving afterwards is refused li
 
 Re-exposing the name later is a **new incarnation** at a bumped generation. A name is not a thing; it is a place a thing stands, and a client replaying its subscriptions across a reconnect must not silently reattach to a different object wearing the old name.
 
-Nothing expires an instance on a timer. An object retired out from under an author who still holds a reference is worse than a leak, because it exists and is unreachable — so lifetime is `withdraw()` and the host's own judgement.
+**A call already queued is answered, not run.** Withdrawing stops new calls at the door, but a call already waiting behind a serialised instance holds a bound handler and would otherwise run into something nobody can reach. It is refused `OwnershipChanged` instead — which already means *certainly did not run*, the one thing a caller needs in order to decide what to do next. Letting it die of its deadline would have called that an unknown outcome, which is exactly the distinction this library exists to preserve.
+
+**Binding a lifetime to a peer, if you want it:**
+
+```typescript
+server.exposeClassInstance(new Job(spec), `job.${id}`, {
+    lifetime: { peer: caller, graceMs: 30_000 }
+})
+```
+
+Off unless asked for, and never without a grace window. On MQTT `peerGone` is presence and a last will, and it flaps; a browser reloading comes back as a fresh peer moments later. Retiring on the event itself is how a wifi handover cancels somebody's job, so the departure has to persist through the window before anything is taken away.
+
+Nothing expires an instance on a timer otherwise. An object retired out from under an author who still holds a reference is worse than a leak, because it exists and is unreachable — so lifetime is `withdraw()`, an optional peer binding, and the host's own judgement.

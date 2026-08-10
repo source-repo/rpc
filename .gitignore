@@ -12,3 +12,12 @@ docs/.vitepress/.temp
 # Scratch space visiting agents tend to create in-repo; their droppings must not reach a commit
 tmp/
 examples/display-context/dist/
+
+# Worktrees the agent tooling creates. They are git repositories of their own and must never be
+# committed into this one - git records them as a gitlink that no clone can resolve.
+.claude/worktrees/
+
+# Design material for commercial products, kept here to work on and never committed to a public
+# repository. Untracked is not protection on its own - a `git add -A` sweeps up whatever is there,
+# which is exactly how a worktree got committed once already.
+notes/distributed-cluster.management/

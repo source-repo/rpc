@@ -582,72 +582,49 @@ test('a fast page behind a slow count says so, which is the whole point of split
     await server.close()
 })
 
-/**
- * A row type is *constructed*, and construction is where a store-backed component goes wrong.
- *
- * Everything else a resource publishes is either a name it was given or a verb it chose. The row
- * shape is neither: somebody maps a store's own types onto `TypeNode`s, and every mistake in that
- * mapping publishes a shape the rows do not have - silently, because the rows are perfectly well
- * formed and simply are not what was advertised. A viewer then draws the wrong column and renders
- * the values wrongly, with nothing anywhere to say which of the two is lying.
- *
- * `validateResults` already catches this server returning something its own contract forbids. This
- * is the same self-check pointed at `$data`, and it needs no contract to do it: a resource's `row`
- * is declared at runtime by `dataResources()`, which is the whole point of that interface, so the
- * declaration is in hand even for a package with no extracted contract at all.
- */
-@rpcNamespace('mapped')
-class Mapped extends RpcComponent<{ label: string }, { connected: boolean }> implements RpcDataResources {
-    constructor(private readonly rows: readonly { id: string; active: unknown }[]) {
-        super({ label: 'm' }, { connected: true })
-    }
+test('a row that its own declared type forbids is caught where it happened', async (t) => {
+    const server = new RpcServer({ name: peer('drift3943'), transports: [{ port: 3943, host: '127.0.0.1' }] })
+    // The self-check, off by default because it is per-row work nobody should pay for in a plant.
+    server.rpc.validateResults = true
 
-    dataResources() {
-        return [
-            {
-                path: ['flags'],
-                verbs: ['getList'] as const,
-                row: { kind: 'object' as const, fields: { active: { type: { kind: 'boolean' as const } } } }
-            }
-        ]
-    }
-
-    dataRequest() {
-        return {
-            ids: this.rows.map((row) => row.id),
-            data: this.rows.map(({ active }) => ({ active })),
-            total: this.rows.length,
-            epoch: 'm',
-            revision: 1
+    /**
+     * A resource whose declared row type says one thing and whose rows say another - the shape a
+     * renamed column, a mis-mapped SQL type or an interface changed without its declaration
+     * produces. Nothing else can see it: the console draws what it is given, and `check` describes
+     * what a call to a resource answers rather than what its rows look like.
+     */
+    @rpcNamespace('drifted')
+    class Drifted extends RpcComponent<{ label: string }, { ready: boolean }> implements RpcDataResources {
+        constructor() {
+            super({ label: 'd' }, { ready: true })
+        }
+        dataResources() {
+            return [
+                {
+                    path: ['rows'] as const,
+                    verbs: ['getList'] as const,
+                    row: { kind: 'object' as const, fields: { name: { type: { kind: 'string' as const } } } }
+                }
+            ]
+        }
+        dataRequest() {
+            // `count` is not `name`, and nothing but this check will ever say so.
+            return { ids: ['r1'], data: [{ count: 3 }], total: 1, epoch: 'e', revision: 1 }
         }
     }
-}
 
-test('a row that does not match the shape its resource published is caught before it is believed', async (t) => {
-    const server = new RpcServer({ name: peer('mapped3942'), transports: [{ port: 3942, host: '127.0.0.1' }], validateResults: true })
-    // The shape of the real mistake this exists for: a store with no boolean type of its own -
-    // SQLite is the obvious one - answering 1 and 0 for a column the component declared boolean.
-    server.exposeClassInstance(
-        new Mapped([
-            { id: 'a', active: true },
-            { id: 'b', active: 1 }
-        ]),
-        'mapped'
-    )
+    server.exposeClassInstance(new Drifted())
     await server.ready()
 
-    const client = new RpcClient('http://localhost:3942', { name: peer('asker3942'), defaultTarget: peer('mapped3942') })
-    t.teardown(async () => {
-        await client.close()
-        await server.close()
-    })
-    const proxy = await client.proxy<{ $data(method: 'getList', resource: readonly string[]): Promise<RpcGetListResult> }>('mapped')
+    const client = new RpcClient('http://localhost:3943', { name: peer('asker3943'), defaultTarget: peer('drift3943') })
+    const proxy = await client.proxy<{ $data(method: 'getList', resource: readonly string[]): Promise<unknown> }>('drifted')
 
-    const refused = await t.throwsAsync(proxy.$data('getList', ['flags']))
-    // Which row and which field, because "a row was wrong" over a page of fifty is a search rather
-    // than a diagnosis.
-    t.regex(String(refused?.message), /flags answered a row its own declared row type forbids/)
-    t.regex(String(refused?.message), /row 1\.active: expected boolean, got number/)
+    const caught = await t.throwsAsync(proxy.$data('getList', ['rows']))
+    t.regex(String(caught?.message), /served a row its own declared type forbids/)
+    t.regex(String(caught?.message), /rows/, 'and it names the resource, since a host may serve several')
+
+    await client.close()
+    await server.close()
 })
 
 /**
@@ -701,19 +678,36 @@ test('a name that could have been a resource and was not is refused, not answere
 })
 
 test('and a server that was not asked to validate answers as it always did', async (t) => {
-    // Off by default, and staying off is the point: this walks every row of every page, which is a
-    // development cost worth paying and a production one nobody opted into.
-    const server = new RpcServer({ name: peer('mapped3943'), transports: [{ port: 3943, host: '127.0.0.1' }] })
-    server.exposeClassInstance(new Mapped([{ id: 'b', active: 1 }]), 'mapped')
+    // The other half of the switch above, and worth a test of its own: off is the default, and it
+    // has to stay off, because this walks every row of every page - a development cost worth paying
+    // and a production one nobody opted into. A change that made it unconditional would look
+    // exactly like a correctness improvement and would be a per-row tax on every plant.
+    const server = new RpcServer({ name: peer('drift3945'), transports: [{ port: 3945, host: '127.0.0.1' }] })
+
+    /** The same disagreement the test above catches: `count` where the declaration says `name`. */
+    @rpcNamespace('unchecked')
+    class Unchecked extends RpcComponent<{ label: string }, { ready: boolean }> implements RpcDataResources {
+        constructor() {
+            super({ label: 'u' }, { ready: true })
+        }
+        dataResources() {
+            return [{ path: ['rows'] as const, verbs: ['getList'] as const, row: { kind: 'object' as const, fields: { name: { type: { kind: 'string' as const } } } } }]
+        }
+        dataRequest() {
+            return { ids: ['r1'], data: [{ count: 3 }], total: 1, epoch: 'e', revision: 1 }
+        }
+    }
+
+    server.exposeClassInstance(new Unchecked())
     await server.ready()
 
-    const client = new RpcClient('http://localhost:3943', { name: peer('asker3943'), defaultTarget: peer('mapped3943') })
+    const client = new RpcClient('http://localhost:3945', { name: peer('asker3945'), defaultTarget: peer('drift3945') })
     t.teardown(async () => {
         await client.close()
         await server.close()
     })
-    const proxy = await client.proxy<{ $data(method: 'getList', resource: readonly string[]): Promise<RpcGetListResult> }>('mapped')
+    const proxy = await client.proxy<{ $data(method: 'getList', resource: readonly string[]): Promise<RpcGetListResult> }>('unchecked')
 
-    const answer = await proxy.$data('getList', ['flags'])
-    t.deepEqual(answer.data, [{ active: 1 }])
+    const answer = await proxy.$data('getList', ['rows'])
+    t.deepEqual(answer.data, [{ count: 3 }], 'served as it was, because nobody asked this server to check itself')
 })

@@ -164,6 +164,15 @@ export interface ExposeOptions {
      */
     mailbox?: number
     /**
+     * Retire this exposure when the peer it was stood up for goes, after a grace window.
+     *
+     * **Off unless asked for, and never without a grace.** On MQTT `peerGone` is presence and a last
+     * will, and it flaps; a browser reloading comes back as a fresh peer; a link blip is not a
+     * reason to destroy work that is running fine. Binding compute lifetime to a socket is how a
+     * wifi handover cancels somebody's job, so the default is that nothing does this.
+     */
+    lifetime?: { peer: string; graceMs?: number }
+    /**
      * Displace whatever already holds this name, rather than being refused.
      *
      * Off by default because the refusal is the point: a silent overwrite is how an exposed plant
@@ -222,6 +231,15 @@ const chosenCode = (e: unknown): RpcErrorCode => {
  * class with three `@rpc` methods and no marks has a method map and nothing else, and a record full
  * of empty maps would cost more than the twelve maps did.
  */
+/**
+ * How long a peer-bound exposure outlives its peer by default.
+ *
+ * Long enough for a reload, a wifi handover or an MQTT presence flap - all of which look exactly
+ * like the peer leaving - and short enough that a genuinely departed peer does not leave work
+ * standing for the process lifetime.
+ */
+export const DEFAULT_LIFETIME_GRACE = 30_000
+
 export interface ExposedNamespace {
     instance?: object
     methods: Map<string, (...args: unknown[]) => void>
@@ -233,6 +251,8 @@ export interface ExposedNamespace {
     authority?: Set<string>
     injection?: Set<string>
     mailbox?: number
+    /** Whose departure retires this, and how long to wait first. Absent means nothing does. */
+    lifetime?: { peer: string; graceMs?: number }
     /** Created through `createRpcInstance` rather than exposed by the host's own code. */
     created?: boolean
     /**
@@ -278,6 +298,35 @@ export class RpcServerHandler extends MessageModule<Message<RpcMessage>, RpcMess
         }
         return true
     }
+
+    /**
+     * A peer this host stood things up for has gone, or come back.
+     *
+     * The grace window is the whole design. `peerGone` flaps on a presence-based transport, and a
+     * page that reloads is a new peer arriving moments after the old one left - so retiring on the
+     * event itself would destroy running work over a wifi handover. Waiting, and cancelling the
+     * wait when the peer returns, is what makes binding a lifetime to a peer safe enough to offer.
+     */
+    peerLifetime(peer: string, present: boolean) {
+        if (present) {
+            const waiting = this.lifetimeTimers.get(peer)
+            if (waiting) clearTimeout(waiting)
+            this.lifetimeTimers.delete(peer)
+            return
+        }
+        const bound = [...this.manageRpc.namespaces].filter(([, held]) => held.lifetime?.peer === peer)
+        if (!bound.length || this.lifetimeTimers.has(peer)) return
+        const grace = Math.max(...bound.map(([, held]) => held.lifetime?.graceMs ?? DEFAULT_LIFETIME_GRACE))
+        const timer = setTimeout(() => {
+            this.lifetimeTimers.delete(peer)
+            for (const [name, held] of this.manageRpc.namespaces) if (held.lifetime?.peer === peer) void this.retire(name)
+        }, grace)
+        timer.unref?.()
+        this.lifetimeTimers.set(peer, timer)
+    }
+
+    /** One pending grace per absent peer, so a flapping link does not stack timers. */
+    private readonly lifetimeTimers = new Map<string, ReturnType<typeof setTimeout>>()
 
     /** The peer waiting on this work has gone. A fact for the handler, never an instruction. */
     abandonFor(peer: string) {
@@ -857,6 +906,14 @@ export class RpcServerHandler extends MessageModule<Message<RpcMessage>, RpcMess
                           : request.method === 'getManyReference'
                             ? getManyReference(inst, request.resource, request.params as RpcGetManyReferenceParams)
                             : getList(inst, request.resource, request.params as RpcGetListParams)
+                    // Before the answer goes out, and before it is timed: a row that its own
+                    // declared type forbids is this peer's fault, and saying so where it happened
+                    // is worth more than a console drawing the wrong columns in silence.
+                    const wrongRows = this.checkRows(declared, answer)
+                    if (wrongRows) {
+                        await this.sendError(payload.id, source, 'InvalidParams', wrongRows)
+                        return
+                    }
                     const spent = Date.now() - began
                     // Said on the peer, because this is the one thing a console cannot see: the
                     // library-served path sorts and filters synchronously, so a large enough
@@ -875,13 +932,6 @@ export class RpcServerHandler extends MessageModule<Message<RpcMessage>, RpcMess
                             // *which half* was slow rather than only that something was.
                             ...(answer && typeof answer === 'object' ? { queryMs: (answer as RpcDataTiming).queryMs, countMs: (answer as RpcDataTiming).countMs } : {})
                         })
-                    // The same self-check `validateResults` performs on a declared method's return,
-                    // pointed at the one thing a store-backed component gets wrong most easily.
-                    const badRows = this.checkDataRows(payload, declared, answer)
-                    if (badRows) {
-                        await this.sendError(payload.id, source, 'InvalidParams', badRows)
-                        return
-                    }
                     const result = answer && typeof answer === 'object' ? { ...(answer as object), ms: spent } : answer
                     await this.respond(payload.id, source, { type: RpcMessageType.success, result, id: payload.id } as RpcSuccessPayload, MessageType.ResponseMessage)
                 } else await this.sendError(payload.id, source, map ? 'MethodNotFound' : 'ClassNotFound', `${payload.path}.${payload.method} is not exposed`)
@@ -971,6 +1021,10 @@ export class RpcServerHandler extends MessageModule<Message<RpcMessage>, RpcMess
             return
         }
 
+        // Which incarnation this call was queued against. Phase one of a withdrawal removes the
+        // record, which stops new calls at the door - but a call already waiting holds a bound
+        // handler and would otherwise run happily into an instance nobody can reach any more.
+        const incarnation = this.manageRpc.at(payload.path)?.generation
         let superseded = false
         const entry = conflateKey
             ? {
@@ -991,6 +1045,24 @@ export class RpcServerHandler extends MessageModule<Message<RpcMessage>, RpcMess
             else this.executionWaiting.set(key, now - 1)
             if (conflateKey && this.conflatable.get(conflateKey) === entry) this.conflatable.delete(conflateKey)
             if (superseded) return
+            // Phase two: the name went, or something else stands under it now. Answered rather than
+            // run, and answered with a posture rather than a timeout - `OwnershipChanged` already
+            // means *certainly did not run*, which is exactly true here and is the one thing the
+            // caller needs to decide what to do next. Letting it die of its deadline instead would
+            // throw that away and call it an unknown outcome, which this library exists not to do.
+            //
+            // Reusing the code rather than adding a `Retired` beside it is deliberate: the posture
+            // is identical and only the cause differs, so a new code would cost every peer a fresh
+            // case to write for a decision it would make the same way. The message names the cause.
+            if (this.manageRpc.at(payload.path)?.generation !== incarnation) {
+                await this.sendError(
+                    payload.id,
+                    source,
+                    'OwnershipChanged',
+                    `${payload.path}.${payload.method} was queued against an instance that has since been retired, so it certainly did not run`
+                )
+                return
+            }
             await this.invoke(payload, source, arrived, handler)
         })
     }
@@ -1330,6 +1402,36 @@ export class RpcServerHandler extends MessageModule<Message<RpcMessage>, RpcMess
         return overdue > 0 ? overdue : undefined
     }
 
+    /**
+     * Catches a resource's declared row type having drifted from the rows it actually serves.
+     *
+     * A resource's `row` is written by hand, or built at runtime from a store's own schema, and
+     * nothing connects either to the values that come back - so a column renamed in the database, a
+     * SQL type mapped to the wrong `TypeNode`, or an interface changed without its declaration
+     * changing with it all produce a grid drawing the wrong columns and saying nothing. The console
+     * cannot tell, and neither can `check`: the contract describes what a *call* to a resource
+     * answers, not what its rows look like.
+     *
+     * So it is checked against the one thing that is available - the rows themselves. Off by
+     * default and enabled with `validateResults`, exactly like the return check below it, because
+     * it is a host checking its own output: worth every millisecond in development, and per-row
+     * work nobody should pay for in a plant.
+     *
+     * Only for declared resources. A record in a component's own state is described by the
+     * published contract and covered by snapshot validation already, so checking it here would be
+     * asking the same question twice.
+     */
+    private checkRows(declared: RpcDataResource | undefined, answer: unknown): string | undefined {
+        if (!this.validateResults || !declared?.row) return undefined
+        const rows = (answer as { data?: unknown[] })?.data
+        if (!Array.isArray(rows)) return undefined
+        for (const [index, row] of rows.entries()) {
+            const failure = validateValue(row, declared.row, this.schema?.types, 'row')
+            if (failure) return `${declared.path.join('.')} served a row its own declared type forbids (row ${index}): ${failure}`
+        }
+        return undefined
+    }
+
     /** Catches this server returning something its own contract does not allow. */
     private checkResult(payload: RpcCallInstanceMethodPayload, result: unknown): string | undefined {
         if (!this.validateResults || !this.schema) return undefined
@@ -1337,37 +1439,6 @@ export class RpcServerHandler extends MessageModule<Message<RpcMessage>, RpcMess
         if (!returns) return undefined
         const failure = validateValue(result, returns, this.schema.types, 'result')
         return failure ? `${payload.path}.${payload.method} returned a value its own schema forbids: ${failure}` : undefined
-    }
-
-    /**
-     * Catches this server answering `$data` with rows its own declared row type forbids.
-     *
-     * `checkResult` above needs an extracted contract, because a method's return type lives in one.
-     * This one needs nothing of the sort: a resource's `row` is published by `dataResources()` at
-     * runtime - which is the whole point of the interface, since a database's tables are not known
-     * when the component is written - so the declaration is here in hand whether or not the package
-     * serving it has a contract file at all.
-     *
-     * That makes it the cheapest guard a store-backed component will ever get, and it guards the
-     * thing most likely to be wrong. A row type is *constructed*: somebody maps a database's column
-     * types to `TypeNode`s, and every mistake in that mapping produces a viewer drawing the wrong
-     * column for values it will then render wrongly - with nothing anywhere to say so, because the
-     * rows arrive perfectly well formed and simply are not what was advertised. SQLite answering 1
-     * and 0 for a column declared `boolean` is the shape of it.
-     *
-     * Off by default with the rest of `validateResults`: this walks every row of every page, which
-     * is a development and test cost rather than a production one.
-     */
-    private checkDataRows(payload: RpcCallInstanceMethodPayload, declared: RpcDataResource | undefined, answer: unknown): string | undefined {
-        if (!this.validateResults || !declared?.row) return undefined
-        const rows = (answer as { data?: unknown } | undefined)?.data
-        if (!Array.isArray(rows)) return undefined
-        for (const [at, row] of rows.entries()) {
-            const failure = validateValue(row, declared.row, this.schema?.types, `row ${at}`)
-            if (failure)
-                return `${payload.path}: ${declared.path.join('.')} answered a row its own declared row type forbids: ${failure}`
-        }
-        return undefined
     }
 
     private sendError(id: string, target: string, code: RpcErrorCode, message: string) {
@@ -1593,6 +1664,8 @@ export class ManageRpc implements IManageRpc {
         }
         const handles = declaredInjection(instance)
         if (handles.size) this.record(namespace).injection = handles
+        // Off unless the call site asks: the default is that nothing retires an exposure for you.
+        if (settings.lifetime) this.record(namespace).lifetime = settings.lifetime
         const mailbox = settings.mailbox ?? declared?.mailbox
         if (mailbox !== undefined) {
             if (!Number.isInteger(mailbox) || mailbox < 1) throw new Error(`exposeClassInstance: ${namespace} declares a mailbox of ${mailbox}; the bound is a positive count of waiting calls`)

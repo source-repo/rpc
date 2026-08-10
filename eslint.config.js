@@ -10,6 +10,10 @@ export default tseslint.config(
             '**/node_modules/**',
             '**/src/fixture/**',
             '**/src/generated/**',
+            // Another agent's worktree is a checkout of this repository at a different commit. Its
+            // half-written code is not this run's to report on, and walking it means one thread's
+            // work in progress fails everybody else's lint.
+            '.claude/worktrees/**',
             'docs/.vitepress/cache/**',
             'docs/.vitepress/.temp/**'
         ]
