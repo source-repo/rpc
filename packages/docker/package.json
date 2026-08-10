@@ -28,6 +28,14 @@
             "types": "./dist/index.d.ts",
             "default": "./dist/index.js"
         },
+        "./control": {
+            "types": "./dist/Control.d.ts",
+            "default": "./dist/Control.js"
+        },
+        "./create": {
+            "types": "./dist/Create.d.ts",
+            "default": "./dist/Create.js"
+        },
         "./package.json": "./package.json"
     },
     "files": [

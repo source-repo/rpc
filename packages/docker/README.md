@@ -1,10 +1,20 @@
 # @source-repo/docker
 
-**This package reads and never writes, and that is the whole of its design.**
+**Three tiers, in three namespaces, behind three imports — and that separation is the design.**
 
-Write access to the Docker socket is **root on the host**. There is no namespace to bound it to and no RBAC above it: a caller able to create a container can mount `/` and own the machine. That is a security posture with a support contract attached, and it is deliberately not this package. The engine client here issues `GET` and has no method that does anything else, and the container resource declares no actions, so a console draws no buttons.
+| import | namespace | what it can do | gate |
+| --- | --- | --- | --- |
+| `@source-repo/docker` | `docker` | read | none beyond reaching the socket |
+| `@source-repo/docker/control` | `docker.control` | start, stop, restart, remove **existing** containers | a name or label allow-list |
+| `@source-repo/docker/create` | `docker.create` | create and pull | an image allow-list, and a spec that cannot escape |
 
-Starting and stopping things belongs to a runtime provider — a different product, with the operational burden that goes with it. This is the other half: seeing what is running, which is small, useful on its own, and safe to reason about.
+Two namespaces are two `authorize()` surfaces, which is why these are composed rather than subclassed: an operator can grant reading to everyone and control to nobody. A subclass would have made "may call docker" one permission, and would have made the read-only class's promise a lie by inheritance.
+
+**The tiers are not the same risk, and saying "the Docker socket is root on the host" as though they were is where this usually goes wrong.** Restarting a container that already exists escalates nothing — its image, its mounts and its privileges were chosen by whoever created it. *Creating* one is where a caller chooses those, and where the escape actually lives.
+
+So the create spec **cannot express an escape**: no bind mounts, no `privileged`, no added capabilities, no devices, no host network, no host PID namespace. Not a deny-list — a closed shape with nowhere to put them, which is the same move the filter grammar makes. A deny-list is a list somebody has to keep complete; a closed shape is one nobody can add to from outside. What remains is roughly "run this allow-listed image", which is about as dangerous as the image, and the allow-list is what that is for.
+
+**Everything is closed by default.** No manage rules, nothing controllable. No image allow-list, nothing creatable. Both refusals say which it is rather than reporting a daemon error. And a rule that constrains nothing is refused where it was written, because an empty rule read as "no constraints" is read as "everything".
 
 ## What it is
 

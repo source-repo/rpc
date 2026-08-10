@@ -1,6 +1,8 @@
 import test from 'ava'
 import { access } from 'node:fs/promises'
 import { DEFAULT_SOCKET, DockerEngine, DockerService } from './index.js'
+import { DockerControl } from './Control.js'
+import { DockerCreate } from './Create.js'
 
 /**
  * Two suites in one file: what holds with no daemon at all, and what holds against a real one.
@@ -93,4 +95,66 @@ test('the counts and the list come from the same daemon', async (t) => {
     }
 
     service.close()
+})
+
+test('control is closed until it is given something to manage', async (t) => {
+    const control = new DockerControl({ socketPath: '/nonexistent/docker.sock' })
+
+    // A node exposed by accident should be able to do nothing at all, and the refusal should say
+    // why rather than reporting whatever the daemon would have said.
+    const refused = await t.throwsAsync(control.start('anything'))
+    t.regex(String(refused?.message), /no manage rules, so it controls nothing/)
+
+    const [managed] = control.dataResources()
+    t.deepEqual([...managed.verbs], ['getList', 'getMany'])
+    t.deepEqual(
+        managed.actions?.map((action) => action.method),
+        ['start', 'stop', 'restart', 'remove']
+    )
+    t.true(managed.actions?.find((action) => action.method === 'remove')?.confirm, 'and the one that does not come back asks first')
+})
+
+test('a manage rule that constrains nothing is refused where it was written', (t) => {
+    // The easiest allow-list mistake to make by accident, and the worst to make quietly: an empty
+    // rule read as "no constraints" is read as "every container". Refused at construction rather
+    // than silently matching nothing, which is equally wrong and is found much later by somebody
+    // wondering why their perfectly good rule does nothing.
+    const refused = t.throws(() => new DockerControl({ socketPath: '/nonexistent/docker.sock', manage: [{}] }))
+    t.regex(String(refused?.message), /must name a namePrefix or a label/)
+    t.regex(String(refused?.message), /would match everything/)
+})
+
+test('creating is closed until it is given an image allow-list', async (t) => {
+    const create = new DockerCreate({ socketPath: '/nonexistent/docker.sock' })
+    t.deepEqual(await create.allowed(), [])
+
+    const refused = await t.throwsAsync(create.run({ image: 'alpine', name: 'x' }))
+    t.regex(String(refused?.message), /no image allow-list, so it can create nothing/)
+})
+
+test('the allow-list is by repository, and a tag or digest does not slip past it', async (t) => {
+    const create = new DockerCreate({ socketPath: '/nonexistent/docker.sock', images: [{ repository: 'postgres' }, { repository: 'ghcr.io/acme/*' }] })
+
+    // Refused before the daemon is ever reached, so these say nothing about Docker being absent.
+    for (const image of ['alpine', 'postgres-evil', 'ghcr.io/other/thing']) {
+        const refused = await t.throwsAsync(create.run({ image, name: 'x' }))
+        t.regex(String(refused?.message), /not on this node's image allow-list/, image)
+    }
+
+    // A tag and a digest are the same repository, which is what the rule is written about.
+    for (const image of ['postgres:17', 'postgres@sha256:abc', 'ghcr.io/acme/anything:1']) {
+        const reached = await t.throwsAsync(create.run({ image, name: 'x' }))
+        t.regex(String(reached?.message), /no Docker daemon/, `${image} should have been permitted and then failed on the socket`)
+    }
+})
+
+test('a container name is constrained, and the node prefixes what it makes', async (t) => {
+    const create = new DockerCreate({ socketPath: '/nonexistent/docker.sock', images: [{ repository: 'postgres' }], namePrefix: 'test-' })
+    t.is(create.props.namePrefix, 'test-')
+
+    // A name is not a place to put a path or a flag. Checked before anything is sent.
+    for (const name of ['../escape', 'has space', '-leading']) {
+        const refused = await t.throwsAsync(create.run({ image: 'postgres', name }))
+        t.regex(String(refused?.message), /not a usable container name/, name)
+    }
 })
