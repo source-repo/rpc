@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+### `@source-repo/docker` — what is running on this host, and nothing that could change it
+
+A plant box with a handful of containers is far commoner than a cluster, and the question asked about one is nearly always the same: what is running, what stopped, and when. This answers that over the network the rest of the site already uses.
+
+**It reads and never writes, and that boundary is the package.** Write access to the Docker socket is root on the host — no namespace to bound it to, no RBAC above it, and a caller who can create a container can mount `/` and own the machine. So the engine client issues `GET` and has no method that does anything else, and the container resource declares no actions, so a console draws no buttons. Starting things belongs to a runtime provider, which is a different product with the support burden that goes with it.
+
+**How many is state; which ones is a resource.** `running`, `exited` and `total` are bounded facts the contract can name, so they are published and subscribed to. Which containers exist is data that changes as things are started elsewhere, so it is a `dataResources()` collection a caller pages, filters and orders — through the library's own matcher and pager, so `state:exited` means here what it means anywhere. About the smallest honest example of the split the component model draws.
+
+Reachability is a fact rather than an exception: a host without Docker publishes `reachable: false` with a message naming what to check, including the permission half, which is the likelier cause on a machine that does have Docker.
+
+No dependencies — `http.request` takes a `socketPath`, which is all this has ever required. Tests run without a daemon and skip the live half, with `SOURCE_RPC_REQUIRE_DOCKER=1` turning that skip into a failure, the same guard as the MQTT suites.
+
+
 ### A component can be asked for a page, and not only watched
 
 A projection narrows what a subscription pushes, and stops where the question becomes *which* fifty of three hundred — a predicate, an order and a page over data the caller does not hold. `$data(type, resource, params)` answers that, served at dispatch level beside `$acquire`, gated by the same `authorize()`, and free over any record in a component's state: the base class serves it from the contract and the author writes nothing.

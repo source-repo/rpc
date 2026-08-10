@@ -1,0 +1,53 @@
+{
+    "name": "@source-repo/docker",
+    "version": "4.6.0",
+    "description": "Read-only Docker observation for Source RPC networks: containers as a browsable resource, over the Engine API and nothing else",
+    "keywords": [
+        "docker",
+        "containers",
+        "rpc",
+        "observability",
+        "typescript"
+    ],
+    "type": "module",
+    "license": "MIT",
+    "author": "anderswestberg",
+    "repository": {
+        "type": "git",
+        "url": "git+https://github.com/source-repo/rpc.git",
+        "directory": "packages/docker"
+    },
+    "engines": {
+        "node": ">=22"
+    },
+    "sideEffects": false,
+    "main": "./dist/index.js",
+    "types": "./dist/index.d.ts",
+    "exports": {
+        ".": {
+            "types": "./dist/index.d.ts",
+            "default": "./dist/index.js"
+        },
+        "./package.json": "./package.json"
+    },
+    "files": [
+        "dist",
+        "!dist/**/*.test.*"
+    ],
+    "scripts": {
+        "build": "tsc -p tsconfig.json",
+        "clean": "rimraf dist",
+        "typecheck": "tsc --noEmit -p tsconfig.json",
+        "test": "npm run clean && npm run build && ava",
+        "prepack": "npm run clean && npm run build"
+    },
+    "dependencies": {
+        "@source-repo/rpc": "^4.6.0"
+    },
+    "devDependencies": {
+        "@types/node": "^26.1.2",
+        "ava": "^8.0.1",
+        "rimraf": "^6.0.1",
+        "typescript": "^7.0.2"
+    }
+}
