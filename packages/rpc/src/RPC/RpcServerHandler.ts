@@ -8,6 +8,7 @@ import {
     RpcMessageType,
     RpcMethodSemantics,
     RpcSuccessPayload,
+    type RpcTicketPayload,
     toRemoteError,
     type RpcBatchPayload
 } from './Messages.js'
@@ -31,7 +32,8 @@ import {
     type RpcExecution
 } from './Expose.js'
 import { decideAiAccess, type RpcAiGrants } from './Grants.js'
-import { rpcInvocationBrand, type RpcInvocationHandle } from './Invocation.js'
+import { rpcInvocationBrand } from './Invocation.js'
+import { createDeferred, DEFAULT_TICKET_TTL, type RpcDeferred, type RpcInvocationWithDefer } from './Ticket.js'
 import { contextNamespace, type HostContext } from './Context.js'
 import {
     acquireComponentAuthority,
@@ -216,6 +218,23 @@ const chosenCode = (e: unknown): RpcErrorCode => {
 export class RpcServerHandler extends MessageModule<Message<RpcMessage>, RpcMessage, Message<RpcMessage>, RpcMessage> {
     manageRpc = new ManageRpc()
     eventProxies = new Map<string, EventProxy>()
+    /**
+     * Work this peer owes an answer for, by the request id that is also the ticket id.
+     *
+     * Held only so a caller going away can be reported to the handler. Nothing here expires the
+     * work or retires the object: an instance killed by a timer while its author still holds a
+     * reference is worse than a leak, because it exists and is unreachable.
+     */
+    private readonly deferrals = new Map<string, { peer: string; deferred: RpcDeferred<unknown, unknown> & { abandon(): void } }>()
+
+    /** The peer waiting on this work has gone. A fact for the handler, never an instruction. */
+    abandonFor(peer: string) {
+        for (const [id, held] of this.deferrals) {
+            if (held.peer !== peer) continue
+            this.deferrals.delete(id)
+            held.deferred.abandon()
+        }
+    }
 
     /**
      * One id per server incarnation, riding every stamped event and the eventCursor answer. The
@@ -955,8 +974,33 @@ export class RpcServerHandler extends MessageModule<Message<RpcMessage>, RpcMess
             // arguments cannot shift the handle into an argument's seat - the injected parameter
             // is positional only in source, never on the wire.
             while (params.length < handler.length - 1) params.push(undefined)
-            const handle: RpcInvocationHandle = Object.freeze({
+            const handle: RpcInvocationWithDefer = Object.freeze({
                 [rpcInvocationBrand]: true as const,
+                /**
+                 * Answer this call later, down the reply channel.
+                 *
+                 * The ticket's id is the request's id, so the caller is already waiting on it and
+                 * registered it before the frame left. Nothing is minted, nothing extra travels,
+                 * and correlation is a fact the runtime holds rather than one a payload asserts.
+                 */
+                defer: <T, P = unknown>() => {
+                    const expiresAt = Date.now() + DEFAULT_TICKET_TTL
+                    const deferred = createDeferred<T, P>(payload.id, expiresAt, (outcome, value, error) => {
+                        if (outcome !== 'progress') this.deferrals.delete(payload.id)
+                        void this.sendPayload(
+                            { type: RpcMessageType.ticket, id: payload.id, outcome, value, ...(error ? { error: toRemoteError(error) } : {}) } as RpcTicketPayload,
+                            MessageType.ResponseMessage,
+                            this.name,
+                            source
+                        ).catch((e) => this.emit('deliveryError', { target: source, id: payload.id, error: e }))
+                    })
+                    // Held so the caller going away can be reported to the handler as the fact it
+                    // is. Never as an instruction: this library cannot stop a running method, so it
+                    // must not offer `cancel()` - and saying truthfully that nobody is listening is
+                    // a much smaller promise, and one it can keep.
+                    this.deferrals.set(payload.id, { peer: source, deferred })
+                    return deferred
+                },
                 context: Object.freeze({
                     requestId: payload.id,
                     source,
@@ -979,7 +1023,18 @@ export class RpcServerHandler extends MessageModule<Message<RpcMessage>, RpcMess
                 return
             }
             await this.settle(invocation, claimed, { result })
-            await this.respond(payload.id, source, { type: RpcMessageType.success, id: payload.id, result } as RpcSuccessPayload, MessageType.ResponseMessage)
+            // A deferred method answers twice, and this is the first: what travels now is the
+            // correlation id and the expiry, not the work. Marked rather than left to be inferred
+            // from the shape, because a method may return an object with an `id` and an `expiresAt`
+            // and mean nothing by it.
+            const deferring = this.deferrals.has(payload.id)
+            const answer = deferring ? { id: payload.id, expiresAt: (result as { expiresAt: number })?.expiresAt } : result
+            await this.respond(
+                payload.id,
+                source,
+                { type: RpcMessageType.success, id: payload.id, result: answer, ...(deferring ? { deferred: true } : {}) } as RpcSuccessPayload,
+                MessageType.ResponseMessage
+            )
         } catch (e) {
             const code = chosenCode(e)
             await this.settle(invocation, claimed, { code, error: toRemoteError(e) })
@@ -1204,6 +1259,9 @@ export class RpcServerHandler extends MessageModule<Message<RpcMessage>, RpcMess
             eventProxy.detach()
             this.eventProxies.delete(key)
         }
+        // One more cleanup in a block that already does two: work started for a peer that has gone
+        // is work being done for nobody, and the handler is entitled to be told.
+        this.abandonFor(source)
     }
 
     async sendEvent(target: string, event: string, params: unknown[], path?: string) {

@@ -409,6 +409,11 @@ export class RpcServerBase extends EventEmitter implements IManageRpc {
         // component channels need no recovery listener - resubscribe() above replays their event
         // subscription - but the context resolver's subscriptions are method-registered, so
         // `connected` is forwarded too and re-subscribing is its own replay.
+        // A ticket this peer is waiting on is answered by the peer holding the work, so that peer
+        // going means nothing will ever answer. Rejected rather than left to lapse at its expiry,
+        // which could be half an hour away.
+        for (const event of [TransportEvent.peerGone, TransportEvent.peerDisplaced])
+            transport.on(event, (peer: string) => this.caller.tickets.dropTarget(peer))
         for (const event of [TransportEvent.disconnected, TransportEvent.peerGone, TransportEvent.peerDisplaced, TransportEvent.connected])
             transport.on(event, (payload: unknown) => {
                 this.componentLifecycle.emit(event, payload)

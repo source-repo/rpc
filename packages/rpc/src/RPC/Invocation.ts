@@ -1,3 +1,4 @@
+import type { RpcDeferred } from './Ticket.js'
 import type { RpcIdentity } from './Auth.js'
 
 /**
@@ -37,6 +38,18 @@ export interface RpcInvocationContext {
 export interface RpcInvocationHandle {
     readonly [rpcInvocationBrand]: true
     readonly context: RpcInvocationContext
+    /**
+     * Answer this call later, down the reply channel, instead of in the call itself.
+     *
+     * On the handle rather than on an extension of it, because `WithoutInvocation` below strips a
+     * trailing handle only when its type is *exactly* this one - the check is bidirectional so a
+     * trailing `unknown` cannot be mistaken for a handle. A separate `RpcInvocationHandle &
+     * Deferring` would fail that check, and a handler that asked to defer would silently find its
+     * injected parameter no longer stripped from the caller's signature.
+     *
+     * Every handle can defer; a method that never calls this is unaffected.
+     */
+    defer<T, P = unknown>(): RpcDeferred<T, P>
 }
 
 /**

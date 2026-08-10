@@ -16,7 +16,22 @@ export enum RpcMessageType {
      * Several payloads in one frame. An envelope and nothing more: the receiver unpacks it and
      * feeds each payload through the ordinary path, so every per-call rule still applies per call.
      */
-    batch = 'BATCH'
+    batch = 'BATCH',
+    /**
+     * A later answer for a call that has already been answered.
+     *
+     * A deferred method replies twice: once in the call, with a correlation id and an expiry, and
+     * again - possibly much later - with what the work produced. This is the second, and it is a
+     * message type rather than a namespace of its own because it *is* a reply: it travels the path
+     * a reply travels, carries the id of the request it belongs to, and needs nothing exposed.
+     *
+     * Which is also what makes it unforgeable without anybody writing a check. A caller accepts one
+     * only for a request it actually made, to the peer it actually made it to - both facts it
+     * already holds. Hand-rolled with a callback namespace, that check is something an author has
+     * to know to write, and its absence is invisible: everything works in testing and forged
+     * results land in production.
+     */
+    ticket = 'TICKET'
 }
 
 export interface RpcMessage extends Payload {
@@ -183,7 +198,24 @@ export interface RpcErrorPayload extends RpcMessage {
 export interface RpcSuccessPayload extends RpcMessage {
     id: string
     result: unknown
+    /**
+     * This method answers later, and `result` is the ticket to wait on rather than the answer.
+     *
+     * Said by the server rather than guessed from the shape of `result`: a method may legitimately
+     * return an object with an `id` and an `expiresAt` and mean nothing by it, and a caller that
+     * hydrated one into a ticket would hand back something that never resolves.
+     */
+    deferred?: boolean
 }
+/** What a deferred reply carries. `id` is the request it answers, which is also the ticket's id. */
+export interface RpcTicketPayload extends RpcMessage {
+    id: string
+    /** Progress may arrive many times; resolved and rejected arrive once and end the ticket. */
+    outcome: 'progress' | 'resolved' | 'rejected'
+    value?: unknown
+    error?: RpcRemoteError
+}
+
 export interface RpcEventPayload extends RpcMessage {
     event: string
     params: unknown[]

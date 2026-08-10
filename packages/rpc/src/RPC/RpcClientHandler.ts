@@ -7,9 +7,11 @@ import {
     RpcCallInstanceMethodPayload,
     RpcMessage,
     RpcSuccessPayload,
+    type RpcTicketPayload,
     RpcMessageType,
     type RpcBatchPayload
 } from './RpcServerHandler.js'
+import { RpcTickets } from './Ticket.js'
 import { EventEmitter } from 'events'
 import { v4 as uuidv4 } from 'uuid'
 
@@ -40,6 +42,10 @@ export interface RpcClientEmitter extends MessageModule<Message<RpcMessage>, Rpc
     on(event: string, handler: (_event: string, params: unknown[]) => void): this
     emit(event: string, params: unknown[]): boolean
     removeListener(event: string, handler: (params: unknown[]) => void): this
+}
+
+function isTicketReply(payload: RpcMessage): payload is RpcTicketPayload {
+    return payload.type === RpcMessageType.ticket
 }
 
 function isSuccessResponse(payload: RpcMessage): payload is RpcSuccessPayload {
@@ -107,6 +113,8 @@ export interface FailedResubscription {
 
 export class RpcClientHandler extends MessageModule<Message<RpcMessage>, RpcMessage, Message<RpcMessage>, RpcMessage> implements RpcClientEmitter {
     responsePromiseMap = new Map<string, PromiseResolver<unknown>>()
+    /** Tickets this peer is waiting on, and the rule about who may answer one. See Ticket.ts. */
+    readonly tickets = new RpcTickets()
     responseTimeoutMap = new Map<string, NodeJS.Timeout>()
     /** Contract versions this client was built against, by namespace, declared on each call. */
     schemaVersions?: { [namespace: string]: string | undefined }
@@ -212,8 +220,31 @@ export class RpcClientHandler extends MessageModule<Message<RpcMessage>, RpcMess
             this.deliverEvent(payload, source)
             return
         }
+        if (isTicketReply(payload)) {
+            // A reply with no source has no peer to check against, and the check is the feature.
+            if (!source) return
+            // Only for a call this peer actually made, only from the peer it made it to. Both facts
+            // are already held here, which is the point of the reply travelling as a reply: a
+            // forged result has nothing to attach itself to. Refusals are reported rather than
+            // dropped, because a rejected attempt is worth seeing and silence is not evidence.
+            const accepted = this.tickets.deliver(payload.id, source, payload.outcome, payload.value, payload.error)
+            if (!accepted && this.responsePromiseMap.has(payload.id))
+                // The answer naming this ticket has not arrived yet, which an unordered transport
+                // allows. Held, because the id is a call this peer has out.
+                this.tickets.holdEarly(payload.id, source, payload.outcome, payload.value, payload.error)
+            else if (!accepted) this.emit('ticketRefused', { id: payload.id, from: source })
+            return
+        }
         if (isSuccessResponse(payload)) {
-            this.takePending(payload.id)?.resolve(payload.result)
+            const pending = this.takePending(payload.id)
+            if (!pending) return
+            // A deferred method answers twice. This is the first: a correlation id and an expiry,
+            // which become the ticket the caller holds while the work runs.
+            const deferred = payload.deferred ? (payload.result as { id: string; expiresAt: number }) : undefined
+            // Same reason as a ticket reply: a ticket whose target is unknown could be answered by
+            // anyone, so an answer with no verifiable source is delivered as the plain result it
+            // came as rather than hydrated into something that claims a guarantee it cannot make.
+            pending.resolve(deferred && source ? this.tickets.open(deferred.id, source, deferred.expiresAt) : payload.result)
             return
         }
         if (isErrorResponse(payload)) {

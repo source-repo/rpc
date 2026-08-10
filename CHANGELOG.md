@@ -26,6 +26,35 @@ A component serving its own resources answers through one `dataRequest(method, r
 
 The console's grid can now be ordered by the key or by any field the row type declares, ascending or descending. Drawn from the type rather than from a row, so the choices are the same on an empty collection as on a full one — and the order is the peer's, over the whole matched set, because an order applied to the fifty rows already on screen would disagree with itself the moment a page was turned.
 
+### Deferred replies: a long job can answer the caller that asked, and nobody else
+
+A caller starts work that outlives any sane call deadline — a report, a scan, a batch import — and the result belongs to the peer that asked. Events broadcast, a per-job instance leaks a namespace for the process lifetime, and a hand-rolled result sink costs a peer and forty lines of bookkeeping. The library absorbs it.
+
+```typescript
+@rpc({ semantics: 'non-repeatable-command', injectInvocation: true })
+async start(spec: Spec, inv: RpcInvocationHandle): Promise<RpcTicket<JobResult, number>> {
+    const reply = inv.defer<JobResult, number>()
+    void this.run(spec).then(reply.resolve, reply.reject)
+    return reply.ticket
+}
+
+const ticket = await jobs.start(spec)
+ticket.on('progress', (pct) => setBar(pct))
+const result = await ticket.result
+```
+
+**The ticket's id is the call's id**, which is the whole trick. The caller is already waiting on that id and registered it before the frame left, so nothing is minted, no extra byte travels, and there is no window where a result names a ticket the caller has not heard of. It also makes the security property structural rather than advisory: **a reply is accepted only for a call this peer actually made, to the peer it made it to.** Hand-rolled, that check is something an author has to know to write and its absence is invisible — everything works in testing and forged results land on an operator's screen. A refused attempt is reported as `ticketRefused` rather than dropped, because silence is not evidence.
+
+A deferred reply travels as a **reply** — a `TICKET` payload carrying the request id — rather than through a namespace of its own. Nothing is exposed, nothing is withdrawn, and it needs neither the registry refactor nor namespace withdrawal.
+
+**A ticket is deliberately not thenable, and that is not a style choice.** A deferred method is reached through an ordinary call, so the caller writes `await jobs.start(spec)` — and `await` unwraps thenables *recursively*. Had a ticket been a `PromiseLike<T>`, that first await would have flattened straight through it to the result, in the types and at runtime, and the handle would never have existed to subscribe to. The progress channel would have been unreachable by construction. So the answer is on `ticket.result`.
+
+**Two deadlines, never conflated.** `$with({ timeoutMs })` bounds the call that started the work; the ticket carries its own expiry, transmitted separately and defaulted an order of magnitude apart, because anyone given one number will set it meaning the other.
+
+**Abandonment, which is not cancellation.** When the waiting peer goes, `reply.on('abandoned')` fires and the handler decides. The library cannot stop a running method, so it does not offer `cancel()` — reporting a fact truthfully is a much smaller promise and one it can keep. The caller's side of the same event rejects its outstanding tickets rather than leaving them to lapse half an hour later.
+
+**These die with the process, and that is the first line rather than a footnote.** `@source-repo/queue` is what durable long work is for — leases, retries, dead letters, survival across a restart. A deferred reply is the lighter thing, and reaching for it where the queue was meant is a difference discovered during a restart.
+
 ### A contract can describe a method that answers later
 
 Groundwork for deferred replies, and useful on its own because it is the part that decides whether the feature can be checked at all.

@@ -52,16 +52,22 @@ const subscribes = (ticket: Ticket) => {
     ticket.off('progress', () => undefined)
 }
 
-test('a ticket is awaitable and subscribable, and is deliberately not a Promise', (t) => {
-    // Awaitable, which is the whole caller-side ergonomic: `const result = await ticket`.
-    exact<Exact<Awaited<Ticket>, JobResult>>(true)
+test('a ticket is a handle with the answer on it, and is deliberately not thenable', (t) => {
+    // The assertion this file exists for, and the one it did not make the first time.
+    //
+    // A deferred method is reached through an ordinary call, so a caller writes
+    // `await jobs.start(spec)` - and `await` unwraps thenables *recursively*. Were a ticket
+    // `PromiseLike<T>`, that first await would flatten straight through it to `T` and the handle
+    // would never exist to subscribe to: the progress channel unreachable by construction, in the
+    // types and at runtime both.
+    exact<Exact<Awaited<Promise<Ticket>>, Ticket>>(true)
+    exact<Exact<Ticket extends PromiseLike<unknown> ? true : false, false>>(true)
+
+    // The answer is a property, which reads only slightly longer and cannot be got wrong.
+    exact<Exact<Awaited<Ticket['result']>, JobResult>>(true)
 
     // Subscribable, with the progress payload typed rather than unknown.
     void subscribes
-
-    // And not a Promise: no `catch`, no `finally`, nothing that invites `Promise.all` over a set of
-    // handles to work happening on other machines as though they were cheap and local.
-    exact<Exact<Ticket extends { catch: unknown } ? true : false, false>>(true)
     t.pass()
 })
 
@@ -72,6 +78,6 @@ test('the two sides of a ticket are different objects with the same payload type
     type Deferred = RpcDeferred<JobResult, number>
     exact<Exact<Parameters<Deferred['resolve']>[0], JobResult>>(true)
     exact<Exact<Parameters<Deferred['progress']>[0], number>>(true)
-    exact<Exact<Awaited<Deferred['ticket']>, JobResult>>(true)
+    exact<Exact<Awaited<Deferred['ticket']['result']>, JobResult>>(true)
     t.pass()
 })
