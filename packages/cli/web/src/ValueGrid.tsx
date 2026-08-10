@@ -3,6 +3,7 @@ import { matchesFilter, type RpcFilter, type RpcGetListResult, type RpcSort } fr
 import { leavesUnder, typeAt, type ScopeLeaf } from './scope'
 import { staticSource, ValueTree, type EditAffordance, type ValueSource } from './ValueTree'
 import { compileFilter } from './filter'
+import { pageControls } from './pager'
 import { useDebounced, usePolled, useWaitedSeconds } from './polled'
 import type { DescribedAction, DescribedComponent, TypeNode } from './types'
 
@@ -121,15 +122,20 @@ const Collection = ({
     // Ticking while a fetch is in flight, and absent otherwise. A pane that says `asking…` and
     // nothing else looks exactly like one that has died.
     const waited = useWaitedSeconds(since)
-    const total = data?.total ?? 0
-    const pages = pageSize > 0 ? Math.ceil(total / pageSize) : 1
+    // Every decision that depends on whether the resource could afford a count, in one place and
+    // tested there: an absent total is unknown rather than zero, and reading it as zero is what
+    // would tell an operator "nothing matches" over a filter that matched sixty.
+    const controls = pageControls(page, pageSize, data, filter !== undefined)
 
     return (
         <div className="collection">
             <div className="collection-head">
                 <span className="value-name mono branch">{label}</span>
                 <span className="muted">
-                    {data ? `${data.ids.length} of ${total}` : 'asking…'}
+                    {/* "3 of 47" where the count is known, and the row count alone where it is not -
+                        rather than "3 of 0", which is what a missing count would print if it were
+                        read as a zero. */}
+                    {controls.count}
                     {/* Said out loud rather than shown as a blank: the rows below are the last
                         answer, and an operator has to know which of the two they are reading. */}
                     {fetching && data ? ' · refreshing' : ''}
@@ -172,15 +178,18 @@ const Collection = ({
                         </button>
                     )}
                 </span>
-                {pages > 1 && (
+                {/* Drawn whenever there is anywhere to go, which is the only test that works for
+                    both kinds of resource: a counted one knows how many pages there are, and an
+                    uncounted one knows only that something follows. */}
+                {controls.paged && (
                     <span className="pager">
-                        <button className="toggle" disabled={page === 0} onClick={() => setPage((at) => at - 1)}>
+                        <button className="toggle" disabled={!controls.hasPrevious} onClick={() => setPage((at) => at - 1)}>
                             ◂
                         </button>
-                        <span className="muted mono">
-                            {page + 1}/{pages}
-                        </span>
-                        <button className="toggle" disabled={page + 1 >= pages} onClick={() => setPage((at) => at + 1)}>
+                        {/* "2/9" where the pages can be counted, and "2" where they cannot - a
+                            page number over a total nobody knows would be a made-up denominator. */}
+                        <span className="muted mono">{controls.position}</span>
+                        <button className="toggle" disabled={!controls.hasNext} onClick={() => setPage((at) => at + 1)}>
                             ▸
                         </button>
                     </span>
@@ -211,7 +220,7 @@ const Collection = ({
             {/* Three different nothings, and an operator has to be able to tell them apart: a
                 collection with no entries, a search that matched none of them, and a page that ran
                 off the end of a set which shrank while it was being read. */}
-            {data && data.ids.length === 0 && <p className="muted">{total > 0 ? 'past the end' : filter ? 'nothing matches' : 'empty'}</p>}
+            {controls.emptiness && <p className="muted">{controls.emptiness}</p>}
         </div>
     )
 }

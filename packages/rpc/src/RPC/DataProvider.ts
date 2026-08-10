@@ -193,15 +193,33 @@ export interface RpcGetListResult extends RpcDataTiming {
      * pager needs and what "3 of 47" means: the count of the set this page was cut from, not the
      * size of the collection behind it.
      *
-     * Reported because it is the only thing a caller cannot work out for itself.
+     * Reported where it is known, because it is the only thing a caller cannot work out for itself.
      *
-     * Required today, and that will have to give: `COUNT(*)` over a filtered table is not free, and
-     * react-admin carries `pageInfo.hasNextPage` instead for exactly that reason. A record held in
-     * memory can always afford the count, so the only implementation there is can always supply it -
-     * but the first store-backed component makes this optional with a `hasMore` beside it, and a
-     * caller written against it should not assume the number is always there.
+     * **Optional, and absent means unknown rather than zero.** A record held in memory produces the
+     * matched set and this is its length - a byproduct that costs nothing, so the library-served
+     * path always supplies it. Over a table they are two different questions: `LIMIT 50` is answered
+     * from an index and `COUNT(*)` over the same predicate walks it, routinely most of the request.
+     * react-admin carries `pageInfo.hasNextPage` instead for exactly that reason.
+     *
+     * Absent rather than zero, and the difference is not stylistic. `total: 0` alongside `hasMore`
+     * reads unambiguously almost everywhere - a genuinely empty set has neither rows nor more - but
+     * it runs out of room when a caller pages past the end: no rows, nothing beyond, count zero is
+     * exactly what an empty collection answers, and a console would render "no rows match" over a
+     * filter that matched sixty. Absent says unknown in that case and in every other one.
      */
-    readonly total: number
+    readonly total?: number
+    /**
+     * Whether anything follows this page - the cheap half of the count.
+     *
+     * The one fact a pager actually needs to draw a "next" control, and the one a store can answer
+     * without walking the predicate: ask for one row more than the page and see whether it arrives.
+     * Reported alongside `total` rather than instead of it, so a resource that can afford both says
+     * both, and a caller can show "3 of 47" where it is known and a next arrow where it is not.
+     *
+     * Absent means the answer was not computed, which a caller should read as "no idea" rather than
+     * as "no". Where `total` is present, `hasMore` adds nothing and may be left off.
+     */
+    readonly hasMore?: boolean
     /** Which epoch and revision this page was drawn from, so a caller can tell a restart from an update. */
     readonly epoch: string
     readonly revision: number
@@ -295,8 +313,17 @@ export interface RpcDataResources {
      * Shaped like the wire verb rather than one method per verb, for the reason `$data` is: adding
      * `getManyReference` is then a value a component already switches on rather than a method every
      * implementor has to grow.
+     *
+     * The reference params are named here as well as the other two, because the dispatcher passes
+     * exactly those for `getManyReference` - and a union that omitted them made an implementor
+     * narrow a parameter its caller had already widened, which every implementation resolved with
+     * a cast that hid the one field the verb is about.
      */
-    dataRequest(method: RpcDataMethod, resource: RpcResource, params: RpcGetListParams | RpcGetManyParams): unknown | Promise<unknown>
+    dataRequest(
+        method: RpcDataMethod,
+        resource: RpcResource,
+        params: RpcGetListParams | RpcGetManyParams | RpcGetManyReferenceParams
+    ): unknown | Promise<unknown>
 }
 
 /**
@@ -598,7 +625,10 @@ export const getList = (component: object, resource: RpcResource, params: RpcGet
  * database should do this as a query; one over a bounded in-memory backlog is right to read it and
  * hand it here.
  */
-export const pageEntries = (entries: readonly (readonly [string, unknown])[], params: RpcGetListParams): { ids: string[]; data: unknown[]; total: number } => {
+export const pageEntries = (
+    entries: readonly (readonly [string, unknown])[],
+    params: RpcGetListParams
+): { ids: string[]; data: unknown[]; total: number; hasMore: boolean } => {
     const rows = new Map(entries)
     const keys = entries.map(([id]) => id)
     const matched = params.filter ? keys.filter((id) => matchesFilter(params.filter as RpcFilter, rows.get(id), id)) : keys
@@ -613,5 +643,8 @@ export const pageEntries = (entries: readonly (readonly [string, unknown])[], pa
     const { page = 0, pageSize } = params.pagination ?? {}
     const from = page * (pageSize ?? 0)
     const ids = pageSize === undefined ? ordered : ordered.slice(from, from + pageSize)
-    return { ids, data: ids.map((id) => rows.get(id)), total: ordered.length }
+    // Both, always, because this path already holds the matched set: the count is a byproduct and
+    // `hasMore` is arithmetic over it. A caller that only understands one of the two is right either
+    // way, which is what makes this the reference a store-backed implementation is checked against.
+    return { ids, data: ids.map((id) => rows.get(id)), total: ordered.length, hasMore: from + ids.length < ordered.length }
 }
