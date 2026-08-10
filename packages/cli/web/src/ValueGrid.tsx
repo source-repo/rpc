@@ -1,5 +1,5 @@
-import { useMemo, useState } from 'react'
-import type { RpcFilter, RpcGetListResult } from '@source-repo/rpc'
+import { useEffect, useMemo, useState } from 'react'
+import { matchesFilter, type RpcFilter, type RpcGetListResult } from '@source-repo/rpc'
 import { leavesUnder, typeAt, type ScopeLeaf } from './scope'
 import { staticSource, ValueTree, type EditAffordance, type ValueSource } from './ValueTree'
 import { compileFilter } from './filter'
@@ -45,7 +45,8 @@ const Collection = ({
     period,
     pageSize,
     edit,
-    settled
+    settled,
+    filter
 }: {
     leaf: ScopeLeaf
     types?: { [name: string]: TypeNode }
@@ -54,14 +55,11 @@ const Collection = ({
     pageSize: number
     edit?: EditAffordance
     settled: number
+    /** Compiled once by the pane above, so both halves of the grid answer the same search. */
+    filter?: RpcFilter
 }) => {
     const [page, setPage] = useState(0)
-    const [typed, setTyped] = useState('')
     const label = leaf.path.join('.')
-
-    // Settled rather than live, so eight keystrokes are one question and not eight.
-    const search = useDebounced(typed, 400)
-    const filter = useMemo(() => compileFilter(search), [search])
     const filterKey = JSON.stringify(filter ?? null)
 
     // Adjusted during the render that noticed it, rather than in an effect afterwards. An effect
@@ -111,17 +109,6 @@ const Collection = ({
         <div className="collection">
             <div className="collection-head">
                 <span className="value-name mono branch">{label}</span>
-                {/* Compiled to a condition and answered where the data is, so a search that matches
-                    nothing costs a sentence rather than a record. `quality:bad` is the query this
-                    box exists for - the one a local filter would have to receive everything to
-                    answer. See filter.ts for the grammar. */}
-                <input
-                    className="value-edit filter-box"
-                    value={typed}
-                    placeholder="filter"
-                    title="a word searches the tag name; field:word narrows to a field; & is and, | is or"
-                    onChange={(event) => setTyped(event.target.value)}
-                />
                 <span className="muted">
                     {data ? `${data.ids.length} of ${total}` : 'asking…'}
                     {/* Said out loud rather than shown as a blank: the rows below are the last
@@ -178,17 +165,61 @@ export const ValueGrid = ({
     settled: number
     pageSize?: number
 }) => {
+    const [typed, setTyped] = useState('')
+    // Settled rather than live, so eight keystrokes are one question and not eight.
+    const search = useDebounced(typed, 400)
+    const filter = useMemo(() => compileFilter(search), [search])
+
     const leaves = useMemo(() => leavesUnder(typeAt(component, scope, types), scope, types), [component, scope, types])
-    const plain = leaves.filter((leaf) => !leaf.collection)
     const collections = leaves.filter((leaf) => leaf.collection)
+    const all = leaves.filter((leaf) => !leaf.collection)
+
+    /**
+     * The grid re-reads its own values while a filter is active, and only then.
+     *
+     * A subscribed leaf changes without this component rendering - that is the arrangement that
+     * keeps one moving tag from redrawing its three hundred neighbours - so a filter on `quality`
+     * would otherwise keep showing whichever rows matched when it was typed. The subscription costs
+     * a render of the visible rows per snapshot, which is the price of a filter that stays true, and
+     * nothing at all is subscribed when the box is empty.
+     */
+    const [, retest] = useState(0)
+    useEffect(() => {
+        if (!filter) return
+        return source.subscribe(() => retest((count) => count + 1))
+    }, [source, filter])
+
+    // Filtered with the library's own matcher rather than a version of it, because a search meaning
+    // two different things either side of one pane would be worse than no search at all. The id of a
+    // typed leaf is its path, which is what makes `setp` find `state.zones.top.setpoint`.
+    const plain = filter ? all.filter((leaf) => matchesFilter(filter, source.read(leaf.path), leaf.path.join('.'))) : all
 
     return (
         <div className="value-grid">
+            <div className="grid-head">
+                {/* One box for the pane. The subscribed half is filtered here, where it is already
+                    held; the collections carry the same condition to the peer, so a search that
+                    matches nothing there costs a sentence rather than a record. `quality:bad` is the
+                    query this exists for - the one no local filter can answer. See filter.ts. */}
+                <input
+                    className="value-edit filter-box"
+                    value={typed}
+                    placeholder="filter"
+                    title="a word searches the path; field:word narrows to a field; & is and, | is or"
+                    onChange={(event) => setTyped(event.target.value)}
+                />
+                {all.length > 0 && (
+                    <span className="muted">
+                        {filter ? `${plain.length} of ${all.length}` : `${all.length}`} field{all.length === 1 ? '' : 's'}
+                    </span>
+                )}
+            </div>
             {plain.map((leaf) => (
                 <ValueTree key={leaf.path.join('.')} name={leaf.path.join('.')} source={source} type={leaf.type} types={types} path={leaf.path} edit={edit} depth={1} />
             ))}
+            {filter && all.length > 0 && plain.length === 0 && <p className="muted">no field matches</p>}
             {collections.map((leaf) => (
-                <Collection key={leaf.path.join('.')} leaf={leaf} types={types} fetchPage={fetchPage} period={period} pageSize={pageSize} edit={edit} settled={settled} />
+                <Collection key={leaf.path.join('.')} leaf={leaf} types={types} fetchPage={fetchPage} period={period} pageSize={pageSize} edit={edit} settled={settled} filter={filter} />
             ))}
             {leaves.length === 0 && <p className="muted">nothing under this node</p>}
         </div>

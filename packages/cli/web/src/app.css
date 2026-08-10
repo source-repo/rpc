@@ -1380,6 +1380,15 @@ textarea.control {
     min-width: 0;
 }
 
+/* One box for the pane rather than one per collection: the subscribed fields and the paged rows
+   are one list to whoever is reading the screen, however differently they are fetched. */
+.grid-head {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding-bottom: 4px;
+}
+
 .collection {
     margin-top: 10px;
 }

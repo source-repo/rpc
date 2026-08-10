@@ -85,7 +85,11 @@ The same line decides how the two halves of the grid are fed. **Typed leaves are
 
 ### Filtering happens on the peer
 
-The box in a collection's header searches where the data is. A bare word matches the tag name, `field:word` narrows to a field of the row, `&` is and and `|` is or — so `quality:bad` is answerable at all, which it is not from the browser at any bandwidth: finding out which thirty of three hundred are bad is exactly what a local filter would have to receive all three hundred to discover. A search that matches nothing costs a sentence on the wire rather than a record.
+One box serves the pane, and both halves of the grid answer it. The subscribed fields are filtered where they are already held; the collections carry the same condition to the peer, so a search matching nothing there costs a sentence on the wire rather than a record.
+
+A bare word matches the path, `field:word` narrows to a field of the row, `&` is and and `|` is or — so `setp` finds `state.zones.top.setpoint` two levels down, and `quality:bad` is answerable at all, which it is not from the browser at any bandwidth: finding out which thirty of three hundred are bad is exactly what a local filter would have to receive all three hundred to discover.
+
+Both ends call the library's own matcher rather than each keeping a version of it. A search that meant two different things either side of one pane would be worse than no search at all, and that is the sort of difference nobody notices until it has been trusted.
 
 What the box compiles to is **data, never a program**: `{ field: 'quality', op: 'contains', operand: 'bad' }`, which the peer checks and can refuse. The console this grammar came from ended the same function with `new RegExp`, which is safe in a browser against an in-memory store and is a stall on a plant server that re-evaluates it on every request.
 

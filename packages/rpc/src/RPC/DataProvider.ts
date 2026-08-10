@@ -280,10 +280,20 @@ const satisfies = (value: unknown, { op, operand }: RpcFilterCondition): boolean
     }
 }
 
-const passes = (filter: RpcFilter, row: unknown, id: string): boolean => {
+/**
+ * Whether one row satisfies a filter.
+ *
+ * Exported because a caller may hold part of a set already and have no reason to ask for it. The
+ * console is the case: a component's typed leaves are bounded by the contract, so it subscribes to
+ * them and filters them here, while the record beside them is paged and filtered on the peer. Those
+ * are one search box to whoever is reading the screen, and a search that meant two different things
+ * either side of the same pane would be worse than no search at all - so both ends call this rather
+ * than each having a version of it.
+ */
+export const matchesFilter = (filter: RpcFilter, row: unknown, id: string): boolean => {
     const group = filter as { all?: readonly RpcFilter[]; any?: readonly RpcFilter[] }
-    if (group.all) return group.all.every((inner) => passes(inner, row, id))
-    if (group.any) return group.any.some((inner) => passes(inner, row, id))
+    if (group.all) return group.all.every((inner) => matchesFilter(inner, row, id))
+    if (group.any) return group.any.some((inner) => matchesFilter(inner, row, id))
     const condition = filter as RpcFilterCondition
     return satisfies(fieldOf(row, id, condition.field), condition)
 }
@@ -329,7 +339,7 @@ export const getList = (component: object, resource: RpcResource, params: RpcGet
     const snapshot = componentSnapshot(component)
     const collection = collectionAt(snapshot, resource) ?? {}
     const keys = projectionKeyOrder(collection)
-    const matched = params.filter ? keys.filter((id) => passes(params.filter as RpcFilter, collection[id], id)) : keys
+    const matched = params.filter ? keys.filter((id) => matchesFilter(params.filter as RpcFilter, collection[id], id)) : keys
     const ordered = params.sort
         ? [...matched].sort((a, b) => {
               const by = compare(fieldOf(collection[a], a, params.sort?.field), fieldOf(collection[b], b, params.sort?.field))

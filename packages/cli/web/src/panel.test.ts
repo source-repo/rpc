@@ -1,5 +1,5 @@
 import { afterAll, expect, test } from 'vitest'
-import { rpcComponent, RpcClient, RpcComponent, RpcServer, type RpcGetListParams, type RpcGetListResult } from '@source-repo/rpc'
+import { matchesFilter, rpcComponent, RpcClient, RpcComponent, RpcServer, type RpcGetListParams, type RpcGetListResult } from '@source-repo/rpc'
 import { leavesUnder } from './scope'
 import { compileFilter } from './filter'
 import type { DescribedComponent, TypeNode } from './types'
@@ -132,4 +132,27 @@ test('what the filter box compiles narrows on the peer, not in the browser', asy
     const narrowed = await proxy.$data('getList', ['state', 'tags'], { filter: compileFilter('.05 & quality:bad') })
     expect([...narrowed.ids]).toEqual(['tag.050'])
     expect(narrowed.total).toBe(1)
+})
+
+test('one box means one thing on both halves of the grid', async () => {
+    const proxy = await client.proxy<{ $data(method: 'getList', resource: readonly string[], params?: RpcGetListParams): Promise<RpcGetListResult> }>('field')
+
+    // The typed fields are held rather than asked for, so the console filters them itself - and the
+    // id of a typed leaf is its path, which is what makes `setp` find a setpoint two levels down.
+    const setp = compileFilter('setp')!
+    const fields = leavesUnder(contract.state, ['state'])
+        .filter((leaf) => !leaf.collection)
+        .filter((leaf) => matchesFilter(setp, undefined, leaf.path.join('.')))
+        .map((leaf) => leaf.path.join('.'))
+    expect(fields).toEqual(['state.zones.top.setpoint'])
+
+    // And the property that makes one box honest: the matcher the console runs over what it holds
+    // agrees exactly with the one the peer runs over what it does not. A search that meant two
+    // different things either side of the same pane would be worse than no search at all.
+    const filter = compileFilter('quality:bad')!
+    const answered = await proxy.$data('getList', ['state', 'tags'], { filter })
+    const whole = await proxy.$data('getList', ['state', 'tags'])
+    const locally = whole.ids.filter((id, index) => matchesFilter(filter, whole.data[index], id))
+    expect(locally).toEqual([...answered.ids])
+    expect(locally.length).toBe(30)
 })
