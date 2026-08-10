@@ -149,13 +149,28 @@ export const readCatalogue = async (
             unserved.push({ name: found.name, reason: `a composite primary key (${key.join(', ')}), which has no single id` })
             continue
         }
-        const id = byName.get(key[0])
-        if (!id) {
+        const declaredId = byName.get(key[0])
+        if (!declaredId) {
             unserved.push({ name: found.name, reason: `the primary key names ${key[0]}, which is not among its columns` })
             continue
         }
+        // A key is never null, whatever the introspector says - and one of them says otherwise.
+        // SQLite's `integer primary key` is an alias for the rowid and reports `notnull = 0`, so the
+        // same table would publish `id: number` on Postgres and `id: number | null` on SQLite: one
+        // schema, two contracts, for a column that cannot hold a null in either. Corrected here
+        // rather than in the flavour, because it is a fact about keys rather than about engines.
+        const id: ColumnInfo = declaredId.nullable ? { ...declaredId, nullable: false } : declaredId
+        const withId = columns.map((column) => (column.name === id.name ? id : column))
 
-        tables.push({ name: found.name, schema: found.schema, isView: found.isView, columns, byName, key, id })
+        tables.push({
+            name: found.name,
+            schema: found.schema,
+            isView: found.isView,
+            columns: withId,
+            byName: new Map(withId.map((column) => [column.name, column])),
+            key,
+            id
+        })
     }
 
     return { tables, unserved, byName: new Map(tables.map((table) => [table.name, table])) }

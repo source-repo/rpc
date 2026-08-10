@@ -49,13 +49,28 @@ Being wrong there is not a rendering glitch — an id that is not unique makes `
 
 One package, three flavours: `postgres`, `mysql` and `sqlite`, behind one contract. That is the one-contract-many-backends rule arriving as configuration rather than as three packages.
 
-A flavour carries exactly two things, because they are the only two that change an *answer* rather than the syntax around it — Kysely absorbs the rest.
+A flavour carries exactly three things, because they are the only ones that change an *answer* rather than the syntax around it — Kysely absorbs the rest.
 
 **Matching text is case-sensitive, whatever the database would have done.** `LIKE` is case-sensitive on Postgres and case-insensitive under both SQLite's default and MySQL's usual collation, so Postgres and MySQL disagree with each other before a document store is anywhere near the conversation. The library's in-memory implementation uses `String.prototype.includes`, so case-sensitive is normative here and each flavour pays what that costs it: `strpos`/`starts_with` on Postgres, `instr`/`substr` on SQLite, `locate` over a binary cast on MySQL. Each is also chosen to need **no escaping**, so a `%` typed into a filter box is a percent sign rather than a wildcard.
 
+**Ordering is by byte, and a missing value is the greatest one.** The same disagreement wearing a different hat, and easy to fix for `contains` and forget for `ORDER BY`. The in-memory comparator is `String(a) < String(b)`, so ordering is by UTF-16 code unit — capitals before lowercase — and an absent value sorts after everything ascending, first descending. Postgres orders by the database's locale and MySQL's usual collation is case-insensitive, so a text column is ordered under an explicit binary collation on all three; and SQLite and MySQL both call NULL the *smallest* value, so both are told otherwise — `NULLS LAST` on SQLite, and `ORDER BY (col IS NULL), col` on MySQL, which has no such syntax at all.
+
 **Finding the primary key**: `pragma_table_info` on SQLite, `information_schema` on the other two.
 
-Tested in CI against SQLite over Node's built-in `node:sqlite` — no server, no native module. **Postgres and MySQL are implemented and not yet exercised in CI**; that is what the conformance suite (DEV-440) is for, and until it runs against a real server of each, treat those two flavours as untested rather than as proven.
+## Conformance
+
+`Servers.sql.test.ts` asks all three backends the same thirteen questions and compares the answers against what the library's in-memory implementation would have said. That comparison is the only thing that makes "one contract, many backends" more than a claim, and it earns itself: three of the thirteen fail on at least one engine's defaults.
+
+SQLite always runs — `node:sqlite`, no server, no native module — so the suite is never entirely skipped. Postgres and MySQL run when they are up:
+
+```
+docker compose -f docker-compose/docker-compose.yml up -d
+npm test --workspace=@source-repo/relational
+```
+
+and are skipped with a reason when they are not. `SOURCE_RPC_REQUIRE_SQL=1` turns that skip into a failure, which is what CI sets alongside the servers it starts — a run that reports itself green having quietly compared one backend against itself is worth nothing.
+
+**One divergence survives and is declared rather than hidden.** MySQL's `boolean` is an alias for `tinyint(1)`, and the introspector reports `tinyint` with the width already gone — so nothing at this level can tell a flag from a small number, and such a column is published honestly as a number rather than dishonestly as a boolean. On SQLite, which has no boolean type either but keeps the declared name, the column is a boolean and the 1 and 0 coming back are corrected to match.
 
 ## What it refuses, and why refusing is the feature
 
@@ -72,6 +87,8 @@ A refusal crosses the wire as an error naming what would have been right, and is
 **`ne` matches a row whose column is NULL.** The in-memory rule is that a missing field never matches *except* under `ne`, because an operator asking for "not bad" means to see the rows that never reported a quality at all. SQL's `<>` drops NULL rows, so that agreement costs an extra clause here — it is not something the database does on its own.
 
 **Offset paging renumbers rows underneath a pager.** `page * pageSize` becomes `OFFSET`, and a table being written to while somebody pages it will show a row twice or not at all. Every order is made total by appending the key, which removes the far more common version of this failure — a sort on a column half the rows share — but nothing here can make a moving table hold still. The `epoch` and `revision` on every answer say *this peer restarted*, not *the data changed*; do not read them as covering this.
+
+**A mistyped table name is an error, not an empty table.** `$data` otherwise falls back to serving a path out of a component's own props and state, which is right for a record that may not have been populated yet and wrong for a database, whose tables are a closed published list — `total: 0` for `custmers` would render as a table that exists and holds nothing. The refusal names what is served.
 
 ## Counting, and when not to
 

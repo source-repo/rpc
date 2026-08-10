@@ -1,9 +1,11 @@
-# Build, lint, typecheck and test, with a real MQTT broker alongside.
+# Build, lint, typecheck and test, with a real MQTT broker and two real SQL servers alongside.
 #
-# The broker is the point. Roughly a third of this suite talks to one, and those tests skip
-# themselves when none is reachable - which is right on a laptop and wrong here, because a run that
-# reports itself green having quietly skipped every MQTT test is the run somebody trusts.
-# SOURCE_RPC_REQUIRE_BROKER turns that skip into a failure, so the broker cannot silently be absent.
+# The servers are the point. Roughly a third of this suite talks to a broker and the relational
+# package answers the same questions against Postgres and MySQL, and all of those tests skip
+# themselves when nothing is reachable - which is right on a laptop and wrong here, because a run
+# that reports itself green having quietly skipped them is the run somebody trusts.
+# SOURCE_RPC_REQUIRE_BROKER and SOURCE_RPC_REQUIRE_SQL turn those skips into failures, so an absent
+# server cannot pass for a passing test.
 name: CI
 
 on:
@@ -16,17 +18,54 @@ jobs:
         runs-on: ubuntu-latest
 
         services:
-            # The same broker and version as docker-compose/docker-compose.yml, so a failure here is
-            # reproducible with one command locally rather than only on a runner.
+            # The same images and versions as docker-compose/docker-compose.yml, so a failure here
+            # is reproducible with one command locally rather than only on a runner.
             emqx:
                 image: emqx/emqx:5.9.3
                 ports:
                     - 1883:1883
 
+            # For @source-repo/relational's conformance suite, which asks all three SQL backends the
+            # same questions and compares the answers. SQLite needs no server and is always in it.
+            postgres:
+                image: postgres:17-alpine
+                env:
+                    POSTGRES_USER: test
+                    POSTGRES_PASSWORD: test
+                    POSTGRES_DB: test
+                ports:
+                    - 5432:5432
+                # A service container has no depends_on, so the health check is the only thing that
+                # keeps the suite from starting against a server still initialising - which is
+                # exactly how the first local run of this suite skipped two backends.
+                options: >-
+                    --health-cmd "pg_isready -U test -d test"
+                    --health-interval 5s
+                    --health-timeout 3s
+                    --health-retries 20
+
+            mysql:
+                image: mysql:8.4
+                env:
+                    MYSQL_ROOT_PASSWORD: test
+                    MYSQL_DATABASE: test
+                    MYSQL_USER: test
+                    MYSQL_PASSWORD: test
+                ports:
+                    - 3306:3306
+                options: >-
+                    --health-cmd "mysqladmin ping -h 127.0.0.1 -ptest"
+                    --health-interval 5s
+                    --health-timeout 3s
+                    --health-retries 20
+
         env:
             MSGRPC_TEST_BROKER: mqtt://localhost:1883
-            # Without this the suite would pass on a runner whose broker never came up.
+            MSGRPC_TEST_POSTGRES: postgres://test:test@localhost:5432/test
+            MSGRPC_TEST_MYSQL: mysql://test:test@localhost:3306/test
+            # Without these the suite would pass on a runner whose servers never came up.
             SOURCE_RPC_REQUIRE_BROKER: '1'
+            SOURCE_RPC_REQUIRE_SQL: '1'
 
         steps:
             - uses: actions/checkout@v7
@@ -87,12 +126,16 @@ jobs:
     # Embedded PLCs that would run a peer, and "it probably works" is not something a plant should
     # find out at commissioning.
     #
-    # No broker here, and it is worth writing down why rather than leaving it to be rediscovered.
+    # No broker here, and no SQL servers, and it is worth writing down why rather than leaving it to
+    # be rediscovered.
     #
     # Service containers are Linux-only on GitHub's runners, and the Windows runner cannot run a
     # Linux one either - its Docker is in Windows-container mode and Linux images need WSL2, which
     # is not available. Chocolatey has no mosquitto package. What is left is downloading a broker
     # binary and pinning a version that will rot, which is more machinery than the gap deserves.
+    # The same applies to Postgres and MySQL, with one difference that makes it cheaper still: the
+    # relational suite always runs SQLite, which needs no server at all, so what skips here is the
+    # cross-backend comparison rather than the package's own behaviour.
     #
     # So the MQTT tests skip here, and SOURCE_RPC_REQUIRE_BROKER is deliberately *not* set. What
     # that leaves uncovered is MqttTransport on Windows - and the reason it is an acceptable gap

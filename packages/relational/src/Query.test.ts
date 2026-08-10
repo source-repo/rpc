@@ -196,17 +196,33 @@ test('every order ends at the id, so a page cannot show one row twice', async (t
     // Two rows share a city. Without a tiebreaker the engine may return them in either order, so
     // paging by offset over that sort would show one of them on two pages and the other on none -
     // silently, and more often the larger the table.
-    t.deepEqual(orderFor({ field: 'city' }, customers), [
-        { column: 'city', direction: 'asc' },
-        { column: 'id', direction: 'asc' }
-    ])
-    t.deepEqual(orderFor({ field: 'city', order: 'DESC' }, customers), [
-        { column: 'city', direction: 'desc' },
-        // Ascending regardless: the tiebreaker only has to make the order total.
-        { column: 'id', direction: 'asc' }
-    ])
-    t.deepEqual(orderFor(undefined, customers), [{ column: 'id', direction: 'asc' }], 'an absent sort is the id, which is already an order')
-    t.deepEqual(orderFor({ field: 'id', order: 'DESC' }, customers), [{ column: 'id', direction: 'desc' }], 'and the id needs no tiebreaker')
+    const named = (sort: Parameters<typeof orderFor>[0]) => orderFor(sort, customers).map((order) => `${order.column.name} ${order.direction}`)
+
+    t.deepEqual(named({ field: 'city' }), ['city asc', 'id asc'])
+    // Ascending tiebreaker regardless of the caller's direction: it only has to make the order total.
+    t.deepEqual(named({ field: 'city', order: 'DESC' }), ['city desc', 'id asc'])
+    t.deepEqual(named(undefined), ['id asc'], 'an absent sort is the id, which is already an order')
+    t.deepEqual(named({ field: 'id', order: 'DESC' }), ['id desc'], 'and the id needs no tiebreaker')
+
+    await db.destroy()
+})
+
+test('a missing value sorts where the in-memory implementation puts it, not where the engine would', async (t) => {
+    const { db, service } = await serving()
+
+    // `compare()` in the library returns 1 for an absent value, so missing sorts after everything
+    // ascending - and descending inverts the whole comparison, so missing comes first. Missing is
+    // the greatest value, in other words. SQLite treats NULL as the *smallest* and would answer the
+    // opposite of both by default; the flavour spends a NULLS LAST on saying otherwise.
+    const up = await list(service, 'customers', { sort: { field: 'city', order: 'ASC' } })
+    t.deepEqual(up.ids, ['1', '4', '3', '2'], 'Berlin, Berlin, Malmo, then the row with no city')
+
+    const down = await list(service, 'customers', { sort: { field: 'city', order: 'DESC' } })
+    t.deepEqual(down.ids, ['2', '3', '1', '4'], 'and the row with no city leads')
+
+    // The tiebreaker doing its job, visible in both: two rows share Berlin and stay in key order.
+    t.deepEqual(up.ids.slice(0, 2), ['1', '4'])
+    t.deepEqual(down.ids.slice(2), ['1', '4'])
 
     await db.destroy()
 })

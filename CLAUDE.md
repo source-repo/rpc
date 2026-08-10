@@ -51,10 +51,12 @@ Two things to know. A textconv diff is for reading, not applying: `git apply` wi
 npm run build        # both workspaces
 npm run typecheck
 npm run lint         # eslint, --max-warnings 0
-npm test             # needs an MQTT broker for the MQTT tests:
+npm test             # needs an MQTT broker, and Postgres and MySQL for the relational suite:
                      # docker compose -f docker-compose/docker-compose.yml up -d
 ```
 
-Without a broker the MQTT tests skip themselves, which is right on a laptop and wrong in CI - a run that reports itself green having quietly skipped a third of the suite is the run somebody trusts. `SOURCE_RPC_REQUIRE_BROKER=1` turns that skip into a failure, and `.github/workflows/ci.yml` sets it alongside the broker it starts. A new test file that talks to a broker needs the same guard in its `test.before`; the seven that have one are identical, so copy the nearest.
+Without a server the tests that need one skip themselves, which is right on a laptop and wrong in CI - a run that reports itself green having quietly skipped a third of the suite is the run somebody trusts. `SOURCE_RPC_REQUIRE_BROKER=1` and `SOURCE_RPC_REQUIRE_SQL=1` turn those skips into failures, and `.github/workflows/ci.yml` sets both alongside the servers it starts. A new test file that talks to one needs the same guard in its `test.before`; the ones that have it are near-identical, so copy the nearest.
+
+The SQL half is deliberately not all-or-nothing: `packages/relational`'s conformance suite always runs **SQLite**, over Node's built-in `node:sqlite`, so it needs no server and can never skip itself entirely. What a missing Postgres or MySQL costs is the cross-backend comparison - the part that catches one engine answering a question differently from the other two - and that is exactly the part worth failing over in CI.
 
 **Write the lock file with npm 12**, which `engines.npm` states and every workflow installs before `npm ci`. A lock file is a function of the npm that wrote it: npm 10, the one Node 22 bundles, resolves `@docsearch/react`'s peer range of react `>= 16.8.0 < 19.0.0` against this workspace's React 19 by wanting a nested React 18 that an npm 12 lock does not record, and refuses the entire install with *Missing: react@18.3.1 from lock file*. Regenerating under npm 10 does not settle it either - the entries come back out the next time npm 12 runs `npm install`, so the two have to be the same npm rather than meet in the middle. Node stays at 22 in CI because that is what the packages claim to support; only the installer is pinned.

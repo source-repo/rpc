@@ -200,9 +200,10 @@ export class RelationalService extends RpcComponent<RelationalProps, RelationalS
         const queryBegan = Date.now()
         let query = this.db.selectFrom(table.name).selectAll()
         if (where) query = query.where(where)
-        // `sql.id` rather than the bare name, for the same reason the filter uses it: Kysely reads a
-        // string reference as `table.column` and would split a column whose name contains a dot.
-        for (const order of orderFor(params.sort, table)) query = query.orderBy(sql.id(order.column), order.direction)
+        // Built by the flavour rather than here, because where a missing value belongs in an order
+        // is one of the two things the three databases genuinely disagree about - and the answer is
+        // the in-memory implementation's, not whichever engine happens to be underneath.
+        for (const order of orderFor(params.sort, table)) for (const term of this.flavour.orderTerms(order.column, order.direction)) query = query.orderBy(term)
         const pageSize = params.pagination?.pageSize
         if (pageSize !== undefined) {
             // One row more than was asked for, which is the whole trick behind `hasMore`: whether

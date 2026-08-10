@@ -174,7 +174,8 @@ export const whereFor = (filter: RpcFilter, table: TableInfo, flavour: SqlFlavou
 }
 
 export interface OrderBy {
-    readonly column: string
+    /** The whole column rather than its name, because placing a missing value needs its nullability. */
+    readonly column: ColumnInfo
     readonly direction: 'asc' | 'desc'
 }
 
@@ -190,13 +191,13 @@ export interface OrderBy {
 export const orderFor = (sort: RpcSort | undefined, table: TableInfo): readonly OrderBy[] => {
     const id = table.id ?? refuse(`${table.name} has no single-column key to order by`)
     const direction = sort?.order === 'DESC' ? 'desc' : 'asc'
-    if (sort?.field === undefined) return [{ column: id.name, direction }]
+    if (sort?.field === undefined) return [{ column: id, direction }]
     const column = columnFor(table, sort.field, 'a sort')
-    if (column.name === id.name) return [{ column: column.name, direction }]
+    if (column.name === id.name) return [{ column, direction }]
     return [
-        { column: column.name, direction },
+        { column, direction },
         // Ascending regardless of the caller's direction: the tiebreaker only has to be stable, and
         // making it a total order is the point rather than which end it starts from.
-        { column: id.name, direction: 'asc' }
+        { column: id, direction: 'asc' }
     ]
 }

@@ -1,8 +1,12 @@
-# MQTT broker for local development and for the MQTT test in src/RpcServer.test.ts.
-# Start with:  docker compose -f docker-compose/docker-compose.yml up -d
+# The servers the test suite talks to. Start them all with:
+#   docker compose -f docker-compose/docker-compose.yml up -d
+#
+# Nothing here holds anything worth keeping: every suite creates what it needs under a name unique
+# to its run and drops it again, so these may be deleted and recreated at any time.
 #
 #   1883  MQTT           18083  dashboard (admin/public)
 #   8083  MQTT over WS    8883  MQTT over TLS
+#   5432  PostgreSQL      3306  MySQL
 services:
   emqx:
     image: emqx/emqx:5.9.3
@@ -19,3 +23,55 @@ services:
           memory: 512M
         reservations:
           memory: 256M
+
+  # For @source-repo/relational. The two flavours that need a server - SQLite needs none, which is
+  # why it is the one the suite can always run and these two are the ones that can be skipped.
+  #
+  # Credentials are `test`/`test` and deliberately trivial: this binds to localhost, holds nothing,
+  # and a password worth protecting here would only ever be one somebody was tempted to reuse.
+  postgres:
+    image: postgres:17-alpine
+    container_name: msgrpc-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: test
+      POSTGRES_PASSWORD: test
+      POSTGRES_DB: test
+    ports:
+      - '5432:5432'
+    # Tmpfs rather than a volume: nothing here survives a restart on purpose, and a suite that
+    # started finding yesterday's tables would be a suite that passes for the wrong reason.
+    tmpfs:
+      - /var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U test -d test']
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+
+  mysql:
+    image: mysql:8.4
+    container_name: msgrpc-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: test
+      MYSQL_DATABASE: test
+      MYSQL_USER: test
+      MYSQL_PASSWORD: test
+    ports:
+      - '3306:3306'
+    tmpfs:
+      - /var/lib/mysql
+    healthcheck:
+      test: ['CMD', 'mysqladmin', 'ping', '-h', '127.0.0.1', '-ptest']
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    deploy:
+      resources:
+        limits:
+          memory: 768M
