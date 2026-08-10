@@ -6,7 +6,7 @@
 #
 #   1883  MQTT           18083  dashboard (admin/public)
 #   8083  MQTT over WS    8883  MQTT over TLS
-#   5432  PostgreSQL      3306  MySQL
+#   5432  PostgreSQL      3306  MySQL       27017  MongoDB
 services:
   emqx:
     image: emqx/emqx:5.9.3
@@ -52,6 +52,30 @@ services:
       resources:
         limits:
           memory: 512M
+
+  # For @source-repo/document. Single-node and no replica set, which is worth knowing rather than
+  # discovering: without one there are no transactions and no change streams, and neither is
+  # something a read-only document node asks for.
+  mongo:
+    image: mongo:8.0
+    container_name: msgrpc-mongo
+    restart: unless-stopped
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: test
+      MONGO_INITDB_ROOT_PASSWORD: test
+    ports:
+      - '27017:27017'
+    tmpfs:
+      - /data/db
+    healthcheck:
+      test: ['CMD', 'mongosh', '--quiet', '--eval', 'db.adminCommand("ping")']
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    deploy:
+      resources:
+        limits:
+          memory: 768M
 
   mysql:
     image: mysql:8.4

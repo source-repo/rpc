@@ -63,9 +63,14 @@ jobs:
             MSGRPC_TEST_BROKER: mqtt://localhost:1883
             MSGRPC_TEST_POSTGRES: postgres://test:test@localhost:5432/test
             MSGRPC_TEST_MYSQL: mysql://test:test@localhost:3306/test
-            # Without these the suite would pass on a runner whose servers never came up.
+            MSGRPC_TEST_MONGO: mongodb://test:test@localhost:27017/?authSource=admin
+            # Without these the suite would pass on a runner whose servers never came up. The Mongo
+            # one matters most of the three: there is no in-memory MongoDB, so every test in
+            # @source-repo/document needs a server and the whole package skips without one - where
+            # the relational suite would still run SQLite and notice most things.
             SOURCE_RPC_REQUIRE_BROKER: '1'
             SOURCE_RPC_REQUIRE_SQL: '1'
+            SOURCE_RPC_REQUIRE_MONGO: '1'
 
         steps:
             - uses: actions/checkout@v7

@@ -1,0 +1,40 @@
+{
+    "name": "@source-repo/conformance",
+    "version": "4.6.0",
+    "private": true,
+    "description": "The normative DataProvider fixture and questions, shared by every store-backed node's test suite",
+    "type": "module",
+    "license": "MIT",
+    "author": "anderswestberg",
+    "repository": {
+        "type": "git",
+        "url": "git+https://github.com/source-repo/rpc.git",
+        "directory": "packages/conformance"
+    },
+    "engines": {
+        "node": ">=22"
+    },
+    "sideEffects": false,
+    "main": "./dist/index.js",
+    "types": "./dist/index.d.ts",
+    "exports": {
+        ".": {
+            "types": "./dist/index.d.ts",
+            "default": "./dist/index.js"
+        }
+    },
+    "scripts": {
+        "build": "tsc -p tsconfig.json",
+        "clean": "rimraf dist",
+        "typecheck": "tsc --noEmit -p tsconfig.json",
+        "test": "npm run clean && npm run build"
+    },
+    "dependencies": {
+        "@source-repo/rpc": "^4.6.0"
+    },
+    "devDependencies": {
+        "@types/node": "^26.1.2",
+        "rimraf": "^6.0.1",
+        "typescript": "^7.0.2"
+    }
+}

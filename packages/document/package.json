@@ -1,15 +1,12 @@
 {
-    "name": "@source-repo/relational",
+    "name": "@source-repo/document",
     "version": "4.6.0",
-    "description": "Source Relational: serve an existing SQL database to a Source RPC network as DataProvider resources, over Kysely",
+    "description": "Source Document: serve an existing MongoDB database to a Source RPC network as DataProvider resources",
     "keywords": [
         "rpc",
-        "sql",
-        "kysely",
+        "mongodb",
+        "document",
         "dataprovider",
-        "postgres",
-        "sqlite",
-        "mysql",
         "typescript"
     ],
     "type": "module",
@@ -18,7 +15,7 @@
     "repository": {
         "type": "git",
         "url": "git+https://github.com/source-repo/rpc.git",
-        "directory": "packages/relational"
+        "directory": "packages/document"
     },
     "engines": {
         "node": ">=22"
@@ -47,15 +44,12 @@
     },
     "dependencies": {
         "@source-repo/rpc": "^4.6.0",
-        "kysely": "^0.29.5"
+        "mongodb": "^7.5.0"
     },
     "devDependencies": {
         "@source-repo/conformance": "^4.6.0",
         "@types/node": "^26.1.2",
-        "@types/pg": "^8.21.0",
         "ava": "^8.0.1",
-        "mysql2": "^3.23.3",
-        "pg": "^8.23.0",
         "rimraf": "^6.0.1",
         "typescript": "^7.0.2"
     },
@@ -66,7 +60,7 @@
         "workerThreads": false,
         "concurrency": 1
     },
-    "homepage": "https://github.com/source-repo/rpc/tree/main/packages/relational#readme",
+    "homepage": "https://github.com/source-repo/rpc/tree/main/packages/document#readme",
     "bugs": {
         "url": "https://github.com/source-repo/rpc/issues"
     }
