@@ -1,5 +1,6 @@
 import EventEmitter from 'events'
 import { componentSnapshotEvent, RpcComponent } from './Component.js'
+import { servesDataResources, type RpcDataResource } from './DataProvider.js'
 import { rpc, rpcNamespace, type RpcEffect } from './Expose.js'
 import type { RpcServerHandler } from './RpcServerHandler.js'
 import { SCHEMA_VERSION, type MethodSchema, type NamespaceSchema, type RpcSchema, type TypeNode } from './Schema.js'
@@ -70,6 +71,19 @@ export interface DescribedComponent {
     state?: TypeNode
     /** How many peers currently observe this component. */
     subscribers: number
+    /**
+     * Collections this component serves that its contract cannot describe - a table, a document
+     * collection, a queue - each with the shape of a row and the verbs it answers.
+     *
+     * Absent from an ordinary component, and that is not the same as empty: a record in `props` or
+     * `state` is addressable without appearing here, because the published type already describes
+     * it and a viewer finds it by reading the contract. This carries the other kind, where **what
+     * resources exist is itself data** and only the component knows.
+     *
+     * Read at describe time rather than fixed at exposure, so a store that gains a table says so on
+     * the next describe rather than at the next restart.
+     */
+    resources?: readonly RpcDataResource[]
 }
 
 /**
@@ -325,7 +339,11 @@ export class Introspection {
                 instance instanceof RpcComponent
                     ? {
                           ...(described?.component ? { props: described.component.props, state: described.component.state } : {}),
-                          subscribers: [...this.handler.eventProxies.values()].filter((proxy) => proxy.instanceName === name && proxy.event === componentSnapshotEvent).length
+                          subscribers: [...this.handler.eventProxies.values()].filter((proxy) => proxy.instanceName === name && proxy.event === componentSnapshotEvent).length,
+                          // Structure, like everything else here: what collections exist and the
+                          // shape of a row, never a row. A store that gained a table since the last
+                          // describe says so now, which is why this is read rather than remembered.
+                          ...(servesDataResources(instance) ? { resources: instance.dataResources() } : {})
                       }
                     : undefined
             return {

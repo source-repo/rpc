@@ -1,6 +1,6 @@
 import test from 'ava'
 import { randomUUID } from 'crypto'
-import { rpc, rpcNamespace, rpcComponent, RpcClient, RpcComponent, RpcServer, type RpcComponentProxy } from './index.js'
+import { rpc, rpcNamespace, rpcComponent, RpcClient, RpcComponent, RpcServer, type Introspection, type RpcComponentProxy, type RpcDataResources, type RpcGetListParams, type RpcGetListResult } from './index.js'
 
 /**
  * Paging a collection by asking for it, which is the half a projection cannot do.
@@ -284,6 +284,76 @@ test('an order is over the matched set, and a malformed one is refused', async (
     for (let level = 0; level < 12; level++) deep = { all: [deep] }
     const tooDeep = await t.throwsAsync(field.$data('getList', ['state', 'tags'], { filter: deep as never }))
     t.regex(String(tooDeep?.message), /nested deeper than/)
+
+    await client.close()
+    await server.close()
+})
+
+/**
+ * A component whose collections its contract cannot describe - the shape Source Relational has.
+ *
+ * Nothing about `customers` is in `props` or `state`, and nothing could be: which tables a store
+ * holds is data, discovered when the component connects to it. So it says so at runtime, and the
+ * same `$data` verb reaches it.
+ */
+@rpcNamespace('store')
+class Store extends RpcComponent<{ label: string }, { connected: boolean }> implements RpcDataResources {
+    private readonly customers = { c1: { name: 'Acme Ltd' }, c2: { name: 'Borg AB' }, c3: { name: 'Cyberdyne' } }
+
+    constructor() {
+        super({ label: 's' }, { connected: true })
+    }
+
+    dataResources() {
+        return [
+            { path: ['customers'], verbs: ['getList'] as const, label: 'Customers', row: { kind: 'object' as const, fields: { name: { type: { kind: 'string' as const } } } } },
+            { path: ['orders'], verbs: ['getManyReference'] as const }
+        ]
+    }
+
+    dataList(resource: readonly string[], params: RpcGetListParams): RpcGetListResult {
+        const ids = Object.keys(this.customers).slice(0, params.pagination?.pageSize ?? undefined)
+        return { ids, data: ids.map((id) => this.customers[id as keyof typeof this.customers]), total: 3, epoch: 'store', revision: 1 }
+    }
+}
+
+test('a component may serve collections its contract cannot describe', async (t) => {
+    const server = new RpcServer({ name: peer('store3929'), transports: [{ port: 3929, host: '127.0.0.1' }], exposeIntrospection: true })
+    server.exposeClassInstance(new Store())
+    await server.ready()
+
+    const client = new RpcClient('http://localhost:3929', { name: peer('asker3929'), defaultTarget: peer('store3929') })
+
+    // describe() carries what exists and the shape of a row, never a row - the same rule the props
+    // and state types follow, one level up. A viewer that has never heard of this component can
+    // draw its columns from this alone.
+    const description = await (await client.proxy<Introspection>('msgrpc')).describe()
+    const store = description.namespaces.find((namespace) => namespace.name === 'store')
+    t.deepEqual(
+        store?.component?.resources?.map((resource) => resource.path.join('.')),
+        ['customers', 'orders']
+    )
+    t.is(store?.component?.resources?.[0].label, 'Customers')
+    t.is(store?.component?.resources?.[0].row?.kind, 'object')
+
+    // And the same verb reaches it, answered by the component rather than from its state.
+    const proxy = await client.proxy<{ $data(method: 'getList', resource: readonly string[], params?: RpcGetListParams): Promise<RpcGetListResult> }>('store')
+    const page = await proxy.$data('getList', ['customers'], { pagination: { page: 0, pageSize: 2 } })
+    t.deepEqual([...page.ids], ['c1', 'c2'])
+    t.deepEqual(page.data[0], { name: 'Acme Ltd' })
+    t.is(page.total, 3)
+
+    // A verb the resource does not claim is refused by name rather than attempted, since the verb
+    // list is what a viewer offers from and would otherwise be decoration.
+    const wrong = await t.throwsAsync(proxy.$data('getList', ['orders']))
+    t.regex(String(wrong?.message), /answers getManyReference, not getList/)
+
+    // A path the component did not declare still falls through to its state, which is what keeps an
+    // ordinary component working without implementing anything - and what stops a component that
+    // serves resources from losing access to its own.
+    const fromState = await proxy.$data('getList', ['state'])
+    t.deepEqual([...fromState.ids], ['connected'], 'served from the state by the base class, not by dataList')
+    t.is(fromState.total, 1)
 
     await client.close()
     await server.close()

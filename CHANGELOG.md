@@ -16,6 +16,16 @@ The filter is a closed grammar and never an expression: `{ field, op, operand }`
 
 `RpcProjectionSlice` keeps its job as the **live window** on a record — it pushes, where this answers — and is now the primitive for a program that wants to watch a range rather than browse one.
 
+### A component may serve collections its contract cannot describe
+
+A record in `props` or `state` needs nothing declared: it is in the published type, so a viewer finds it by reading the contract. A table, a document collection or a queue is the other kind — **what resources exist is itself data**, discovered when the component connects to its store, so it cannot be extracted from source and has to be said at runtime.
+
+A component implementing `dataResources()` and `dataList()` publishes what it serves — the path, the shape of a row, the verbs each answers — and `describe()` carries it under the component. Structure and never a row, like everything else `describe()` says. A viewer that has never heard of the component draws its columns from that alone, which is the same claim the panel already makes about ovens, one level up: the contract knows a component *serves* collections, and only the component knows which.
+
+Both methods are required together, because a component listing resources it cannot answer for would publish a table that renders as a permanent error, and one answering for resources it never listed could not be found. A declared path is answered by the component and anything else falls through to the record rule, so serving a store does not cost a component access to its own state. Resources are read at describe time rather than fixed at exposure, so a store that gains a table says so on the next describe rather than at the next restart.
+
+In the console a declared resource is a root of the scope tree beside `props` and `state`, and reads as a record of its row type — so the grid pages it with no special case at all. Only resources answering `getList` are offered, since that is the only thing the grid can do with one.
+
 ### The console draws scope and values as two panes
 
 One tree of everything is right for an oven and wrong for anything carrying hundreds of values, which plants have. The component panel is now a scope tree on the left and a flat grid on the right, and selecting a node narrows the grid to everything beneath it recursively, so the tree filters rather than navigates.

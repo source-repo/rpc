@@ -153,7 +153,6 @@ export const ComponentPanel = ({
     const [busy, setBusy] = useState(false)
     const [pending, setPending] = useState<string | undefined>()
     const [failed, setFailed] = useState<{ path: string; message: string } | undefined>()
-    const [scope, setScope] = useState<string[]>(['state'])
     const [period, setPeriod] = useState<number | undefined>(5000)
     /** Bumped when a call settles, which is what makes the affected page refetch at once. */
     const [settled, setSettled] = useState(0)
@@ -161,6 +160,15 @@ export const ComponentPanel = ({
     const status = useChannelFact(store, statusOf, undefined)
 
     const tree = useMemo(() => scopeTree(component, types), [component, types])
+
+    /**
+     * State first where there is one, and otherwise whatever the tree begins with.
+     *
+     * A component that is purely a data source - a table, a queue - may publish no state at all, and
+     * opening it on a root that does not exist would show an empty grid beside a tree that plainly
+     * has something in it.
+     */
+    const [scope, setScope] = useState<string[]>(() => (component.state ? ['state'] : (tree[0]?.path ?? ['state'])))
 
     /**
      * What the subscription asks for: every typed leaf in the whole component, and no collection.

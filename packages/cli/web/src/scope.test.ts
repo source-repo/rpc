@@ -112,6 +112,48 @@ describe('a self-referential contract', () => {
     })
 })
 
+describe('a component that serves resources of its own', () => {
+    // The Source Relational shape: nothing about `customers` is in props or state, and nothing
+    // could be, because which tables a store holds is data. So it is declared, and the tree carries
+    // it beside props and state rather than pretending it is part of either.
+    const store: DescribedComponent = {
+        subscribers: 0,
+        state: { kind: 'object', fields: { connected: { type: { kind: 'boolean' } } } },
+        resources: [
+            { path: ['customers'], verbs: ['getList'], label: 'Customers', row: { kind: 'object', fields: { name: { type: { kind: 'string' } } } } },
+            { path: ['audit'], verbs: ['getManyReference'] }
+        ]
+    }
+
+    it('gives each one a root of its own, labelled as the component named it', () => {
+        expect(paths(scopeTree(store))).toEqual(['state', 'customers'])
+    })
+
+    it('offers only what the resource says it answers', () => {
+        // `audit` claims getManyReference and nothing this grid can do, so it is not offered at all.
+        // A node that appeared and then refused every selection would be worse than one that is not
+        // there, and the verb list exists precisely so a viewer can tell.
+        expect(paths(scopeTree(store))).not.toContain('audit')
+    })
+
+    it('reads as a record of its row type, so the grid needs to know nothing about resources', () => {
+        // Which is what makes selecting it work without a line of special-casing: the grid finds a
+        // collection under the selection and pages it, exactly as it does for a record in state.
+        const [leaf] = leavesUnder(typeAt(store, ['customers']), ['customers'])
+        expect(leaf.collection).toBe(true)
+        expect(leaf.path).toEqual(['customers'])
+        expect(typeAt(store, ['customers'])).toEqual({ kind: 'record', values: { kind: 'object', fields: { name: { type: { kind: 'string' } } } } })
+    })
+
+    it('falls back to an unknown row rather than refusing to draw one', () => {
+        // A component may serve a collection it cannot describe the rows of - a heterogeneous
+        // document store most obviously - and a grid drawn from the values is the fallback that
+        // already exists for context values.
+        const untyped: DescribedComponent = { subscribers: 0, resources: [{ path: ['blobs'], verbs: ['getList'] }] }
+        expect(typeAt(untyped, ['blobs'])).toEqual({ kind: 'record', values: { kind: 'any' } })
+    })
+})
+
 describe('typeAt', () => {
     it('resolves a selection through refs', () => {
         expect(typeAt(oven, ['state', 'zones', 'top'], types)).toEqual(reading)

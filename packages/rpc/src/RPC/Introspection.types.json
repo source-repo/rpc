@@ -981,6 +981,16 @@
           "type": {
             "kind": "number"
           }
+        },
+        "resources": {
+          "type": {
+            "kind": "array",
+            "items": {
+              "kind": "ref",
+              "name": "RpcDataResource"
+            }
+          },
+          "optional": true
         }
       }
     },
@@ -1294,6 +1304,368 @@
           "optional": true
         }
       }
+    },
+    "RpcDataResource": {
+      "kind": "object",
+      "fields": {
+        "path": {
+          "type": {
+            "kind": "array",
+            "items": {
+              "kind": "string"
+            }
+          }
+        },
+        "row": {
+          "type": {
+            "kind": "union",
+            "options": [
+              {
+                "kind": "object",
+                "fields": {
+                  "kind": {
+                    "type": {
+                      "kind": "literal",
+                      "value": "any"
+                    }
+                  }
+                }
+              },
+              {
+                "kind": "object",
+                "fields": {
+                  "kind": {
+                    "type": {
+                      "kind": "literal",
+                      "value": "null"
+                    }
+                  }
+                }
+              },
+              {
+                "kind": "object",
+                "fields": {
+                  "kind": {
+                    "type": {
+                      "kind": "literal",
+                      "value": "boolean"
+                    }
+                  }
+                }
+              },
+              {
+                "kind": "object",
+                "fields": {
+                  "kind": {
+                    "type": {
+                      "kind": "literal",
+                      "value": "number"
+                    }
+                  },
+                  "integer": {
+                    "type": {
+                      "kind": "boolean"
+                    },
+                    "optional": true
+                  },
+                  "min": {
+                    "type": {
+                      "kind": "number"
+                    },
+                    "optional": true
+                  },
+                  "max": {
+                    "type": {
+                      "kind": "number"
+                    },
+                    "optional": true
+                  }
+                }
+              },
+              {
+                "kind": "object",
+                "fields": {
+                  "kind": {
+                    "type": {
+                      "kind": "literal",
+                      "value": "string"
+                    }
+                  },
+                  "pattern": {
+                    "type": {
+                      "kind": "string"
+                    },
+                    "optional": true
+                  },
+                  "minLength": {
+                    "type": {
+                      "kind": "number"
+                    },
+                    "optional": true
+                  },
+                  "maxLength": {
+                    "type": {
+                      "kind": "number"
+                    },
+                    "optional": true
+                  }
+                }
+              },
+              {
+                "kind": "object",
+                "fields": {
+                  "kind": {
+                    "type": {
+                      "kind": "literal",
+                      "value": "bytes"
+                    }
+                  },
+                  "maxBytes": {
+                    "type": {
+                      "kind": "number"
+                    },
+                    "optional": true
+                  }
+                }
+              },
+              {
+                "kind": "object",
+                "fields": {
+                  "kind": {
+                    "type": {
+                      "kind": "literal",
+                      "value": "date"
+                    }
+                  }
+                }
+              },
+              {
+                "kind": "object",
+                "fields": {
+                  "kind": {
+                    "type": {
+                      "kind": "literal",
+                      "value": "literal"
+                    }
+                  },
+                  "value": {
+                    "type": {
+                      "kind": "union",
+                      "options": [
+                        {
+                          "kind": "null"
+                        },
+                        {
+                          "kind": "string"
+                        },
+                        {
+                          "kind": "number"
+                        },
+                        {
+                          "kind": "literal",
+                          "value": false
+                        },
+                        {
+                          "kind": "literal",
+                          "value": true
+                        }
+                      ]
+                    },
+                    "optional": true
+                  }
+                }
+              },
+              {
+                "kind": "object",
+                "fields": {
+                  "kind": {
+                    "type": {
+                      "kind": "literal",
+                      "value": "array"
+                    }
+                  },
+                  "items": {
+                    "type": {
+                      "kind": "ref",
+                      "name": "TypeNode"
+                    }
+                  },
+                  "maxItems": {
+                    "type": {
+                      "kind": "number"
+                    },
+                    "optional": true
+                  }
+                }
+              },
+              {
+                "kind": "object",
+                "fields": {
+                  "kind": {
+                    "type": {
+                      "kind": "literal",
+                      "value": "tuple"
+                    }
+                  },
+                  "items": {
+                    "type": {
+                      "kind": "array",
+                      "items": {
+                        "kind": "ref",
+                        "name": "TypeNode"
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "kind": "object",
+                "fields": {
+                  "kind": {
+                    "type": {
+                      "kind": "literal",
+                      "value": "object"
+                    }
+                  },
+                  "fields": {
+                    "type": {
+                      "kind": "record",
+                      "values": {
+                        "kind": "ref",
+                        "name": "FieldNode"
+                      }
+                    }
+                  },
+                  "additional": {
+                    "type": {
+                      "kind": "boolean"
+                    },
+                    "optional": true
+                  }
+                }
+              },
+              {
+                "kind": "object",
+                "fields": {
+                  "kind": {
+                    "type": {
+                      "kind": "literal",
+                      "value": "record"
+                    }
+                  },
+                  "values": {
+                    "type": {
+                      "kind": "ref",
+                      "name": "TypeNode"
+                    }
+                  },
+                  "keyPattern": {
+                    "type": {
+                      "kind": "string"
+                    },
+                    "optional": true
+                  },
+                  "maxEntries": {
+                    "type": {
+                      "kind": "number"
+                    },
+                    "optional": true
+                  }
+                }
+              },
+              {
+                "kind": "object",
+                "fields": {
+                  "kind": {
+                    "type": {
+                      "kind": "literal",
+                      "value": "union"
+                    }
+                  },
+                  "options": {
+                    "type": {
+                      "kind": "array",
+                      "items": {
+                        "kind": "ref",
+                        "name": "TypeNode"
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "kind": "object",
+                "fields": {
+                  "kind": {
+                    "type": {
+                      "kind": "literal",
+                      "value": "ref"
+                    }
+                  },
+                  "name": {
+                    "type": {
+                      "kind": "string"
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "optional": true
+        },
+        "verbs": {
+          "type": {
+            "kind": "array",
+            "items": {
+              "kind": "ref",
+              "name": "RpcDataMethod"
+            }
+          }
+        },
+        "shape": {
+          "type": {
+            "kind": "union",
+            "options": [
+              {
+                "kind": "literal",
+                "value": "list"
+              },
+              {
+                "kind": "literal",
+                "value": "tree"
+              }
+            ]
+          },
+          "optional": true
+        },
+        "label": {
+          "type": {
+            "kind": "string"
+          },
+          "optional": true
+        }
+      }
+    },
+    "RpcDataMethod": {
+      "kind": "union",
+      "options": [
+        {
+          "kind": "literal",
+          "value": "getList"
+        },
+        {
+          "kind": "literal",
+          "value": "getOne"
+        },
+        {
+          "kind": "literal",
+          "value": "getMany"
+        },
+        {
+          "kind": "literal",
+          "value": "getManyReference"
+        }
+      ]
     },
     "DescribedTopology": {
       "kind": "object",

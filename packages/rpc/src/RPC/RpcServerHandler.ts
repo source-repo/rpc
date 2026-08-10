@@ -50,7 +50,7 @@ import {
     type RpcProjectionEntry,
     type RpcProjectionSlice
 } from './Component.js'
-import { getList, readDataRequest } from './DataProvider.js'
+import { declaredResource, getList, readDataRequest, type RpcDataResources } from './DataProvider.js'
 import { RpcSchema, validateParams, validateValue, type ComponentSchema } from './Schema.js'
 import { describeProblems, namespaceProblems } from './Compatibility.js'
 
@@ -723,7 +723,16 @@ export class RpcServerHandler extends MessageModule<Message<RpcMessage>, RpcMess
                         await this.sendError(payload.id, source, 'InvalidParams', request.message)
                         return
                     }
-                    const result = getList(inst, request.resource, request.params)
+                    // A resource the component declared is answered by the component; anything else
+                    // is a path into its own state, which the base class serves from the contract.
+                    // Declared first, so a component that names a resource is never quietly served
+                    // an empty list because nothing of that name happened to sit in its state.
+                    const declared = declaredResource(inst, request.resource)
+                    if (declared && !declared.verbs.includes(request.method)) {
+                        await this.sendError(payload.id, source, 'InvalidParams', `$data: ${request.resource.join('.')} answers ${declared.verbs.join(', ')}, not ${request.method}`)
+                        return
+                    }
+                    const result = declared ? await (inst as unknown as RpcDataResources).dataList(request.resource, request.params) : getList(inst, request.resource, request.params)
                     await this.respond(payload.id, source, { type: RpcMessageType.success, result, id: payload.id } as RpcSuccessPayload, MessageType.ResponseMessage)
                 } else await this.sendError(payload.id, source, map ? 'MethodNotFound' : 'ClassNotFound', `${payload.path}.${payload.method} is not exposed`)
                 return

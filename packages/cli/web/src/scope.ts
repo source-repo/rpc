@@ -118,10 +118,32 @@ const childrenOf = (type: TypeNode | undefined, path: string[], types: Types, se
  * not publish is absent rather than empty: a component serving no schema has no scope to show, and
  * an empty `state` node would claim it had one and that it was empty.
  */
-export const scopeTree = (component: DescribedComponent, types?: Types): ScopeNode[] =>
-    (['props', 'state'] as const)
+export const scopeTree = (component: DescribedComponent, types?: Types): ScopeNode[] => [
+    ...(['props', 'state'] as const)
         .filter((root) => component[root] !== undefined)
-        .map((root) => ({ name: root, path: [root], children: childrenOf(component[root], [root], types, new Set()) }))
+        .map((root) => ({ name: root, path: [root], children: childrenOf(component[root], [root], types, new Set()) })),
+    // A declared resource is a root of its own, beside props and state, because it is neither: a
+    // table or a queue is not part of the component's state and has no path into it. It has no
+    // children, which is the record rule holding one level up - the resource is named by the
+    // component, its rows are data, and selecting it puts those rows in the grid.
+    //
+    // Only those answering `getList`, because that is the only thing this grid can do with one. A
+    // resource that appeared and then refused every selection would be worse than one that is not
+    // offered, and the verb list exists precisely so a viewer can offer what is there.
+    ...(component.resources ?? [])
+        .filter((resource) => resource.verbs.includes('getList'))
+        .map((resource) => ({ name: resource.label ?? resource.path.join('.'), path: [...resource.path], children: [] }))
+]
+
+/**
+ * The resource a path names, when a component declared one.
+ *
+ * Matched on the whole path rather than the first segment, so a resource called `state` could not
+ * shadow the component's own - not that one should be called that, but a rule that depends on
+ * nobody doing so is not a rule.
+ */
+const resourceAt = (component: DescribedComponent, path: string[]) =>
+    component.resources?.find((resource) => resource.path.length === path.length && resource.path.every((segment, at) => segment === path[at]))
 
 /**
  * Every value beneath a path, recursively, all the way down - which is what selecting a scope node
@@ -155,6 +177,12 @@ export const leavesUnder = (type: TypeNode | undefined, path: string[], types?: 
  * gets the shape rather than the name.
  */
 export const typeAt = (component: DescribedComponent, path: string[], types?: Types): TypeNode | undefined => {
+    // A declared resource reads as a record of its row type, which is what it is: keys chosen by
+    // the store rather than by the contract, values of a shape the component published. Saying it
+    // that way means the grid needs to know nothing about resources - it finds a collection under
+    // the selection and pages it, exactly as it does for a record in state.
+    const resource = resourceAt(component, path)
+    if (resource) return { kind: 'record', values: resource.row ?? { kind: 'any' } }
     const [root, ...rest] = path
     if (root !== 'props' && root !== 'state') return undefined
     let at = resolveOnce(component[root], types, new Set())

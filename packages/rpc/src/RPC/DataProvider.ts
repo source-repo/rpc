@@ -1,4 +1,5 @@
 import { componentSnapshot, projectionKeyOrder, type RpcComponentData } from './Component.js'
+import type { TypeNode } from './Schema.js'
 
 /**
  * Paging and filtering a collection by *asking*, rather than by subscribing to it.
@@ -129,6 +130,66 @@ export interface RpcGetListResult {
  * instead, and those arrive here as a single-segment path.
  */
 export type RpcResource = readonly string[]
+
+/**
+ * One collection a component serves that its contract cannot describe.
+ *
+ * A record in `props` or `state` needs none of this: it is in the published type, so a viewer finds
+ * it by reading the contract and addresses it by the path it already has. This is for the other
+ * kind - a table, a document collection, a queue - where **what resources exist is itself data**.
+ * A database's tables are not known when the component is written, so they cannot be extracted from
+ * source and have to be said at runtime.
+ *
+ * Which is the same boundary as everywhere else here, one level up: the contract knows a component
+ * *serves* collections, and only the component knows which. So a viewer draws the scope tree from
+ * the contract and this list together, and neither is guessed from the other.
+ */
+export interface RpcDataResource {
+    /** How `$data` names it. A single segment for a resource of its own, never `props` or `state`. */
+    readonly path: RpcResource
+    /** The shape of one row, so a viewer can draw columns for a table it has never heard of. */
+    readonly row?: TypeNode
+    /** Which verbs it answers. A viewer offers what is here and nothing else. */
+    readonly verbs: readonly RpcDataMethod[]
+    /**
+     * Whether rows are a flat list or a hierarchy. A tree is fetched a branch at a time and is not
+     * served yet; it is named here so a resource that is one can say so rather than be mistaken for
+     * a list that happens to be long.
+     */
+    readonly shape?: 'list' | 'tree'
+    /** What to call it on a screen, where the path is not what a person would read. */
+    readonly label?: string
+}
+
+/**
+ * A component that serves collections of its own, rather than only the records in its state.
+ *
+ * Implementing this is what Source Relational, Source Document and Source Queue do; an ordinary
+ * component implements nothing and still answers `getList` over any record it holds, because the
+ * base class serves that from the contract.
+ */
+export interface RpcDataResources {
+    /** What this component serves. Read at describe time, so it may change as the store does. */
+    dataResources(): readonly RpcDataResource[]
+    /** Answer one page of one of them. Reached only for a path `dataResources()` named. */
+    dataList(resource: RpcResource, params: RpcGetListParams): RpcGetListResult | Promise<RpcGetListResult>
+}
+
+/**
+ * Whether a component serves resources of its own.
+ *
+ * Both methods are required together on purpose: a component that listed resources and could not
+ * answer for them would publish a table that renders as a permanent error, and one that answered
+ * for resources it never listed could not be found at all.
+ */
+export const servesDataResources = (instance: object): instance is RpcDataResources =>
+    typeof (instance as RpcDataResources).dataResources === 'function' && typeof (instance as RpcDataResources).dataList === 'function'
+
+/** The declared resource a path names, if any. Paths into the component's own state match nothing. */
+export const declaredResource = (instance: object, resource: RpcResource): RpcDataResource | undefined =>
+    servesDataResources(instance)
+        ? instance.dataResources().find((declared) => declared.path.length === resource.length && declared.path.every((segment, at) => segment === resource[at]))
+        : undefined
 
 /**
  * Check the request before it is served, refusing rather than clamping.

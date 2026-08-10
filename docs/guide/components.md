@@ -131,7 +131,31 @@ page.data      // the rows, positionally
 page.total     // how many matched — which is what a pager needs, not how many exist
 ```
 
-A component gets this **free** wherever its state holds a record: the base class serves it from the contract, the way `$acquire` is served, and the author writes nothing. A component with a store of its own — a database, a document collection, a queue — implements the same verbs against it instead.
+A component gets this **free** wherever its state holds a record: the base class serves it from the contract, the way `$acquire` is served, and the author writes nothing.
+
+### Serving collections the contract cannot describe
+
+A record in `props` or `state` needs nothing declared: it is in the published type, so a viewer finds it by reading the contract and addresses it by the path it already has. A table, a document collection or a queue is the other kind — **what resources exist is itself data**, discovered when the component connects to its store, so it cannot be extracted from source and has to be said at runtime:
+
+```typescript
+class Store extends RpcComponent<StoreProps, StoreState> implements RpcDataResources {
+    dataResources() {
+        return [{ path: ['customers'], verbs: ['getList'], label: 'Customers', row: customerRow }]
+    }
+
+    dataList(resource: readonly string[], params: RpcGetListParams) {
+        return this.query(resource, params)      // whatever the store actually is
+    }
+}
+```
+
+`describe()` then carries them under the component — the path, the shape of a row, and the verbs each answers — so a viewer that has never heard of this component draws its columns from the contract exactly as it draws an oven's. Structure and never a row, like everything else `describe()` says.
+
+Both methods are required together on purpose: a component that listed resources it could not answer for would publish a table that renders as a permanent error, and one that answered for resources it never listed could not be found at all. A declared path is answered by the component; anything else falls through to the record rule above, so a component that serves a store keeps ordinary access to its own state.
+
+The verb list is what a viewer offers from, so it is worth being accurate: the console draws a resource only if it answers `getList`, because that is the only thing its grid can do with one, and a node that appeared and then refused every selection would be worse than one that was never offered.
+
+Resources are read at describe time rather than fixed at exposure, so a store that gains a table says so on the next describe rather than at the next restart.
 
 **Why a call rather than a wider projection.** A projection is re-applied per subscriber on every publish, so a predicate living there would make every commit a query on a peer that may be a small computer running a process. Worse, a filtered page is *unstable* under push: matches depend on values, values change, so one tag going bad enters the match and renumbers every row beneath it with nothing on screen to say so. A call is answered once, when somebody asks, with a deadline and an `authorize()` check on it. Values stay current because the caller asks again on a period **it** chooses — which is also the only rate control a subscriber has on a slow link, since a subscription's rate belongs to whoever is publishing.
 
