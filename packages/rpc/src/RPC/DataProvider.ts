@@ -107,9 +107,13 @@ export interface RpcGetListResult {
      * pager needs and what "3 of 47" means: the count of the set this page was cut from, not the
      * size of the collection behind it.
      *
-     * Reported because it is the only thing a caller cannot work out for itself, and optional in the
-     * interface because `COUNT(*)` over a filtered table is not free - a record held in memory can
-     * always afford it, so it is always present here.
+     * Reported because it is the only thing a caller cannot work out for itself.
+     *
+     * Required today, and that will have to give: `COUNT(*)` over a filtered table is not free, and
+     * react-admin carries `pageInfo.hasNextPage` instead for exactly that reason. A record held in
+     * memory can always afford the count, so the only implementation there is can always supply it -
+     * but the first store-backed component makes this optional with a `hasMore` beside it, and a
+     * caller written against it should not assume the number is always there.
      */
     readonly total: number
     /** Which epoch and revision this page was drawn from, so a caller can tell a restart from an update. */
