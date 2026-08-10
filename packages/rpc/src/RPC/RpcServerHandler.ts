@@ -52,7 +52,7 @@ import {
     type RpcProjectionEntry,
     type RpcProjectionSlice
 } from './Component.js'
-import { declaredResource, getList, getMany, getManyReference, readDataRequest, SLOW_DATA_REQUEST_MS, type RpcDataResources, type RpcDataTiming, type RpcGetListParams, type RpcGetManyParams, type RpcGetManyReferenceParams } from './DataProvider.js'
+import { declaredResource, getList, getMany, getManyReference, readDataRequest, SLOW_DATA_REQUEST_MS, type RpcDataResource, type RpcDataResources, type RpcDataTiming, type RpcGetListParams, type RpcGetManyParams, type RpcGetManyReferenceParams } from './DataProvider.js'
 import { RpcSchema, validateParams, validateValue, type ComponentSchema } from './Schema.js'
 import { describeProblems, namespaceProblems } from './Compatibility.js'
 
@@ -871,6 +871,14 @@ export class RpcServerHandler extends MessageModule<Message<RpcMessage>, RpcMess
                           : request.method === 'getManyReference'
                             ? getManyReference(inst, request.resource, request.params as RpcGetManyReferenceParams)
                             : getList(inst, request.resource, request.params as RpcGetListParams)
+                    // Before the answer goes out, and before it is timed: a row that its own
+                    // declared type forbids is this peer's fault, and saying so where it happened
+                    // is worth more than a console drawing the wrong columns in silence.
+                    const wrongRows = this.checkRows(declared, answer)
+                    if (wrongRows) {
+                        await this.sendError(payload.id, source, 'InvalidParams', wrongRows)
+                        return
+                    }
                     const spent = Date.now() - began
                     // Said on the peer, because this is the one thing a console cannot see: the
                     // library-served path sorts and filters synchronously, so a large enough
@@ -1357,6 +1365,36 @@ export class RpcServerHandler extends MessageModule<Message<RpcMessage>, RpcMess
         if (!Number.isFinite(payload.ttl) || payload.ttl < 0) return undefined
         const overdue = Date.now() - (arrived + payload.ttl)
         return overdue > 0 ? overdue : undefined
+    }
+
+    /**
+     * Catches a resource's declared row type having drifted from the rows it actually serves.
+     *
+     * A resource's `row` is written by hand, or built at runtime from a store's own schema, and
+     * nothing connects either to the values that come back - so a column renamed in the database, a
+     * SQL type mapped to the wrong `TypeNode`, or an interface changed without its declaration
+     * changing with it all produce a grid drawing the wrong columns and saying nothing. The console
+     * cannot tell, and neither can `check`: the contract describes what a *call* to a resource
+     * answers, not what its rows look like.
+     *
+     * So it is checked against the one thing that is available - the rows themselves. Off by
+     * default and enabled with `validateResults`, exactly like the return check below it, because
+     * it is a host checking its own output: worth every millisecond in development, and per-row
+     * work nobody should pay for in a plant.
+     *
+     * Only for declared resources. A record in a component's own state is described by the
+     * published contract and covered by snapshot validation already, so checking it here would be
+     * asking the same question twice.
+     */
+    private checkRows(declared: RpcDataResource | undefined, answer: unknown): string | undefined {
+        if (!this.validateResults || !declared?.row) return undefined
+        const rows = (answer as { data?: unknown[] })?.data
+        if (!Array.isArray(rows)) return undefined
+        for (const [index, row] of rows.entries()) {
+            const failure = validateValue(row, declared.row, this.schema?.types, 'row')
+            if (failure) return `${declared.path.join('.')} served a row its own declared type forbids (row ${index}): ${failure}`
+        }
+        return undefined
     }
 
     /** Catches this server returning something its own contract does not allow. */

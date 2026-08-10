@@ -153,6 +153,10 @@ class Store extends RpcComponent<StoreProps, StoreState> implements RpcDataResou
 
 Both methods are required together on purpose: a component that listed resources it could not answer for would publish a table that renders as a permanent error, and one that answered for resources it never listed could not be found at all. A declared path is answered by the component; anything else falls through to the record rule above, so a component that serves a store keeps ordinary access to its own state.
 
+**A declared row type is checked against the rows, not against the source.** Nothing connects `row` to whatever the values really are — it is written by hand, or built at runtime from a store's own schema — so a renamed column, a SQL type mapped to the wrong `TypeNode`, or an interface changed without its declaration changing with it all produce a grid drawing the wrong columns and saying nothing. A viewer cannot tell, and neither can `check`: the contract describes what a *call* to a resource answers, not what its rows look like.
+
+So `validateResults` checks the rows themselves against the type that claims to describe them, and refuses the answer naming the resource and the row when they disagree. Off by default, like the return check it sits beside: it is a host checking its own output, worth every millisecond in development and per-row work nobody should pay for in a plant.
+
 The verb list is what a viewer offers from, so it is worth being accurate: the console draws a resource only if it answers `getList`, because that is the only thing its grid can do with one, and a node that appeared and then refused every selection would be worse than one that was never offered.
 
 Resources are read at describe time rather than fixed at exposure, so a store that gains a table says so on the next describe rather than at the next restart.

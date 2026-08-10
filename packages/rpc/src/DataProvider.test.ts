@@ -581,3 +581,48 @@ test('a fast page behind a slow count says so, which is the whole point of split
     await client.close()
     await server.close()
 })
+
+test('a row that its own declared type forbids is caught where it happened', async (t) => {
+    const server = new RpcServer({ name: peer('drift3943'), transports: [{ port: 3943, host: '127.0.0.1' }] })
+    // The self-check, off by default because it is per-row work nobody should pay for in a plant.
+    server.rpc.validateResults = true
+
+    /**
+     * A resource whose declared row type says one thing and whose rows say another - the shape a
+     * renamed column, a mis-mapped SQL type or an interface changed without its declaration
+     * produces. Nothing else can see it: the console draws what it is given, and `check` describes
+     * what a call to a resource answers rather than what its rows look like.
+     */
+    @rpcNamespace('drifted')
+    class Drifted extends RpcComponent<{ label: string }, { ready: boolean }> implements RpcDataResources {
+        constructor() {
+            super({ label: 'd' }, { ready: true })
+        }
+        dataResources() {
+            return [
+                {
+                    path: ['rows'] as const,
+                    verbs: ['getList'] as const,
+                    row: { kind: 'object' as const, fields: { name: { type: { kind: 'string' as const } } } }
+                }
+            ]
+        }
+        dataRequest() {
+            // `count` is not `name`, and nothing but this check will ever say so.
+            return { ids: ['r1'], data: [{ count: 3 }], total: 1, epoch: 'e', revision: 1 }
+        }
+    }
+
+    server.exposeClassInstance(new Drifted())
+    await server.ready()
+
+    const client = new RpcClient('http://localhost:3943', { name: peer('asker3943'), defaultTarget: peer('drift3943') })
+    const proxy = await client.proxy<{ $data(method: 'getList', resource: readonly string[]): Promise<unknown> }>('drifted')
+
+    const caught = await t.throwsAsync(proxy.$data('getList', ['rows']))
+    t.regex(String(caught?.message), /served a row its own declared type forbids/)
+    t.regex(String(caught?.message), /rows/, 'and it names the resource, since a host may serve several')
+
+    await client.close()
+    await server.close()
+})

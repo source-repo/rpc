@@ -98,6 +98,14 @@ It now throws, naming what holds the name and what to pass if the displacement w
 
 The server is an emitter now and re-emits those, plus `peerOnline` and `peerShape`, which the internal wiring never needed and an application often does. Emitted after the internal wiring, so anything reacting to a reconnect sees channels that have already been told rather than a view still marked stale.
 
+### A declared row type can be checked against the rows it describes
+
+Nothing connects a resource's `row` to the values that actually come back. It is written by hand, or built at runtime from a store's own schema, so a renamed column, a SQL type mapped to the wrong `TypeNode`, or an interface changed without its declaration changing with it all produce a grid drawing the wrong columns and saying nothing. A viewer cannot tell, and neither can `check` — the contract describes what a *call* to a resource answers, not what its rows look like.
+
+`validateResults` now checks served rows against the type that claims to describe them, and refuses the answer naming the resource and the row when they disagree. Off by default, like the return check beside it: a host checking its own output, worth every millisecond in development and per-row work nobody should pay for in a plant.
+
+Only for declared resources. A record in a component's own state is already described by the published contract and covered by snapshot validation, so checking it here would ask the same question twice.
+
 ### A row of a resource can be acted on
 
 A viewer could browse a collection it had never heard of and do nothing to it. An editor resolves from `sets`, and a row of a store-backed resource has no state path for any method to claim — so the console could page, filter and order a queue's dead letters and not retry one, while `retryDeadLetter` and `discardDeadLetter` sat there declared, authorized and unreachable.
