@@ -50,7 +50,7 @@ import {
     type RpcProjectionEntry,
     type RpcProjectionSlice
 } from './Component.js'
-import { declaredResource, getList, getMany, getManyReference, readDataRequest, SLOW_DATA_REQUEST_MS, type RpcDataResources, type RpcGetListParams, type RpcGetManyParams, type RpcGetManyReferenceParams } from './DataProvider.js'
+import { declaredResource, getList, getMany, getManyReference, readDataRequest, SLOW_DATA_REQUEST_MS, type RpcDataResources, type RpcDataTiming, type RpcGetListParams, type RpcGetManyParams, type RpcGetManyReferenceParams } from './DataProvider.js'
 import { RpcSchema, validateParams, validateValue, type ComponentSchema } from './Schema.js'
 import { describeProblems, namespaceProblems } from './Compatibility.js'
 
@@ -751,7 +751,17 @@ export class RpcServerHandler extends MessageModule<Message<RpcMessage>, RpcMess
                     // snapshots included. From the outside that is indistinguishable from a dead
                     // link, and the only place that knows better is here.
                     if (spent >= SLOW_DATA_REQUEST_MS)
-                        this.emit('slowRequest', { source, path: payload.path, method: request.method, resource: request.resource, ms: spent, served: declared ? 'component' : 'library' })
+                        this.emit('slowRequest', {
+                            source,
+                            path: payload.path,
+                            method: request.method,
+                            resource: request.resource,
+                            ms: spent,
+                            served: declared ? 'component' : 'library',
+                            // Carried through where the component separated them, so the event says
+                            // *which half* was slow rather than only that something was.
+                            ...(answer && typeof answer === 'object' ? { queryMs: (answer as RpcDataTiming).queryMs, countMs: (answer as RpcDataTiming).countMs } : {})
+                        })
                     const result = answer && typeof answer === 'object' ? { ...(answer as object), ms: spent } : answer
                     await this.respond(payload.id, source, { type: RpcMessageType.success, result, id: payload.id } as RpcSuccessPayload, MessageType.ResponseMessage)
                 } else await this.sendError(payload.id, source, map ? 'MethodNotFound' : 'ClassNotFound', `${payload.path}.${payload.method} is not exposed`)

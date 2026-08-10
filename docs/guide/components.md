@@ -171,6 +171,16 @@ Pages are zero-based, so `page * pageSize` needs no adjustment anywhere. A page 
 
 Every answer carries the `epoch` and `revision` it was drawn from, so a page and a subscription can be compared rather than merely coexist, and a restart is visible to a caller paging through.
 
+### How long it took, and which half
+
+Every answer carries `ms`, filled in by the dispatcher whoever served the resource. A component that can separate the two halves also reports `queryMs` and `countMs`.
+
+They are one number for a record held in memory, because filtering produces the matched set and `total` is its length — the count is a byproduct and costs nothing. They are two very different numbers over a real table, where `LIMIT 50` is answered from an index and `COUNT(*)` over the same predicate walks it, and the second is routinely most of the time.
+
+The split is reported rather than inferred because the difference decides what to do. **A slow page wants an index. A fast page behind a slow count wants something else entirely** — the count asked for less often, or estimated, or not asked for at all — and nothing can choose between those without seeing which half the time went to. Absent where the split does not exist, which is itself an answer.
+
+`slowRequest` on the server carries the same breakdown, so the peer says which half held it up rather than only that something did.
+
 ### Rows a caller already knows the ids of
 
 ```typescript

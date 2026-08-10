@@ -133,7 +133,16 @@ const Collection = ({
                         time went - and their difference is the link. Without the second, a slow
                         query and a dead link look the same from here. */}
                     {waited !== undefined && waited > 0 && <span className="waiting"> {waited}s</span>}
-                    {!fetching && data?.ms !== undefined && data.ms >= 250 && <span className="slow"> · peer {data.ms} ms</span>}
+                    {!fetching && data?.ms !== undefined && data.ms >= 250 && (
+                        <span className="slow">
+                            {' '}
+                            · peer {data.ms} ms
+                            {/* Which half, where the component could tell them apart. A fast page
+                                behind a slow count wants the count asked for less often; a slow
+                                page wants an index. One figure cannot tell those apart. */}
+                            {data.countMs !== undefined && data.queryMs !== undefined && ` (rows ${data.queryMs}, count ${data.countMs})`}
+                        </span>
+                    )}
                 </span>
                 {/* Ordering is the peer's, over the whole matched set - an order applied to the
                     fifty rows already here would be an order over nothing, and would disagree with

@@ -1,6 +1,6 @@
 import test from 'ava'
 import { randomUUID } from 'crypto'
-import { pageEntries, rpc, rpcNamespace, rpcComponent, RpcClient, RpcComponent, RpcServer, type Introspection, type RpcComponentProxy, type RpcDataMethod, type RpcDataResources, type RpcGetManyParams, type RpcGetManyReferenceParams, type RpcGetListParams } from './index.js'
+import { pageEntries, rpc, rpcNamespace, rpcComponent, RpcClient, RpcComponent, RpcServer, type Introspection, type RpcComponentProxy, type RpcDataMethod, type RpcDataResources, type RpcGetManyParams, type RpcGetListResult, type RpcGetManyReferenceParams, type RpcGetListParams } from './index.js'
 
 /**
  * Paging a collection by asking for it, which is the half a projection cannot do.
@@ -521,6 +521,62 @@ test('an answer says how long the peer spent, and a peer that stalled itself say
     t.true(stalls[0].ms >= 400)
     t.is(stalls[0].served, 'component')
     t.deepEqual([...stalls[0].resource], ['sludge'])
+
+    await client.close()
+    await server.close()
+})
+
+test('a fast page behind a slow count says so, which is the whole point of splitting them', async (t) => {
+    const server = new RpcServer({ name: peer('table3933'), transports: [{ port: 3933, host: '127.0.0.1' }], exposeIntrospection: true })
+
+    /**
+     * A stand-in for the case that is already on the chart: a big table where `LIMIT 50` comes off
+     * an index and `COUNT(*)` over the same predicate walks it. The delay is fake; the shape is not,
+     * and it is the shape that decides what to do - an index fixes a slow page, and nothing about
+     * an index fixes a slow count.
+     */
+    @rpcNamespace('table')
+    class Table extends RpcComponent<{ label: string }, { connected: boolean }> implements RpcDataResources {
+        constructor() {
+            super({ label: 't' }, { connected: true })
+        }
+        dataResources() {
+            return [{ path: ['rows'], verbs: ['getList'] as const }]
+        }
+        async dataRequest() {
+            const queryBegan = Date.now()
+            await new Promise((resolve) => setTimeout(resolve, 5))
+            const ids = ['r1', 'r2']
+            const queryMs = Date.now() - queryBegan
+            const countBegan = Date.now()
+            await new Promise((resolve) => setTimeout(resolve, 300))
+            const countMs = Date.now() - countBegan
+            return { ids, data: [{ n: 1 }, { n: 2 }], total: 100000, queryMs, countMs, epoch: 'e', revision: 1 }
+        }
+    }
+
+    const stalls: { ms: number; queryMs?: number; countMs?: number }[] = []
+    server.rpc.on('slowRequest', (report: { ms: number; queryMs?: number; countMs?: number }) => stalls.push(report))
+    server.exposeClassInstance(new Table())
+    await server.ready()
+
+    const client = new RpcClient('http://localhost:3933', { name: peer('asker3933'), defaultTarget: peer('table3933') })
+    const proxy = await client.proxy<{ $data(method: 'getList', resource: readonly string[]): Promise<RpcGetListResult> }>('table')
+
+    const answer = await proxy.$data('getList', ['rows'])
+    t.is(answer.total, 100000)
+
+    // The two numbers, and the ratio between them is the finding: the rows were nothing and the
+    // count was everything. A single figure would have said "slow" and left the reason to guessing.
+    t.true((answer.queryMs ?? 0) < 100, `rows took ${answer.queryMs} ms`)
+    t.true((answer.countMs ?? 0) >= 300, `the count took ${answer.countMs} ms`)
+    t.true((answer.ms ?? 0) >= (answer.countMs ?? 0), 'and the whole request is at least the sum of its parts')
+
+    // The peer says which half held it up, not merely that something did - so the diagnosis is in
+    // the event rather than in whoever reads it afterwards.
+    t.is(stalls.length, 1)
+    t.true((stalls[0].countMs ?? 0) >= 300)
+    t.true((stalls[0].queryMs ?? 0) < 100)
 
     await client.close()
     await server.close()

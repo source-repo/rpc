@@ -85,7 +85,23 @@ export interface RpcGetManyResult extends RpcDataTiming {
 export const SLOW_DATA_REQUEST_MS = 250
 
 export interface RpcDataTiming {
+    /** Wall time for the whole request, filled in by the dispatcher whoever served it. */
     readonly ms?: number
+    /**
+     * The rows, and the count, separately - when the component can tell them apart.
+     *
+     * They are one number for a record held in memory, because filtering produces the matched set
+     * and `total` is its length: the count is a byproduct and costs nothing. They are two very
+     * different numbers over a real table, where `LIMIT 50` is answered from an index and
+     * `COUNT(*)` over the same predicate walks it - and the second is routinely most of the time.
+     *
+     * Reported rather than inferred, because the difference decides what to do about it. A slow
+     * page wants an index; a fast page behind a slow count wants the count asked for less often, or
+     * estimated, or not at all - and nothing can choose between those without seeing which half the
+     * time went to. Absent where the split does not exist, which is itself an answer.
+     */
+    readonly queryMs?: number
+    readonly countMs?: number
 }
 
 /**

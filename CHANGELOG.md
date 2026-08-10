@@ -26,6 +26,14 @@ A component serving its own resources answers through one `dataRequest(method, r
 
 The console's grid can now be ordered by the key or by any field the row type declares, ascending or descending. Drawn from the type rather than from a row, so the choices are the same on an empty collection as on a full one — and the order is the peer's, over the whole matched set, because an order applied to the fifty rows already on screen would disagree with itself the moment a page was turned.
 
+### And which half of it was slow
+
+`queryMs` and `countMs` beside the total, for a component that can tell the two apart. They are one number for a record held in memory — filtering produces the matched set and `total` is its length, so the count is a byproduct that costs nothing. They are two very different numbers over a real table, where `LIMIT 50` comes off an index and `COUNT(*)` over the same predicate walks it, and the second is routinely most of the time.
+
+Reported rather than inferred, because the difference decides what to do: a slow page wants an index, and a fast page behind a slow count wants the count asked for less often, or estimated, or not at all. One figure says "slow" and leaves the reason to guessing. `slowRequest` carries the same breakdown, so the peer names which half held it up.
+
+The console shows it as `peer 320 ms (rows 5, count 300)`.
+
 ### A slow answer stops looking like a dead link
 
 Development is where this bites: something is not well designed yet, a pane sits there for a minute, and nothing anywhere says why. Two numbers and one event fix most of it.
