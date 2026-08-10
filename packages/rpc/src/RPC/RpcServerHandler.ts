@@ -50,6 +50,7 @@ import {
     type RpcProjectionEntry,
     type RpcProjectionSlice
 } from './Component.js'
+import { getList, readDataRequest } from './DataProvider.js'
 import { RpcSchema, validateParams, validateValue, type ComponentSchema } from './Schema.js'
 import { describeProblems, namespaceProblems } from './Compatibility.js'
 
@@ -699,6 +700,31 @@ export class RpcServerHandler extends MessageModule<Message<RpcMessage>, RpcMess
                         const result = releaseComponentAuthority(inst, source)
                         await this.respond(payload.id, source, { type: RpcMessageType.success, result, id: payload.id } as RpcSuccessPayload, MessageType.ResponseMessage)
                     }
+                } else if (payload.method === '$data' && inst) {
+                    // Dispatch-level like $acquire, and for the same two reasons: the check needs
+                    // the caller's identity, which methods do not see, and a component's author
+                    // should not have to write anything for its collections to be readable.
+                    //
+                    // A read, so it is answered from the current snapshot and changes nothing. The
+                    // whole point of it being a call rather than a projection is that the work
+                    // happens when somebody asks - once, with a deadline and an authorize() on it -
+                    // instead of on every publish forever.
+                    if (!(inst instanceof RpcComponent)) {
+                        await this.sendError(payload.id, source, 'ClassNotFound', `${payload.path} is not an observable component, so it serves no data`)
+                        return
+                    }
+                    const denied = await this.checkAccess(payload, source, false)
+                    if (denied) {
+                        await this.sendError(payload.id, source, denied, `not permitted to call ${payload.path}.${payload.method}`)
+                        return
+                    }
+                    const request = readDataRequest(payload.params[0], payload.params[1], payload.params[2])
+                    if (request instanceof Error) {
+                        await this.sendError(payload.id, source, 'InvalidParams', request.message)
+                        return
+                    }
+                    const result = getList(inst, request.resource, request.params)
+                    await this.respond(payload.id, source, { type: RpcMessageType.success, result, id: payload.id } as RpcSuccessPayload, MessageType.ResponseMessage)
                 } else await this.sendError(payload.id, source, map ? 'MethodNotFound' : 'ClassNotFound', `${payload.path}.${payload.method} is not exposed`)
                 return
             }

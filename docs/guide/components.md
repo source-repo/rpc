@@ -107,6 +107,44 @@ A path that reaches nothing is simply absent rather than an error — state is d
 
 A projection is a narrowing, so it needs none of the gating a generic setter does: asking for less than you are already entitled to exposes nothing new, and `authorize()` sees the paths like any other parameter. And it survives a reconnect — the replay carries the paths, since re-subscribing without them would quietly restore the whole snapshot on the one link that cannot carry it.
 
+A slice is a **live window**: it keeps pushing, and what it pushes is whichever entries currently sit in that range. When what you want is one page in answer to a question — these fifty, matching this, in this order — that is a different operation, and it is the next section.
+
+## Asking for a page instead of watching one
+
+A projection narrows what a subscription pushes. It cannot say *which* fifty of three hundred, because that is a question — a predicate, an order and a page over data the caller does not hold — and a question wants asking rather than subscribing.
+
+`$data` is that ask, and its shape is react-admin's **DataProvider** rather than an invention of ours, because that is the interface several hundred backends already implement:
+
+```typescript
+const field = await client.proxy<RpcComponentProxy<Field>>('field', 'bakery')
+
+const page = await field.$data('getList', ['state', 'tags'], {
+    pagination: { page: 0, pageSize: 50 },
+    filter: { field: 'quality', op: 'eq', operand: 'bad' },
+    sort: { field: 'value', order: 'DESC' }
+})
+
+page.ids       // the keys of the rows on this page
+page.data      // the rows, positionally
+page.total     // how many matched — which is what a pager needs, not how many exist
+```
+
+A component gets this **free** wherever its state holds a record: the base class serves it from the contract, the way `$acquire` is served, and the author writes nothing. A component with a store of its own — a database, a document collection, a queue — implements the same verbs against it instead.
+
+**Why a call rather than a wider projection.** A projection is re-applied per subscriber on every publish, so a predicate living there would make every commit a query on a peer that may be a small computer running a process. Worse, a filtered page is *unstable* under push: matches depend on values, values change, so one tag going bad enters the match and renumbers every row beneath it with nothing on screen to say so. A call is answered once, when somebody asks, with a deadline and an `authorize()` check on it. Values stay current because the caller asks again on a period **it** chooses — which is also the only rate control a subscriber has on a slow link, since a subscription's rate belongs to whoever is publishing.
+
+**A filter matching nothing transfers nothing.** That is the property no amount of client-side filtering can have, because discovering that nothing matched is exactly what it must receive everything to find out. Filtering happens before the page is cut, ordering before that again — a filter applied after paging would be a filter over fifty rows pretending to be one over three hundred.
+
+The filter is a closed grammar rather than an expression: a condition is `{ field, op, operand }` with `op` one of `startsWith`, `contains`, `eq`, `ne`, `lt`, `lte`, `gt`, `gte`, and conditions combine with `{ all: […] }` and `{ any: […] }`. `field` is `id` for the row's key, a dot path for a field inside the row, or absent for the row itself — which is the only thing there is to compare in a record of numbers. Nothing that *runs* ever crosses the wire, deliberately: this is evaluated on the peer holding the plant, and again every time the page is asked for, so a regular expression here would be a program handed to a machine with a process attached.
+
+`total` is the count of **matches**, which is what "3 of 47" means and what a pager reads. It is optional in the interface, because `COUNT(*)` over a filtered table is not free for a store-backed component — a record held in memory can always afford it. A `pageSize` of `0` asks for no rows and answers the total, which is how a caller learns the number of pages before deciding to fetch any.
+
+Pages are zero-based, so `page * pageSize` needs no adjustment anywhere. A page past the end answers empty with the true total rather than erring, because the set is data: a page that was valid when the operator clicked may be past the end by the time the request lands, and that is a race no caller can avoid. A malformed bound — negative, fractional, or a page number with no `pageSize` to measure it in — is still refused, since that is a caller holding it wrong.
+
+Every answer carries the `epoch` and `revision` it was drawn from, so a page and a subscription can be compared rather than merely coexist, and a restart is visible to a caller paging through.
+
+Writes are ordinary declared methods that happen to have standard names, so `authorize()`, the owner fence and idempotency all apply per call and none of it is special-cased. `getOne`, `getMany` and the relational verbs — resolving foreign keys to values, one-to-many under a record — are the same shape pointed at a second resource, and are not served yet.
+
 ## Publishing bounds
 
 Expose options bound what the network hears — local state always changes immediately:

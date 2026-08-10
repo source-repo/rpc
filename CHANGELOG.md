@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+### A component can be asked for a page, and not only watched
+
+A projection narrows what a subscription pushes, and stops where the question becomes *which* fifty of three hundred — a predicate, an order and a page over data the caller does not hold. `$data(type, resource, params)` answers that, served at dispatch level beside `$acquire`, gated by the same `authorize()`, and free over any record in a component's state: the base class serves it from the contract and the author writes nothing.
+
+Its shape is react-admin's **DataProvider** rather than a query grammar of ours, which is the point — it is the interface several hundred backends already implement, so `getList` today makes `getOne`, `getMany` and the relational verbs the same shape pointed at a second resource rather than features still to be designed. A component with a store of its own implements the same verbs against it.
+
+**Pull rather than push, and that is the decision the rest follows from.** A projection is re-applied per subscriber on every publish, so a predicate living there would make every commit a query on a peer that may be a small computer running a process — and a filtered page is *unstable* under push, because matches depend on values and values change, so one tag going bad enters the match and renumbers every row beneath it with nothing on screen to say so. A call is answered once, when somebody asks, with a deadline on it.
+
+**A filter matching nothing transfers nothing**, which is the property no amount of client-side filtering can have: discovering that nothing matched is exactly what it must receive everything to find out. Filter, then order, then cut the page — a filter applied after paging would be a filter over fifty rows pretending to be one over three hundred.
+
+The filter is a closed grammar and never an expression: `{ field, op, operand }` with `op` one of `startsWith`, `contains`, `eq`, `ne`, `lt`, `lte`, `gt`, `gte`, combined with `all` and `any`, bounded in depth and count. Nothing that runs crosses the wire, deliberately — this is evaluated on the peer holding the plant, and again on every request. `total` is the count of matches, since that is what a pager reads; `pageSize: 0` asks for none of them and answers just that number. Pages are zero-based. A page past the end answers empty with the true total, because the set is data and a page valid when the operator clicked may be past the end when the request lands; a negative or fractional bound, or a page with no `pageSize` to measure it in, is still refused.
+
+`RpcProjectionSlice` keeps its job as the **live window** on a record — it pushes, where this answers — and is now the primitive for a program that wants to watch a range rather than browse one.
+
 ### Calls issued together travel in one frame
 
 A `POST` carries its type, a uuid, the namespace, the method name and the params, and MQTT adds a request topic, a response topic and correlation data beneath it — so moving one `float64` spends far more on saying where it is going than on the number, and reading three hundred tags one at a time is tens of kilobytes of envelope for a couple of kilobytes of values. Calls issued in one microtask now go as a single `BATCH` frame.
