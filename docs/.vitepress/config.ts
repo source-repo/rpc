@@ -36,6 +36,7 @@ export default defineConfig({
                     { text: 'Commands', link: '/guide/commands' },
                     { text: 'Events and reconnection', link: '/guide/events' },
                     { text: 'Command authority', link: '/guide/authority' },
+                    { text: 'Work that takes longer than a call', link: '/guide/long-work' },
                     { text: 'Topology', link: '/guide/topology' },
                     { text: 'Structural context', link: '/guide/context' },
                     { text: 'Contracts and validation', link: '/guide/contracts' },

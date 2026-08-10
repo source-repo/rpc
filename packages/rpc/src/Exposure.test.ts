@@ -1,6 +1,7 @@
 import test from 'ava'
 import { randomUUID } from 'crypto'
-import { rpc, RpcServer, TransportEvent } from './index.js'
+import { EventEmitter } from 'events'
+import { rpc, RpcClient, RpcServer, TransportEvent } from './index.js'
 
 /**
  * Two things a peer must be able to rely on about its own exposure and its own link.
@@ -65,4 +66,58 @@ test('a server that dials out can hear its own link, which is when it must recon
 
     await dialler.close()
     await hub.close()
+})
+
+test('a withdrawn name stops answering, tells its watchers, and comes back as a new incarnation', async (t) => {
+    const server = new RpcServer({ name: peer('retire3940'), transports: [{ port: 3940, host: '127.0.0.1' }] })
+
+    // An emitter, because a retirement is delivered to watchers and only an emitter has any.
+    class Job extends EventEmitter {
+        @rpc({ semantics: 'query' })
+        async where() {
+            return 'first'
+        }
+    }
+    class Replacement extends EventEmitter {
+        @rpc({ semantics: 'query' })
+        async where() {
+            return 'second'
+        }
+    }
+
+    const handle = server.exposeClassInstance(new Job(), 'job')
+    await server.ready()
+
+    const client = new RpcClient('http://localhost:3940', { name: peer('asker3940'), defaultTarget: peer('retire3940') })
+    const job = await client.proxy<Job>('job')
+    t.is(await job.where(), 'first')
+
+    // Retirement has no frame of its own - removePeer covers the subscriber going, and nothing
+    // covered the reverse - so without this a watcher cannot tell a retired instance from a live
+    // one that has simply not emitted lately.
+    const retirements: { namespace: string; generation: number }[] = []
+    const watcher = await client.proxy<{ on(event: string, handler: (report: unknown) => void): Promise<unknown> }>('job')
+    await watcher.on('$retired', (report) => retirements.push(report as { namespace: string; generation: number }))
+
+    t.true(await handle.withdraw(), 'withdrawing says whether there was anything to withdraw')
+    t.false(await handle.withdraw(), 'and a second call is a polite no rather than an error')
+
+    // The record going is what stops new calls: every dispatch decision starts from it, so a call
+    // arriving after this finds nothing and is refused like any unknown path.
+    const gone = await t.throwsAsync(job.where())
+    t.regex(String(gone?.message), /not exposed|ClassNotFound/)
+
+    await new Promise((resolve) => setTimeout(resolve, 100))
+    t.is(retirements.length, 1, 'and whoever was watching was told')
+    t.is(retirements[0].namespace, 'job')
+
+    // A name is not a thing; it is a place a thing stands. Coming back is a new incarnation, and a
+    // client replaying subscriptions must not silently reattach to a different object wearing it.
+    server.exposeClassInstance(new Replacement(), 'job')
+    t.is(server.rpc.manageRpc.at('job')?.generation, 1, 'the generation moved')
+    const again = await client.proxy<Replacement>('job')
+    t.is(await again.where(), 'second')
+
+    await client.close()
+    await server.close()
 })

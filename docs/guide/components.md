@@ -200,6 +200,8 @@ The split is reported rather than inferred because the difference decides what t
 
 `slowRequest` on the server carries the same breakdown, so the peer says which half held it up rather than only that something did.
 
+A method whose *work* outlives the call - a report, a scan, an import - is a different thing again, and has its own page: [work that takes longer than a call](./long-work.md).
+
 ### Rows a caller already knows the ids of
 
 ```typescript

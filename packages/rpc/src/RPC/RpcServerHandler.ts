@@ -14,7 +14,7 @@ import {
 } from './Messages.js'
 export * from './Messages.js'
 import { v4 as uuidv4 } from 'uuid'
-import { IManageRpc } from './Rpc.js'
+import { IManageRpc, namespaceRetiredEvent } from './Rpc.js'
 import { RpcAuthorizer, RpcCallContext, RpcIdentity } from './Auth.js'
 import { isFailedOutcome, type RpcIdempotencyStore, type RpcInvocation, type StoredRpcOutcome } from './Idempotency.js'
 import EventEmitter from 'events'
@@ -256,6 +256,28 @@ export class RpcServerHandler extends MessageModule<Message<RpcMessage>, RpcMess
      * reference is worse than a leak, because it exists and is unreachable.
      */
     private readonly deferrals = new Map<string, { peer: string; deferred: RpcDeferred<unknown, unknown> & { abandon(): void } }>()
+
+    /**
+     * Retire a name: stop answering for it, and tell whoever was watching.
+     *
+     * `removePeer` covers the *subscriber* going. There is no frame at all for the reverse case -
+     * the namespace going while the subscriber is still connected - so without this a watcher
+     * cannot tell a retired instance from a live one that has simply not emitted lately, which is
+     * the sort of thing somebody spends an evening on.
+     */
+    async retire(name: string): Promise<boolean> {
+        const generation = this.manageRpc.withdraw(name)
+        if (generation === undefined) return false
+        for (const [key, proxy] of this.eventProxies) {
+            if (proxy.instanceName !== name) continue
+            proxy.detach()
+            this.eventProxies.delete(key)
+            await this.sendEvent(proxy.target, namespaceRetiredEvent, [{ namespace: name, generation }], name).catch((e) =>
+                this.emit('deliveryError', { target: proxy.target, event: namespaceRetiredEvent, path: name, error: e })
+            )
+        }
+        return true
+    }
 
     /** The peer waiting on this work has gone. A fact for the handler, never an instruction. */
     abandonFor(peer: string) {
@@ -1343,11 +1365,41 @@ export class ManageRpc implements IManageRpc {
     private record(name: string): ExposedNamespace {
         let held = this.namespaces.get(name)
         if (!held) {
-            held = { methods: new Map(), generation: 0 }
+            held = { methods: new Map(), generation: this.retired.get(name) ?? 0 }
             this.namespaces.set(name, held)
         }
         return held
     }
+
+    /**
+     * Forget what stands under a name, and remember that something did.
+     *
+     * The record going is what stops new calls: every dispatch decision starts from `at()`, so a
+     * call arriving after this finds nothing and is refused `ClassNotFound` like any unknown path.
+     * Detaching the subscriptions and telling their watchers belongs to the handler, which is what
+     * owns them - see `retire`.
+     *
+     * The generation is remembered rather than the name being forgotten. Re-exposing it later is a
+     * new incarnation, and a client replaying its subscriptions across a reconnect must not
+     * silently reattach to a different object wearing the old name. Returns the generation that
+     * has just ended, or nothing where the name held nothing.
+     */
+    withdraw(name: string): number | undefined {
+        const held = this.namespaces.get(name)
+        if (!held?.instance) return undefined
+        this.namespaces.delete(name)
+        this.retired.set(name, held.generation + 1)
+        return held.generation
+    }
+
+    /**
+     * The generation a name would come back at, for names that have been retired.
+     *
+     * Kept rather than the name being freed outright: a stale cursor naming generation 0 must not
+     * be readable as current after the name has been used twice. It costs one number per retired
+     * name, which is the cheapest of the ways to be honest about this.
+     */
+    private readonly retired = new Map<string, number>()
 
     /** What is exposed under this name, or nothing. The read every dispatch decision starts from. */
     at(name: string): ExposedNamespace | undefined {
@@ -1420,6 +1472,9 @@ export class ManageRpc implements IManageRpc {
             throw new Error(
                 `exposeClassInstance: ${namespace} is already exposed by ${held.constructor?.name ?? 'another instance'}; pass { replace: true } to displace it deliberately`
             )
+        // A deliberate replacement is a new incarnation too - the object under the name changed,
+        // which is exactly what a stale subscription must not be allowed to miss.
+        if (held && held !== instance) this.record(namespace).generation += 1
         this.record(namespace).instance = instance
         // The call site wins over the class, since it is the one that knows how this particular
         // instance is being used - the same class may front one device here and a pool there.

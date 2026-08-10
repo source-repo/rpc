@@ -44,7 +44,7 @@ export const defaultSecureWebSocketPort = defaultWebSocketPort + 1000
 export const defaultSecureWebPort = defaultWebPort + 1000
 
 export interface IManageRpc {
-    exposeClassInstance(instance: object, name?: string, options?: number | ExposeOptions): void
+    exposeClassInstance(instance: object, name?: string, options?: number | ExposeOptions): void | RpcExposureHandle
     exposeClass<T>(constructor: new (...args: unknown[]) => T, aliasName?: string): void
     exposeObject(obj: object, name: string): void
     expose(methodName: string, method: () => void): void
@@ -66,3 +66,25 @@ export const isEventFunction = (prop: string) =>
     prop === 'getMaxListeners'
 
 export const isPromiseFunction = (prop: string) => prop === 'then' || prop === 'catch'
+
+/**
+ * What a peer emits when a name it served is retired.
+ *
+ * Reserved the way `$snapshot` is, and it exists because retirement has no frame of its own.
+ * `removePeer` covers the *subscriber* going; nothing covered the reverse - the namespace going
+ * while the subscriber is still connected - so a watcher could not tell a retired instance from a
+ * live one that had simply not emitted lately. It carries the generation, so a client that later
+ * sees the name again knows it is a different incarnation rather than the same one resuming.
+ */
+export const namespaceRetiredEvent = '$retired'
+
+/**
+ * What exposing something hands back: the means to stop.
+ *
+ * Ownership as a value, the way `provideContext` already does it - rather than a `withdraw(name)`
+ * anybody holding the name could call. Withdrawing is idempotent and answers whether there was
+ * anything to withdraw, so a second call is a polite `false` rather than an error.
+ */
+export interface RpcExposureHandle {
+    withdraw(): Promise<boolean>
+}

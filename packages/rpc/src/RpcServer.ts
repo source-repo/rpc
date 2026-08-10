@@ -1,4 +1,5 @@
 import { EventEmitter } from 'events'
+import { declaredNamespace } from './RPC/Expose.js'
 import { GenericModule, PeerRegistry, Transport, TransportEvent } from './RPC/Core.js'
 import { ComponentChannels, componentFacade, type RpcComponentLike, type RpcComponentOptions, type RpcComponentProxy } from './RPC/ComponentClient.js'
 import { HostTopology, type HostTopologyOptions, type RpcRef } from './RPC/Topology.js'
@@ -16,7 +17,7 @@ import { SocketIoClientTransport } from './Transports/SocketIoClientTransport.js
 import { RelayRule, settledAfterSweeps } from './Transports/Presence.js'
 import { codecFor } from './RPC/Codec.js'
 import { Switch } from './Utilities/Switch.js'
-import { IManageRpc } from './RPC/Rpc.js'
+import { IManageRpc, type RpcExposureHandle } from './RPC/Rpc.js'
 
 export interface ServerOptions {
     description?: string
@@ -548,9 +549,26 @@ export class RpcServerBase extends EventEmitter implements IManageRpc {
         this.transports = []
         this.peers.clear()
     }
-    exposeClassInstance(instance: object, name?: string, options?: number | ExposeOptions): void {
+    /**
+     * Expose an instance, and hand back the means to stop.
+     *
+     * The handle is purely additive - this returned `void`, so nothing that ignores it changes -
+     * and it matches the shape `provideContext` already uses, where the handle *is* the ownership.
+     * A long-lived host exposes at startup and never withdraws; a host that stands something up per
+     * job needs to be able to take it down, and until now nothing could.
+     */
+    exposeClassInstance(instance: object, name?: string, options?: number | ExposeOptions): RpcExposureHandle {
         this.rpc.manageRpc.exposeClassInstance(instance, name, options)
         this.announceShape()
+        const exposed = name ?? declaredNamespace(instance)?.name
+        return {
+            withdraw: async () => {
+                if (!exposed) return false
+                const retired = await this.rpc.retire(exposed)
+                if (retired) this.announceShape()
+                return retired
+            }
+        }
     }
     exposeClass<T>(constructor: new (...args: unknown[]) => T, aliasName?: string): void {
         this.rpc.manageRpc.exposeClass(constructor, aliasName)

@@ -26,6 +26,21 @@ A component serving its own resources answers through one `dataRequest(method, r
 
 The console's grid can now be ordered by the key or by any field the row type declares, ascending or descending. Drawn from the type rather than from a row, so the choices are the same on an empty collection as on a full one — and the order is the peer's, over the whole matched set, because an order applied to the fifty rows already on screen would disagree with itself the moment a page was turned.
 
+### An exposed name can be taken away again
+
+`exposeClassInstance` returns a handle now — purely additive, since it returned `void` — and the handle is the ownership, the same shape `provideContext` already uses.
+
+```typescript
+const handle = server.exposeClassInstance(new Job(spec), `job.${id}`)
+await handle.withdraw()
+```
+
+Withdrawing stops new calls at once, because every dispatch decision starts from the record and a call arriving afterwards finds nothing. It detaches the subscriptions taken out on the name and tells their watchers with a **`$retired`** event carrying the generation that just ended — which exists because retirement otherwise has no frame at all: `removePeer` covers the *subscriber* going, and nothing covered the reverse, so a watcher could not tell a retired instance from a live one that had simply not emitted lately.
+
+Re-exposing the name is a **new incarnation at a bumped generation**, and so is a deliberate `{ replace: true }`. A name is not a thing; it is a place a thing stands, and a client replaying its subscriptions across a reconnect must not silently reattach to a different object wearing the old one.
+
+Nothing expires an instance on a timer, deliberately. An object retired out from under an author who still holds a reference is worse than a leak, because it exists and is unreachable.
+
 ### Deferred replies: a long job can answer the caller that asked, and nobody else
 
 A caller starts work that outlives any sane call deadline — a report, a scan, a batch import — and the result belongs to the peer that asked. Events broadcast, a per-job instance leaks a namespace for the process lifetime, and a hand-rolled result sink costs a peer and forty lines of bookkeeping. The library absorbs it.
