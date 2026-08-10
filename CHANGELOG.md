@@ -26,6 +26,18 @@ A component serving its own resources answers through one `dataRequest(method, r
 
 The console's grid can now be ordered by the key or by any field the row type declares, ascending or descending. Drawn from the type rather than from a row, so the choices are the same on an empty collection as on a full one — and the order is the peer's, over the whole matched set, because an order applied to the fifty rows already on screen would disagree with itself the moment a page was turned.
 
+### A name is claimed, not assigned
+
+`exposeClassInstance` overwrote whatever already held a namespace, with no check. `createRpcInstance` is exposed to the network and takes the instance name as a caller-chosen argument, so an authorized peer could create something called `plant` and silently displace the plant — every later call going to it, with nothing at either end saying so. An authorizer *could* inspect the requested name in `params`, but that is every application rebuilding a type system in a callback to close a hole the library left open.
+
+It now throws, naming what holds the name and what to pass if the displacement was meant: `{ replace: true }`. Re-exposing the *same* instance is still fine and re-applies its options, because that displaces nothing.
+
+### A server can hear its own link
+
+`RpcClient` re-emits transport state; `RpcServer` sent `connected`, `disconnected`, `peerGone` and `peerDisplaced` to a private emitter that drives component channels, and stopped there. An application dialling out with `connect` — the shape a browser peer that also serves has — had to reach into `transports[0]` to learn it had reconnected, which is exactly the moment it must reconcile.
+
+The server is an emitter now and re-emits those, plus `peerOnline` and `peerShape`, which the internal wiring never needed and an application often does. Emitted after the internal wiring, so anything reacting to a reconnect sees channels that have already been told rather than a view still marked stale.
+
 ### A row of a resource can be acted on
 
 A viewer could browse a collection it had never heard of and do nothing to it. An editor resolves from `sets`, and a row of a store-backed resource has no state path for any method to claim — so the console could page, filter and order a queue's dead letters and not retry one, while `retryDeadLetter` and `discardDeadLetter` sat there declared, authorized and unreachable.

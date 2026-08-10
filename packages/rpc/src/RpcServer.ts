@@ -178,7 +178,15 @@ export interface RpcServerOptions {
  * was handed. Listening for connections and speaking MQTT need Node, and live in NodeRpcServer,
  * which is what `RpcServer` means when imported outside a browser.
  */
-export class RpcServerBase implements IManageRpc {
+/**
+ * An emitter, so a peer that also serves can hear its own link.
+ *
+ * `RpcClient` re-emits transport state and this did not: the events went to a private emitter used
+ * to drive component channels and stopped there. An application dialling out with `connect` - the
+ * shape a browser peer that also serves has - had to reach into `transports[0]` to learn it had
+ * reconnected, which is exactly the moment it must reconcile.
+ */
+export class RpcServerBase extends EventEmitter implements IManageRpc {
     public rpc: RpcServerHandler
     /**
      * This server as a caller. A server on a bus is rarely only a server: it answers its peers and
@@ -207,6 +215,11 @@ export class RpcServerBase implements IManageRpc {
     private readonly componentLifecycle = new EventEmitter()
     options: RpcServerOptions = { name: '*', transports: [], useMsgPack: true, readyTimeout: 30000 }
     constructor(options: Partial<RpcServerOptions> = {}) {
+        super()
+        // A peer may hold a link event listener per component pane and per reconciler, and ten is
+        // Node's warning threshold rather than a limit. Raised so a busy application does not get
+        // told it has leaked something it has not.
+        this.setMaxListeners(0)
         this.options = { ...this.options, ...options }
         // Handlers first, with no sources. Transports attach to them as they are built, which is
         // what lets exposeClassInstance() run before any link exists - and lets the two node-only
@@ -397,7 +410,17 @@ export class RpcServerBase implements IManageRpc {
         // subscription - but the context resolver's subscriptions are method-registered, so
         // `connected` is forwarded too and re-subscribing is its own replay.
         for (const event of [TransportEvent.disconnected, TransportEvent.peerGone, TransportEvent.peerDisplaced, TransportEvent.connected])
-            transport.on(event, (payload: unknown) => this.componentLifecycle.emit(event, payload))
+            transport.on(event, (payload: unknown) => {
+                this.componentLifecycle.emit(event, payload)
+                // And out to the application, which had no way to hear any of this. Emitted after
+                // the internal wiring, so anything reacting to a reconnect sees channels that have
+                // already been told about it rather than a view still marked stale.
+                this.emit(event, payload)
+            })
+        // Presence, which the internal wiring never needed and an application often does: who
+        // arrived is how a peer discovers what it may now talk to.
+        for (const event of [TransportEvent.peerOnline, TransportEvent.peerShape])
+            transport.on(event, (...args: unknown[]) => this.emit(event, ...args))
     }
     /**
      * Pass a presence change from the transport that saw it to the other links: told directly to

@@ -161,6 +161,13 @@ export interface ExposeOptions {
      * Overrides what the class declares, for the same reason execution does.
      */
     mailbox?: number
+    /**
+     * Displace whatever already holds this name, rather than being refused.
+     *
+     * Off by default because the refusal is the point: a silent overwrite is how an exposed plant
+     * gets replaced by something a peer asked for, and the failure is invisible from both ends.
+     */
+    replace?: boolean
     /** Snapshot publishing for an instance extending RpcComponent. Ignored for anything else. */
     component?: RpcComponentExposeOptions
 }
@@ -1294,6 +1301,20 @@ export class ManageRpc implements IManageRpc {
         const allowed = markedMethods(instance)
         if (!allowed && this.requireExplicitExposure)
             throw new Error(`exposeClassInstance: ${instance.constructor.name} marks no @rpc methods and requireExplicitExposure is on`)
+        // A name is claimed, not assigned. Nothing checked this, and `createRpcInstance` is exposed
+        // to the network with the instance name as a caller-chosen argument - so an authorized peer
+        // could create something called `plant` and silently displace the plant, with every later
+        // call going to the impostor and nothing anywhere saying so. An authorizer *can* inspect the
+        // requested name in `params`, but that is every application rebuilding a type system in a
+        // callback to close a hole the library left open.
+        //
+        // Re-exposing the *same* instance is allowed and re-applies its options, since that displaces
+        // nothing. Replacing a different one is a deliberate act and has to say so.
+        const held = this.exposedNameSpaceInstances[namespace]
+        if (held && held !== instance && settings.replace !== true)
+            throw new Error(
+                `exposeClassInstance: ${namespace} is already exposed by ${held.constructor?.name ?? 'another instance'}; pass { replace: true } to displace it deliberately`
+            )
         this.exposedNameSpaceInstances[namespace] = instance
         // The call site wins over the class, since it is the one that knows how this particular
         // instance is being used - the same class may front one device here and a pool there.
