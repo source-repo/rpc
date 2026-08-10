@@ -290,9 +290,10 @@ export class Introspection {
     async describe(): Promise<ServerDescription> {
         const manage = this.handler.manageRpc
         const schema = this.handler.schema
-        const created = new Set(manage.createdInstances.keys())
 
-        const namespaces: DescribedNamespace[] = Object.entries(manage.exposedNameSpaceInstances).map(([name, instance]) => {
+        const namespaces: DescribedNamespace[] = [...manage.namespaces].flatMap(([name, held]) => {
+            const instance = held.instance
+            if (!instance) return []
             const described = schema?.namespaces[name]
             const methodNames = [...(manage.findNameSpaceMethodMap(name)?.keys() ?? [])].sort()
             const methods: DescribedMethod[] = methodNames.map((method) => {
@@ -305,7 +306,7 @@ export class Introspection {
                     ...(semantics ? { semantics } : {}),
                     effect: this.handler.effectOf({ path: name, method }),
                     ...(sets !== undefined ? { sets } : {}),
-                    ...(manage.exposedAuthority[name]?.has(method) ? { requiresAuthority: true } : {})
+                    ...(held.authority?.has(method) ? { requiresAuthority: true } : {})
                 }
             })
 
@@ -332,7 +333,7 @@ export class Introspection {
                       ...(record.label !== undefined ? { label: record.label } : {})
                   }
                 : undefined
-            const execution = manage.exposedExecution[name]
+            const execution = held.execution
             // Structure and a live count, never the snapshot itself: current values go only to
             // authorized subscribers, and describe() must not become the unauthorized way in.
             const component: DescribedComponent | undefined =
@@ -354,7 +355,7 @@ export class Introspection {
                 // the server rather than of the network.
                 ...(execution && execution !== 'parallel' ? { serialised: true } : {}),
                 className: instance.constructor?.name,
-                created: created.has(name),
+                created: held.created === true,
                 emitter: instance instanceof EventEmitter,
                 ...(component ? { component } : {}),
                 ...(topology ? { topology } : {}),
@@ -418,7 +419,7 @@ const fnv1a64 = (text: string) => {
 export const surfaceShape = (handler: RpcServerHandler): string => {
     const manage = handler.manageRpc
     const schema = handler.schema
-    const namespaces = Object.keys(manage.exposedNameSpaceInstances)
+    const namespaces = [...manage.namespaces].filter(([, held]) => held.instance).map(([name]) => name)
         .sort()
         .map((name) => {
             const described = schema?.namespaces[name]
@@ -434,13 +435,13 @@ export const surfaceShape = (handler: RpcServerHandler): string => {
                     ...(semantics ? { semantics } : {}),
                     effect: handler.effectOf({ path: name, method }),
                     ...(sets !== undefined ? { sets } : {}),
-                    ...(manage.exposedAuthority[name]?.has(method) ? { requiresAuthority: true } : {})
+                    ...(manage.at(name)?.authority?.has(method) ? { requiresAuthority: true } : {})
                 }
             })
             return {
                 name,
                 ...(described?.version ? { version: described.version } : {}),
-                className: manage.exposedNameSpaceInstances[name]?.constructor?.name,
+                className: manage.instanceAt(name)?.constructor?.name,
                 methods,
                 events: Object.keys(described?.events ?? {}).sort(),
                 ...(described?.capabilities ? { capabilities: [...described.capabilities].sort() } : {}),

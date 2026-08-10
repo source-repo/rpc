@@ -215,6 +215,36 @@ const chosenCode = (e: unknown): RpcErrorCode => {
     return typeof code === 'string' && CHOSEN_CODES.has(code) ? (code as RpcErrorCode) : 'Exception'
 }
 
+/**
+ * Everything one exposed name carries. See ManageRpc.namespaces for why this is one record.
+ *
+ * Every field but `methods` and `generation` is optional because most names declare none of it: a
+ * class with three `@rpc` methods and no marks has a method map and nothing else, and a record full
+ * of empty maps would cost more than the twelve maps did.
+ */
+export interface ExposedNamespace {
+    instance?: object
+    methods: Map<string, (...args: unknown[]) => void>
+    semantics?: Map<string, RpcMethodSemantics>
+    effect?: Map<string, RpcEffect>
+    sets?: Map<string, string>
+    execution?: RpcExecution
+    conflation?: Set<string>
+    authority?: Set<string>
+    injection?: Set<string>
+    mailbox?: number
+    /** Created through `createRpcInstance` rather than exposed by the host's own code. */
+    created?: boolean
+    /**
+     * Which incarnation of this name this is, bumped when a name is re-exposed over another.
+     *
+     * A name is not a thing; it is a place a thing stands. A client replaying its subscriptions
+     * across a reconnect must not silently reattach to a different object wearing the old name, and
+     * this is what lets it tell.
+     */
+    generation: number
+}
+
 export class RpcServerHandler extends MessageModule<Message<RpcMessage>, RpcMessage, Message<RpcMessage>, RpcMessage> {
     manageRpc = new ManageRpc()
     eventProxies = new Map<string, EventProxy>()
@@ -276,7 +306,7 @@ export class RpcServerHandler extends MessageModule<Message<RpcMessage>, RpcMess
         if (event === componentSnapshotEvent) return
         const key = this.eventSequenceKey(instanceName, event)
         if (this.eventCounters.has(key)) return
-        const instance = this.manageRpc.exposedNameSpaceInstances[instanceName]
+        const instance = this.manageRpc.instanceAt(instanceName)
         if (!(instance instanceof EventEmitter)) return
         const counter = () => this.eventSequences.set(key, (this.eventSequences.get(key) ?? 0) + 1)
         this.eventCounters.set(key, counter)
@@ -293,7 +323,7 @@ export class RpcServerHandler extends MessageModule<Message<RpcMessage>, RpcMess
     /** Every event the schema declares for every exposed emitter. Cheap to repeat; expose calls it. */
     trackDeclaredEvents() {
         for (const [name, described] of Object.entries(this.schema?.namespaces ?? {})) {
-            if (!this.manageRpc.exposedNameSpaceInstances[name]) continue
+            if (!this.manageRpc.instanceAt(name)) continue
             for (const event of Object.keys(described.events ?? {})) this.trackEvent(name, event)
         }
     }
@@ -594,13 +624,13 @@ export class RpcServerHandler extends MessageModule<Message<RpcMessage>, RpcMess
                 this.inFlightRequests.add(payload.id)
             }
             // Deliberately not getNameSpaceMethodMap(): that creates a map on miss, which would let
-            // unknown remote paths grow exposedNameSpaceMethodMaps without bound.
+            // unknown remote paths grow the namespace map without bound.
             const map = this.manageRpc.findNameSpaceMethodMap(payload.path)
             const handler = map?.get(payload.method)
             if (!handler) {
                 const instanceName = payload.path
                 const event = payload.params[0] as string
-                const inst = this.manageRpc.exposedNameSpaceInstances[instanceName]
+                const inst = this.manageRpc.instanceAt(instanceName)
                 // The snapshot event only exists on a component. Refused by name before the emitter
                 // check, because a plain instance is not an emitter either - and the answer "on is
                 // not exposed" would be true and useless, where this one says what to fix.
@@ -861,7 +891,7 @@ export class RpcServerHandler extends MessageModule<Message<RpcMessage>, RpcMess
     private async enqueue(key: string, payload: RpcCallInstanceMethodPayload, source: string, arrived: number, handler: (...args: unknown[]) => unknown) {
         // NUL as the separator because it cannot occur in a namespace or a method name, so the
         // composite cannot be forged by a clever method string. Escaped, never the byte itself.
-        const conflateKey = this.manageRpc.exposedConflation[payload.path]?.has(payload.method) ? `${key}\u0000${payload.method}` : undefined
+        const conflateKey = this.manageRpc.at(payload.path)?.conflation?.has(payload.method) ? `${key}\u0000${payload.method}` : undefined
         let replaced = false
         if (conflateKey) {
             const previous = this.conflatable.get(conflateKey)
@@ -871,7 +901,7 @@ export class RpcServerHandler extends MessageModule<Message<RpcMessage>, RpcMess
             }
         }
         const waiting = this.executionWaiting.get(key) ?? 0
-        const limit = this.manageRpc.exposedMailbox[payload.path] ?? DEFAULT_MAILBOX
+        const limit = this.manageRpc.at(payload.path)?.mailbox ?? DEFAULT_MAILBOX
         if (!replaced && waiting >= limit) {
             await this.sendError(payload.id, source, 'Busy', `${payload.path}.${payload.method} was not queued: ${waiting} calls are already waiting on this instance`)
             return
@@ -969,7 +999,7 @@ export class RpcServerHandler extends MessageModule<Message<RpcMessage>, RpcMess
         }
 
         const params = [...payload.params]
-        if (this.manageRpc.exposedInjection[payload.path]?.has(payload.method)) {
+        if (this.manageRpc.at(payload.path)?.injection?.has(payload.method)) {
             // Padded to the handler's declared arity first, so a caller sending fewer optional
             // arguments cannot shift the handle into an argument's seat - the injected parameter
             // is positional only in source, never on the wire.
@@ -1101,8 +1131,8 @@ export class RpcServerHandler extends MessageModule<Message<RpcMessage>, RpcMess
     }
 
     private authorityRefusal(payload: { path: string; method: string }, source: string): string | undefined {
-        if (!this.manageRpc.exposedAuthority[payload.path]?.has(payload.method)) return undefined
-        const instance = this.manageRpc.exposedNameSpaceInstances[payload.path]
+        if (!this.manageRpc.at(payload.path)?.authority?.has(payload.method)) return undefined
+        const instance = this.manageRpc.instanceAt(payload.path)
         if (!(instance instanceof RpcComponent)) return undefined
         const authority = componentAuthority(instance)
         const holding = authority.holder !== undefined && (authority.expiresAt ?? 0) > Date.now()
@@ -1128,7 +1158,7 @@ export class RpcServerHandler extends MessageModule<Message<RpcMessage>, RpcMess
     }
 
     semanticsOf(payload: { path: string; method: string }): RpcMethodSemantics | undefined {
-        return this.manageRpc.exposedSemantics[payload.path]?.get(payload.method) ?? this.schema?.namespaces[payload.path]?.methods[payload.method]?.semantics
+        return this.manageRpc.at(payload.path)?.semantics?.get(payload.method) ?? this.schema?.namespaces[payload.path]?.methods[payload.method]?.semantics
     }
 
     /**
@@ -1139,7 +1169,7 @@ export class RpcServerHandler extends MessageModule<Message<RpcMessage>, RpcMess
      * asking what a method does should not have to know the defaulting rule to find out.
      */
     effectOf(payload: { path: string; method: string }): RpcEffect {
-        const declared = this.manageRpc.exposedEffect[payload.path]?.get(payload.method) ?? this.schema?.namespaces[payload.path]?.methods[payload.method]?.effect
+        const declared = this.manageRpc.at(payload.path)?.effect?.get(payload.method) ?? this.schema?.namespaces[payload.path]?.methods[payload.method]?.effect
         if (declared) return declared
         return this.semanticsOf(payload) === 'query' ? 'observe' : 'operate'
     }
@@ -1153,7 +1183,7 @@ export class RpcServerHandler extends MessageModule<Message<RpcMessage>, RpcMess
      * declaration exists to replace.
      */
     setsOf(payload: { path: string; method: string }): string | undefined {
-        return this.manageRpc.exposedSets[payload.path]?.get(payload.method) ?? this.schema?.namespaces[payload.path]?.methods[payload.method]?.sets
+        return this.manageRpc.at(payload.path)?.sets?.get(payload.method) ?? this.schema?.namespaces[payload.path]?.methods[payload.method]?.sets
     }
 
     /**
@@ -1173,7 +1203,7 @@ export class RpcServerHandler extends MessageModule<Message<RpcMessage>, RpcMess
 
     /** The queue a call belongs in, or undefined when it may overlap with its siblings. */
     private executionKey(payload: RpcCallInstanceMethodPayload, source: string): string | undefined {
-        const execution = this.manageRpc.exposedExecution[payload.path]
+        const execution = this.manageRpc.at(payload.path)?.execution
         if (!execution) {
             // Nothing declared: graded by what the method says it does. Commands serialise per
             // instance, because command state is what interleaving corrupts and the contract
@@ -1286,26 +1316,48 @@ class DummyLogger implements ILogger {
 }
 
 export class ManageRpc implements IManageRpc {
-    exposedNameSpaceMethodMaps: { [nameSpace: string]: Map<string, (...args: unknown[]) => void> } = {}
-    exposedNameSpaceInstances: { [nameSpace: string]: object } = {}
+    /**
+     * Everything known about one exposed name, in one record.
+     *
+     * This used to be a dozen parallel maps keyed by namespace - instances, method maps, semantics,
+     * effects, sets, execution, conflation, authority, injection, mailbox and the created set - and
+     * the shape was fine as long as nothing was ever removed. It is not fine the moment something
+     * is: a `withdraw` that deletes from twelve places will eventually miss one, and every miss is
+     * silent. A stale mailbox bound, a listener still attached, a counter that never resets under a
+     * name later reused. One record makes retirement a single `delete` rather than a checklist.
+     *
+     * The generation is what makes a reused name honest. Re-exposing a retired name is a new
+     * incarnation, and a client replaying subscriptions across a reconnect must not silently
+     * reattach to a different object wearing the old one.
+     */
+    readonly namespaces = new Map<string, ExposedNamespace>()
+
+    /**
+     * Classes a peer may ask to be instantiated, keyed by class name rather than by namespace -
+     * deliberately not part of the record above, because it answers a different question. A record
+     * says what stands under a name; this says what may be built, and one class can back many names.
+     */
     exposedClasses: { [className: string]: new (...args: unknown[]) => unknown } = {}
-    createdInstances = new Map<string, object>()
-    /** What each exposed namespace's methods declare about repeating them. */
-    exposedSemantics: { [nameSpace: string]: Map<string, RpcMethodSemantics> } = {}
-    /** What each exposed namespace's methods declare about the kind of power they exercise. */
-    exposedEffect: { [nameSpace: string]: Map<string, RpcEffect> } = {}
-    /** Which state path each of a component's methods declares it sets, for the methods that say. */
-    exposedSets: { [nameSpace: string]: Map<string, string> } = {}
-    /** How each exposed namespace lets its calls overlap. Absent means graded by method semantics. */
-    exposedExecution: { [nameSpace: string]: RpcExecution } = {}
-    /** Which of each namespace's methods conflate: a queued call replaced by a newer one. */
-    exposedConflation: { [nameSpace: string]: Set<string> } = {}
-    /** Which of each namespace's methods only the authority holder may call. */
-    exposedAuthority: { [nameSpace: string]: Set<string> } = {}
-    /** Which of each namespace's methods receive an injected RpcInvocation as their final parameter. */
-    exposedInjection: { [nameSpace: string]: Set<string> } = {}
-    /** Each namespace's mailbox bound, where one was declared. Absent means the default. */
-    exposedMailbox: { [nameSpace: string]: number } = {}
+
+    /** The record for a name, created empty on first use. */
+    private record(name: string): ExposedNamespace {
+        let held = this.namespaces.get(name)
+        if (!held) {
+            held = { methods: new Map(), generation: 0 }
+            this.namespaces.set(name, held)
+        }
+        return held
+    }
+
+    /** What is exposed under this name, or nothing. The read every dispatch decision starts from. */
+    at(name: string): ExposedNamespace | undefined {
+        return this.namespaces.get(name)
+    }
+
+    /** The instance exposed under a name, which is what most callers actually want. */
+    instanceAt(name: string): object | undefined {
+        return this.namespaces.get(name)?.instance
+    }
     /**
      * Set by RpcServer when snapshot validation is on: the component contract to check commits
      * against, read at expose time. A closure rather than a copy, because the schema may gain its
@@ -1328,20 +1380,15 @@ export class ManageRpc implements IManageRpc {
     exposeManagement() {
         const map = this.getNameSpaceMethodMap('manageRpc')
         map.set('createRpcInstance', (...args: unknown[]) => this.createRpcInstance(args[0] as string, args[1] as string | undefined, ...args.slice(2)))
-        this.exposedNameSpaceInstances['manageRpc'] = this
+        this.record('manageRpc').instance = this
     }
     getNameSpaceMethodMap(name: string) {
-        let result = this.exposedNameSpaceMethodMaps[name]
-        if (!result) {
-            result = new Map<string, () => void>()
-            this.exposedNameSpaceMethodMaps[name] = result
-        }
-        return result
+        return this.record(name).methods
     }
 
     /** Look up a namespace without creating one. Use this on paths that came off the wire. */
     findNameSpaceMethodMap(name: string) {
-        return this.exposedNameSpaceMethodMaps[name]
+        return this.namespaces.get(name)?.methods
     }
 
     /** Set by RpcServer: refuse to expose a class that marks nothing. */
@@ -1368,20 +1415,20 @@ export class ManageRpc implements IManageRpc {
         //
         // Re-exposing the *same* instance is allowed and re-applies its options, since that displaces
         // nothing. Replacing a different one is a deliberate act and has to say so.
-        const held = this.exposedNameSpaceInstances[namespace]
+        const held = this.namespaces.get(namespace)?.instance
         if (held && held !== instance && settings.replace !== true)
             throw new Error(
                 `exposeClassInstance: ${namespace} is already exposed by ${held.constructor?.name ?? 'another instance'}; pass { replace: true } to displace it deliberately`
             )
-        this.exposedNameSpaceInstances[namespace] = instance
+        this.record(namespace).instance = instance
         // The call site wins over the class, since it is the one that knows how this particular
         // instance is being used - the same class may front one device here and a pool there.
         const execution = settings.execution ?? declared?.execution
-        if (execution) this.exposedExecution[namespace] = execution
+        if (execution) this.record(namespace).execution = execution
         const semantics = declaredSemantics(instance)
-        if (semantics.size) this.exposedSemantics[namespace] = semantics
+        if (semantics.size) this.record(namespace).semantics = semantics
         const effects = declaredEffect(instance)
-        if (effects.size) this.exposedEffect[namespace] = effects
+        if (effects.size) this.record(namespace).effect = effects
         const sets = declaredSets(instance)
         if (sets.size) {
             // A path names something in `state`, so a class with no state has nothing for one to
@@ -1395,7 +1442,7 @@ export class ManageRpc implements IManageRpc {
             for (const [method, path] of sets)
                 if (semantics.get(method) === 'query')
                     throw new Error(`exposeClassInstance: ${namespace}.${method} declares sets '${path}' with 'query' semantics - a method that changes state is not a query`)
-            this.exposedSets[namespace] = sets
+            this.record(namespace).sets = sets
         }
         const conflation = declaredConflation(instance)
         if (conflation.size) {
@@ -1405,7 +1452,7 @@ export class ManageRpc implements IManageRpc {
             for (const method of conflation)
                 if (semantics.get(method) !== 'idempotent-command')
                     throw new Error(`exposeClassInstance: ${namespace}.${method} declares conflate without 'idempotent-command' semantics - only a command that is free to repeat is free to skip`)
-            this.exposedConflation[namespace] = conflation
+            this.record(namespace).conflation = conflation
         }
         const guarded = declaredAuthority(instance)
         if (guarded.size) {
@@ -1414,14 +1461,14 @@ export class ManageRpc implements IManageRpc {
             // gate nothing, which is the worst way for a safety-adjacent declaration to fail.
             if (!(instance instanceof RpcComponent))
                 throw new Error(`exposeClassInstance: ${namespace}.${[...guarded][0]} declares requiresAuthority, but ${instance.constructor.name} is not an RpcComponent - there is no authority to check against`)
-            this.exposedAuthority[namespace] = guarded
+            this.record(namespace).authority = guarded
         }
         const handles = declaredInjection(instance)
-        if (handles.size) this.exposedInjection[namespace] = handles
+        if (handles.size) this.record(namespace).injection = handles
         const mailbox = settings.mailbox ?? declared?.mailbox
         if (mailbox !== undefined) {
             if (!Number.isInteger(mailbox) || mailbox < 1) throw new Error(`exposeClassInstance: ${namespace} declares a mailbox of ${mailbox}; the bound is a positive count of waiting calls`)
-            this.exposedMailbox[namespace] = mailbox
+            this.record(namespace).mailbox = mailbox
         }
         // A component's commits become snapshot events on its own emitter, which the ordinary event
         // proxies then fan out - one mechanism for events and snapshots, not two. The publisher is
@@ -1460,7 +1507,7 @@ export class ManageRpc implements IManageRpc {
     }
 
     exposeObject(obj: object, name: string) {
-        this.exposedNameSpaceInstances[name] = obj
+        this.record(name).instance = obj
         const props = Object.getOwnPropertyNames(obj)
         for (const f of props) {
             if (f !== 'constructor' && typeof (obj as ObjectByString)[f] === 'function') {
@@ -1480,7 +1527,7 @@ export class ManageRpc implements IManageRpc {
         if (con) {
             const id = instanceName ? instanceName : uuidv4()
             const instance = new con(...args)
-            this.createdInstances.set(id, instance as ObjectByString)
+            this.record(id).created = true
             this.exposeClassInstance(instance as object, id)
             result = id
         }

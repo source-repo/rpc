@@ -139,7 +139,7 @@ test('the management surface is not exposed by default', async (t) => {
 
     const error = await t.throwsAsync(async () => manage.createRpcInstance('Dangerous', 'evil'), { instanceOf: RpcError })
     t.is(error?.code, 'ClassNotFound')
-    t.is(server.rpc.manageRpc.createdInstances.size, 0)
+    t.is([...server.rpc.manageRpc.namespaces.values()].filter((held) => held.created).length, 0)
 
     await client.close()
     await server.close()
