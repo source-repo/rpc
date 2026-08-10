@@ -1,6 +1,6 @@
 {
     "name": "@source-repo/relational",
-    "version": "0.1.0",
+    "version": "4.6.0",
     "description": "Source Relational: serve an existing SQL database to a Source RPC network as DataProvider resources, over Kysely",
     "keywords": [
         "rpc",
