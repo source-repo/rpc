@@ -1,5 +1,6 @@
 import { useCallback, useMemo, useState, useSyncExternalStore } from 'react'
 import { typeText, type TypeNode } from './types'
+import { isProcessValueType } from './scope'
 
 /**
  * A value drawn against the interface that was published with it, one row at a time.
@@ -111,14 +112,13 @@ const literalOptions = (type: TypeNode | undefined) =>
         : undefined
 
 /**
- * The duck-typed projection of a process value: an object carrying `value` plus any of `quality`,
- * `unit`, `forced`. The domain classes live in sector contract packages the console has no
- * compile-time sight of, so the shape is recognized rather than imported - from the published type
- * where there is one, and from the value itself where there is not.
+ * The same duck-typed process value, recognized from the *value* where no type was published - a
+ * context value, which is `unknown` by design.
+ *
+ * The type-side half of the rule lives in `scope.ts` and is imported rather than restated here,
+ * because the scope tree, the grid and this renderer coming to different conclusions about what
+ * counts as a leaf is how a value ends up drawn twice, or not at all.
  */
-const isProcessValueType = (type: TypeNode | undefined) =>
-    type?.kind === 'object' && 'value' in type.fields && ('quality' in type.fields || 'unit' in type.fields || 'forced' in type.fields)
-
 const isProcessValue = (value: unknown) => isRecord(value) && 'value' in value && ('quality' in value || 'unit' in value || 'forced' in value)
 
 const plain = (value: unknown) => (typeof value === 'string' ? value : (JSON.stringify(value) ?? 'undefined'))

@@ -87,7 +87,20 @@ export interface RpcProjectionSlice {
     readonly path: readonly string[]
     /** How many entries to skip, in key order. Defaults to none. */
     readonly offset?: number
-    /** How many to take. Absent means all of them from `offset`, which is how a caller says "the rest". */
+    /**
+     * How many to take. Absent means all of them from `offset`, which is how a caller says "the rest".
+     *
+     * **Zero is a count, and deliberately so.** It takes no entries and the slice still reports
+     * `total`, which is how a caller learns the size of a record - and therefore how many pages
+     * there are - for one number rather than for the record. That falls out of the arithmetic, but
+     * it is stated and tested here rather than left as something that merely happens to work, since
+     * a caller relying on it should not have to discover it by trying. `$data`'s `pageSize` answers
+     * the same question the same way, and the two agreeing is the point.
+     *
+     * The record itself is then *absent* from the snapshot rather than present and empty, which is
+     * the more honest of the two: `{}` would say the record is there and holds nothing, where the
+     * slice beside it says it holds three hundred and that none of them were asked for.
+     */
     readonly limit?: number
 }
 

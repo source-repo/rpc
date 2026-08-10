@@ -2,6 +2,36 @@
 
 ## Unreleased
 
+### A component can be asked for a page, and not only watched
+
+A projection narrows what a subscription pushes, and stops where the question becomes *which* fifty of three hundred — a predicate, an order and a page over data the caller does not hold. `$data(type, resource, params)` answers that, served at dispatch level beside `$acquire`, gated by the same `authorize()`, and free over any record in a component's state: the base class serves it from the contract and the author writes nothing.
+
+Its shape is react-admin's **DataProvider** rather than a query grammar of ours, which is the point — it is the interface several hundred backends already implement, so `getList` today makes `getOne`, `getMany` and the relational verbs the same shape pointed at a second resource rather than features still to be designed. A component with a store of its own implements the same verbs against it.
+
+**Pull rather than push, and that is the decision the rest follows from.** A projection is re-applied per subscriber on every publish, so a predicate living there would make every commit a query on a peer that may be a small computer running a process — and a filtered page is *unstable* under push, because matches depend on values and values change, so one tag going bad enters the match and renumbers every row beneath it with nothing on screen to say so. A call is answered once, when somebody asks, with a deadline on it.
+
+**A filter matching nothing transfers nothing**, which is the property no amount of client-side filtering can have: discovering that nothing matched is exactly what it must receive everything to find out. Filter, then order, then cut the page — a filter applied after paging would be a filter over fifty rows pretending to be one over three hundred.
+
+The filter is a closed grammar and never an expression: `{ field, op, operand }` with `op` one of `startsWith`, `contains`, `eq`, `ne`, `lt`, `lte`, `gt`, `gte`, combined with `all` and `any`, bounded in depth and count. Nothing that runs crosses the wire, deliberately — this is evaluated on the peer holding the plant, and again on every request. `total` is the count of matches, since that is what a pager reads; `pageSize: 0` asks for none of them and answers just that number. Pages are zero-based. A page past the end answers empty with the true total, because the set is data and a page valid when the operator clicked may be past the end when the request lands; a negative or fractional bound, or a page with no `pageSize` to measure it in, is still refused.
+
+`RpcProjectionSlice` keeps its job as the **live window** on a record — it pushes, where this answers — and is now the primitive for a program that wants to watch a range rather than browse one.
+
+### The console draws scope and values as two panes
+
+One tree of everything is right for an oven and wrong for anything carrying hundreds of values, which plants have. The component panel is now a scope tree on the left and a flat grid on the right, and selecting a node narrows the grid to everything beneath it recursively, so the tree filters rather than navigates.
+
+**A record is a value leaf and never a tree node**: `tags: { [tag: string]: Reading }` is not in the tree at all, its entries are rows. That is principled rather than a size threshold — an object's members are named by the contract and a record's keys are data — and it is what makes the scope tree exactly the contract, drawn before a single value arrives and costing nothing on the wire however much data sits behind it.
+
+The same line decides how the grid is fed. Typed leaves are **subscribed** to, since the contract bounds how many there are, and this is the first thing in the repository to ask for a projection — the open end `4.5.0` left. Collection rows are **asked for** a page at a time. A panel pulling fifty rows while its subscription pushed all three hundred would look exactly like the feature working, so it never takes the whole snapshot.
+
+One filter box serves the pane, and both halves answer it: the subscribed fields are filtered where they are already held, and the collections carry the same condition to the peer, so a search matching nothing there costs a sentence rather than a record. A bare word matches the path, `field:word` narrows to a field, `&` and `|` combine — so `setp` finds a setpoint two levels down and `quality:bad` is answerable at all. Both ends call the library's own matcher rather than each having a version of it, because a search meaning two different things either side of one pane would be worse than no search at all. Pages are polled at a period the operator sets, down to manual, because a subscription's rate belongs to the component and on a 1200 bit/s link a 50-row page is already seventeen seconds. The next fetch is scheduled when the previous settles rather than on a timer, nothing is asked while the tab is hidden, the last answer stays readable while a fetch is in flight, and a page refetches at once when a call settles.
+
+### A projection slice taking nothing is a count
+
+`{ path: ['state','tags'], limit: 0 }` takes no entries and still reports `total`, so a caller learns how many pages a record has for one number rather than for the record. That always fell out of the arithmetic; it is now stated and tested rather than left as something that happens to work, because a caller relying on it should not have to discover it by trying. `$data`'s `pageSize: 0` answers the same question the same way, and the two agreeing is the point.
+
+The record is absent from such a snapshot rather than present and empty, which is the more honest of the two: `{}` would say it holds nothing, where the slice beside it says it holds three hundred and that none were asked for.
+
 ### Calls issued together travel in one frame
 
 A `POST` carries its type, a uuid, the namespace, the method name and the params, and MQTT adds a request topic, a response topic and correlation data beneath it — so moving one `float64` spends far more on saying where it is going than on the number, and reading three hundred tags one at a time is tens of kilobytes of envelope for a couple of kilobytes of values. Calls issued in one microtask now go as a single `BATCH` frame.

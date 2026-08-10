@@ -8,6 +8,7 @@ import {
     type RpcComponentSnapshot,
     type RpcProjectionEntry
 } from './Component.js'
+import type { RpcGetListParams, RpcGetListResult } from './DataProvider.js'
 import type { RpcCallOptions, RpcClientHandler, WithOptions } from './RpcClientHandler.js'
 
 /**
@@ -76,6 +77,15 @@ export type RpcComponentProxy<T extends RpcComponentLike> = T & {
     $acquire(ttlMs?: number, options?: { take?: boolean }): Promise<RpcComponentAuthority>
     /** Idempotent: releasing what this peer does not hold answers politely rather than erring. */
     $release(): Promise<'ok' | 'ok - was not holding'>
+    /**
+     * Ask for a page of a collection this component holds, instead of subscribing to all of it.
+     *
+     * The DataProvider half of the component surface, and the reason it is a call: a record's keys
+     * are data, so a caller cannot name page two without first receiving everything - and a
+     * predicate on the subscription would run on every publish rather than when somebody asks. This
+     * runs once, answers once, and leaves nothing behind on the server. See `DataProvider.ts`.
+     */
+    $data(method: 'getList', resource: readonly string[], params?: RpcGetListParams): Promise<RpcGetListResult>
     readonly [rpcComponent]: RpcComponentStore<ComponentProps<T>, ComponentState<T>>
 }
 

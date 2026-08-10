@@ -33,8 +33,9 @@
         "build": "vite build --config web/vite.config.ts && tsc -p tsconfig.json",
         "clean": "rimraf dist",
         "postbuild": "node -e \"require('fs').chmodSync('dist/index.js', 0o755)\"",
-        "typecheck": "tsc --noEmit -p tsconfig.json",
-        "test": "npm run clean && npm run build && ava",
+        "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p web/tsconfig.json",
+        "test": "npm run test:web && npm run clean && npm run build && ava",
+        "test:web": "vitest run --config web/vitest.config.ts",
         "prepack": "npm run clean && npm run build",
         "contract": "npm run contract:console && npm run contract:bus && npm run contract:chat && npm run contract:scripting && npm run contract:rpc",
         "contract:console": "node dist/index.js extract --project tsconfig.contract.json --out src/console.types.json",
@@ -65,7 +66,8 @@
         "react-dom": "^19.0.0",
         "rimraf": "^6.0.1",
         "typescript": "^7.0.2",
-        "vite": "^7.3.6"
+        "vite": "^7.3.6",
+        "vitest": "^4.1.10"
     },
     "repository": {
         "type": "git",

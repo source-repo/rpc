@@ -1339,6 +1339,91 @@ textarea.control {
     font-size: 12px;
 }
 
+/* The left pane. Narrow and fixed, because it holds the contract's containers and nothing else -
+   it does not grow with the data, which is the whole property it is there to have. */
+.scope-pane {
+    min-width: 150px;
+    max-width: 240px;
+    flex: 0 0 auto;
+    border-right: 1px solid rgba(38, 46, 58, 0.9);
+    padding-right: 12px;
+}
+
+.scope-node {
+    padding: 0;
+}
+
+.scope-name {
+    display: block;
+    width: 100%;
+    text-align: left;
+    background: none;
+    border: 0;
+    padding: 2px 4px;
+    color: var(--muted);
+    font-size: 12px;
+    cursor: pointer;
+    border-radius: 3px;
+}
+
+.scope-name:hover {
+    color: var(--fg);
+    background: rgba(38, 46, 58, 0.5);
+}
+
+.scope-name.on {
+    color: var(--fg);
+    background: rgba(38, 46, 58, 0.9);
+}
+
+.value-grid {
+    min-width: 0;
+}
+
+/* One box for the pane rather than one per collection: the subscribed fields and the paged rows
+   are one list to whoever is reading the screen, however differently they are fetched. */
+.grid-head {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding-bottom: 4px;
+}
+
+.collection {
+    margin-top: 10px;
+}
+
+.collection-head {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    padding: 2px 0;
+    border-bottom: 1px solid rgba(38, 46, 58, 0.9);
+}
+
+/* Wide enough for `quality:bad`, which is the query the box is really there for. */
+.filter-box {
+    width: 11em;
+    font-size: 12px;
+    padding: 1px 5px;
+}
+
+.pager {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-left: auto;
+}
+
+.period {
+    background: none;
+    border: 1px solid rgba(38, 46, 58, 0.9);
+    border-radius: 3px;
+    color: var(--muted);
+    font-size: 11px;
+    padding: 1px 4px;
+}
+
 .value-row .toggle.edit {
     margin-left: auto;
     opacity: 0;
