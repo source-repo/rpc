@@ -34,7 +34,7 @@ import type { TypeNode } from './Schema.js'
 /** What a caller may ask for. The unserved ones are named so a refusal can say what is. */
 export type RpcDataMethod = 'getList' | 'getOne' | 'getMany' | 'getManyReference'
 
-const served: readonly RpcDataMethod[] = ['getList', 'getMany']
+const served: readonly RpcDataMethod[] = ['getList', 'getMany', 'getManyReference']
 
 /**
  * Rows by id, which is how a foreign key becomes a value.
@@ -118,6 +118,23 @@ export interface RpcGetListParams {
     readonly filter?: RpcFilter
     /** Applied to the filtered set, before paging - an order over the page alone would mean nothing. */
     readonly sort?: RpcSort
+}
+
+/**
+ * The rows of one resource that point at one row of another: the orders of this customer, the
+ * readings of this tag.
+ *
+ * A list with one condition already applied, which is exactly how it is served - `target` and `id`
+ * become an `eq` on the filter, and everything else about paging, ordering and filtering is the
+ * list's. That is the claim the whole DataProvider shape was taken for, arriving as almost no code:
+ * one-to-many is not a new mechanism, it is `getList` pointed at a second resource with the join
+ * already in hand.
+ */
+export interface RpcGetManyReferenceParams extends RpcGetListParams {
+    /** The field of *this* resource that names the other row - a foreign key, by whatever name. */
+    readonly target: string
+    /** What that field must equal. */
+    readonly id: string | number
 }
 
 export interface RpcGetListResult {
@@ -248,6 +265,11 @@ export const readDataRequest = (method: unknown, resource: unknown, params: unkn
             return new Error('$data: getMany takes a non-empty array of string ids')
         if (given.ids.length > MAX_GET_MANY_IDS) return new Error(`$data: getMany is bounded at ${MAX_GET_MANY_IDS} ids; ask for a page instead`)
         return { method: method as RpcDataMethod, resource: resource as RpcResource, params: given }
+    }
+    if (method === 'getManyReference') {
+        const reference = given as unknown as RpcGetManyReferenceParams
+        if (typeof reference.target !== 'string' || !reference.target) return new Error('$data: getManyReference needs a target field to match on')
+        if (typeof reference.id !== 'string' && typeof reference.id !== 'number') return new Error('$data: getManyReference needs an id, as a string or a number')
     }
     const pagination = given.pagination
     if (pagination !== undefined) {
@@ -439,6 +461,19 @@ const compare = (a: unknown, b: unknown): number => {
  * over sorted keys is a contiguous range rather than a scan, which is what makes this affordable on
  * something larger than a record held in memory.
  */
+/**
+ * The rows of this resource that point at one row of another.
+ *
+ * Served as `getList` with the reference `and`ed onto whatever filter the caller sent, rather than
+ * as a second implementation: paging, ordering, the count of matches and the treatment of a page
+ * past the end are then identical by construction rather than by having been written twice the same
+ * way. `total` is the count of *referencing* rows, which is what a pager under a record needs.
+ */
+export const getManyReference = (component: object, resource: RpcResource, params: RpcGetManyReferenceParams): RpcGetListResult => {
+    const reference: RpcFilter = { field: params.target, op: 'eq', operand: params.id }
+    return getList(component, resource, { ...params, filter: params.filter ? { all: [reference, params.filter] } : reference })
+}
+
 /**
  * The rows a caller already knows the ids of.
  *

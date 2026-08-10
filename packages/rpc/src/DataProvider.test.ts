@@ -1,6 +1,6 @@
 import test from 'ava'
 import { randomUUID } from 'crypto'
-import { rpc, rpcNamespace, rpcComponent, RpcClient, RpcComponent, RpcServer, type Introspection, type RpcComponentProxy, type RpcDataMethod, type RpcDataResources, type RpcGetManyParams, type RpcGetListParams } from './index.js'
+import { pageEntries, rpc, rpcNamespace, rpcComponent, RpcClient, RpcComponent, RpcServer, type Introspection, type RpcComponentProxy, type RpcDataMethod, type RpcDataResources, type RpcGetManyParams, type RpcGetManyReferenceParams, type RpcGetListParams } from './index.js'
 
 /**
  * Paging a collection by asking for it, which is the half a projection cannot do.
@@ -170,8 +170,9 @@ test('a resource that is not a collection is an empty list, not an error', async
     }
 
     // A verb that is not served says so, naming what is, rather than answering something plausible.
-    const later = await t.throwsAsync(field.$data('getManyReference' as 'getList', ['state', 'tags']))
+    const later = await t.throwsAsync(field.$data('getOne' as 'getList', ['state', 'tags']))
     t.regex(String(later?.message), /is not served here/)
+    t.regex(String(later?.message), /getList, getMany, getManyReference/, 'and the refusal is the list of what to reach for')
 
     await client.close()
     await server.close()
@@ -299,6 +300,13 @@ test('an order is over the matched set, and a malformed one is refused', async (
 @rpcNamespace('store')
 class Store extends RpcComponent<{ label: string }, { connected: boolean }> implements RpcDataResources {
     private readonly customers = { c1: { name: 'Acme Ltd' }, c2: { name: 'Borg AB' }, c3: { name: 'Cyberdyne' } }
+    /** The many side, each naming its customer - which is what getManyReference is asked about. */
+    private readonly orders = {
+        o1: { customerId: 'c1', total: 120 },
+        o2: { customerId: 'c1', total: 40 },
+        o3: { customerId: 'c2', total: 90 },
+        o4: { customerId: 'c1', total: 250 }
+    }
 
     constructor() {
         super({ label: 's' }, { connected: true })
@@ -312,6 +320,13 @@ class Store extends RpcComponent<{ label: string }, { connected: boolean }> impl
     }
 
     dataRequest(method: RpcDataMethod, resource: readonly string[], params: RpcGetListParams | RpcGetManyParams) {
+        // The many side, answered with the library's own paging so it cannot drift from the one
+        // side beside it - the reference is a condition, and everything after it is a list.
+        if (resource[0] === 'orders') {
+            const reference = params as RpcGetManyReferenceParams
+            const entries = Object.entries(this.orders).filter(([, order]) => order.customerId === reference.id)
+            return { ...pageEntries(entries, reference), epoch: 'store', revision: 1 }
+        }
         const row = (id: string) => this.customers[id as keyof typeof this.customers]
         if (method === 'getMany') {
             const ids = (params as RpcGetManyParams).ids.filter(row)
@@ -357,6 +372,14 @@ test('a component may serve collections its contract cannot describe', async (t)
     const named = await proxy.$data('getMany', ['customers'], { ids: ['c3', 'c1'] })
     t.deepEqual([...named.ids], ['c3', 'c1'])
     t.deepEqual(named.data[0], { name: 'Cyberdyne' })
+
+    // The relational shape across two resources, which is the whole reason for taking this
+    // interface rather than inventing a query one: the orders belonging to this customer, paged
+    // and counted like any other list, with no new mechanism at all.
+    const theirs = await proxy.$data('getManyReference', ['orders'], { target: 'customerId', id: 'c1' })
+    t.is(theirs.total, 3)
+    t.deepEqual([...theirs.ids], ['o1', 'o2', 'o4'])
+    t.deepEqual(theirs.data[0], { customerId: 'c1', total: 120 })
 
     // A path the component did not declare still falls through to its state, which is what keeps an
     // ordinary component working without implementing anything - and what stops a component that
@@ -425,6 +448,38 @@ test('the page is stamped with where it came from, so a restart is visible', asy
     t.is(after.epoch, observed[rpcComponent].getSnapshot().epoch)
 
     await observed[rpcComponent].close()
+    await client.close()
+    await server.close()
+})
+
+test('getManyReference is getList with the join already in hand', async (t) => {
+    const server = new RpcServer({ name: peer('field3931'), transports: [{ port: 3931, host: '127.0.0.1' }] })
+    server.exposeClassInstance(new Field())
+    await server.ready()
+
+    const client = new RpcClient('http://localhost:3931', { name: peer('asker3931'), defaultTarget: peer('field3931') })
+    const field = await client.proxy<FieldProxy>('field')
+
+    // Every row of this resource whose `quality` names that one. Structurally a foreign key, and
+    // served as `getList` with an `eq` on the filter rather than as a second implementation - so
+    // paging, ordering and the count of matches are identical by construction.
+    const bad = await field.$data('getManyReference', ['state', 'tags'], { target: 'quality', id: 'bad', pagination: { page: 0, pageSize: 4 } })
+    t.is(bad.total, 30, 'the count of referencing rows, which is what a pager under a record needs')
+    t.deepEqual([...bad.ids], ['tag.000', 'tag.010', 'tag.020', 'tag.030'])
+
+    // A caller's own filter narrows further rather than replacing the reference - the two are and-ed,
+    // so a search inside a one-to-many cannot accidentally widen it back to the whole resource.
+    const narrowed = await field.$data('getManyReference', ['state', 'tags'], { target: 'quality', id: 'bad', filter: { field: 'value', op: 'gte', operand: 200 } })
+    t.is(narrowed.total, 10)
+    t.true(narrowed.ids.every((id) => id >= 'tag.200'))
+
+    // And it orders like any other list, over the referencing set rather than over a page of it.
+    const highest = await field.$data('getManyReference', ['state', 'tags'], { target: 'quality', id: 'bad', sort: { field: 'value', order: 'DESC' }, pagination: { page: 0, pageSize: 1 } })
+    t.deepEqual([...highest.ids], ['tag.290'])
+
+    const noTarget = await t.throwsAsync(field.$data('getManyReference', ['state', 'tags'], { target: '', id: 'bad' }))
+    t.regex(String(noTarget?.message), /needs a target field/)
+
     await client.close()
     await server.close()
 })

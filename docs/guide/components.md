@@ -181,7 +181,19 @@ Plural from the start, and that is the whole point: a page of fifty rows each na
 
 Rows come back **in the order asked**, so a caller pairing them to the fields that named them does not have to sort them itself. An id that reaches nothing is **absent** rather than filled with a null, because "this row is gone" and "this row has no value" are different facts and one of them means a reference is dangling. There is no `total`: nothing here is a page, so nothing here has a count of pages. The request is bounded at 1000 ids, since it arrives from the network and ten thousand in one frame is a caller that meant to page.
 
-Writes are ordinary declared methods that happen to have standard names, so `authorize()`, the owner fence and idempotency all apply per call and none of it is special-cased. `getOne` and `getManyReference` — one-to-many under a record — are the same shape pointed at a second resource, and are not served yet.
+### One-to-many
+
+```typescript
+const theirs = await store.$data('getManyReference', ['orders'], { target: 'customerId', id: 'c1' })
+```
+
+The rows of one resource that point at one row of another: the orders of this customer, the readings of this tag. It is served as `getList` with the reference **and-ed onto** whatever filter the caller sent, rather than as a second implementation — so paging, ordering, the count of matches and the treatment of a page past the end are identical by construction rather than by having been written twice the same way. `total` is the count of *referencing* rows, which is what a pager under a record needs.
+
+A caller's own filter narrows further rather than replacing the reference, so a search inside a one-to-many cannot accidentally widen back to the whole resource.
+
+That is the claim the DataProvider shape was taken for, arriving as almost no code: one-to-many is not a new mechanism, it is a list with the join already in hand.
+
+Writes are ordinary declared methods that happen to have standard names, so `authorize()`, the owner fence and idempotency all apply per call and none of it is special-cased. `getOne` is not served — a caller that wants one row asks `getMany` for one id, and a verb that exists only to be a worse version of another is not worth the wire.
 
 ## Publishing bounds
 

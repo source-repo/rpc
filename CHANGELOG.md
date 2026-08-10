@@ -26,6 +26,14 @@ A component serving its own resources answers through one `dataRequest(method, r
 
 The console's grid can now be ordered by the key or by any field the row type declares, ascending or descending. Drawn from the type rather than from a row, so the choices are the same on an empty collection as on a full one — and the order is the peer's, over the whole matched set, because an order applied to the fifty rows already on screen would disagree with itself the moment a page was turned.
 
+### `getManyReference`, which is one-to-many and almost no code
+
+The rows of one resource that point at one row of another: the orders of this customer, the readings of this tag. Served as `getList` with the reference and-ed onto whatever filter the caller sent, rather than as a second implementation — so paging, ordering, the count of matches and the treatment of a page past the end are identical by construction rather than by having been written twice the same way. `total` is the count of referencing rows, which is what a pager under a record needs, and a caller's own filter narrows further rather than replacing the reference.
+
+That is the claim the DataProvider shape was taken for, and it costs four lines: one-to-many is not a new mechanism, it is a list with the join already in hand.
+
+`getOne` stays unserved and probably always will: a caller wanting one row asks `getMany` for one id, and a verb existing only to be a worse version of another is not worth the wire.
+
 ### The queue serves its dead letters, and finds two things out
 
 `@source-repo/queue` is the first component to implement `dataResources()`, so the DataProvider stops being proved only against a record held in memory. Its dead-letter backlog is now a resource a viewer can page, filter and order — the state's counts say how many failed, and this says which.

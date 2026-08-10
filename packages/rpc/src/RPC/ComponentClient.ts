@@ -8,7 +8,7 @@ import {
     type RpcComponentSnapshot,
     type RpcProjectionEntry
 } from './Component.js'
-import type { RpcGetListParams, RpcGetListResult, RpcGetManyParams, RpcGetManyResult } from './DataProvider.js'
+import type { RpcGetListParams, RpcGetListResult, RpcGetManyParams, RpcGetManyReferenceParams, RpcGetManyResult } from './DataProvider.js'
 import type { RpcCallOptions, RpcClientHandler, WithOptions } from './RpcClientHandler.js'
 
 /**
@@ -88,6 +88,8 @@ export type RpcComponentProxy<T extends RpcComponentLike> = T & {
     $data(method: 'getList', resource: readonly string[], params?: RpcGetListParams): Promise<RpcGetListResult>
     /** Rows by id, for a caller that already knows them - a page of foreign keys, in one call. */
     $data(method: 'getMany', resource: readonly string[], params: RpcGetManyParams): Promise<RpcGetManyResult>
+    /** The rows of this resource pointing at one row of another: the orders of this customer. */
+    $data(method: 'getManyReference', resource: readonly string[], params: RpcGetManyReferenceParams): Promise<RpcGetListResult>
     readonly [rpcComponent]: RpcComponentStore<ComponentProps<T>, ComponentState<T>>
 }
 
