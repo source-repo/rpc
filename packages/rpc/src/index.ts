@@ -31,6 +31,7 @@ export * from './RPC/DataProvider.js'
 // Types only so far: the shapes a deferred reply needs, which `extract` already recognises by
 // name so a contract can describe one. See RPC/Ticket.ts.
 export * from './RPC/Ticket.js'
+export * from './RPC/Elevation.js'
 export * from './RPC/Topology.js'
 export * from './RPC/Context.js'
 export * from './RPC/Paths.js'

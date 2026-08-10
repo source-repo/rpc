@@ -85,6 +85,12 @@ export class DockerCreate extends RpcComponent<{ socketPath: string; namePrefix:
         this.prefix = prefix
     }
 
+    /** Composing this in is what says so - see DockerControl.elevation for why it is not declared. */
+    elevation() {
+        if (!this.images.length) return undefined
+        return { capability: 'docker.create', reason: `may create containers from ${this.images.map((rule) => rule.repository).join(', ')}` }
+    }
+
     /** What this node is permitted to run, so a caller can find out before being refused. */
     @rpc({ semantics: 'query' })
     async allowed(): Promise<string[]> {

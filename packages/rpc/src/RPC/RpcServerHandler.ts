@@ -14,6 +14,7 @@ import {
 } from './Messages.js'
 export * from './Messages.js'
 import { v4 as uuidv4 } from 'uuid'
+import type { RpcElevation } from './Elevation.js'
 import { IManageRpc, namespaceRetiredEvent } from './Rpc.js'
 import { RpcAuthorizer, RpcCallContext, RpcIdentity } from './Auth.js'
 import { isFailedOutcome, type RpcIdempotencyStore, type RpcInvocation, type StoredRpcOutcome } from './Idempotency.js'
@@ -268,6 +269,13 @@ export interface ExposedNamespace {
 export class RpcServerHandler extends MessageModule<Message<RpcMessage>, RpcMessage, Message<RpcMessage>, RpcMessage> {
     manageRpc = new ManageRpc()
     eventProxies = new Map<string, EventProxy>()
+    /**
+     * Elevations the host declared itself, beside those its exposed instances announce.
+     *
+     * For the capability that is not an object - a flag, a mounted socket, a debug endpoint - which
+     * would otherwise be the one thing nobody could see from outside.
+     */
+    readonly declaredElevations: RpcElevation[] = []
     /**
      * Work this peer owes an answer for, by the request id that is also the ticket id.
      *

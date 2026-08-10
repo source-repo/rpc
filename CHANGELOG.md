@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+### A peer announces what it can currently do that is dangerous
+
+The half of a development-access design that comes first, because it is the half that tells you whether the rest is working. Today "is anything on this network unlocked right now" has no answer at all, and a gate whose state nobody can see is a gate nobody can audit.
+
+`describe()` now carries `elevated`, and the console draws it above everything else on the peer — a banner rather than a badge among badges, because an answer somebody has to go looking for is one nobody finds.
+
+**It announces and nothing more.** `authorize()`, the grants document and each capability's own allow-list decide what may happen, and would decide the same with the field removed.
+
+**Asked of the instance rather than remembered by the host**, the way `dataResources()` is: a component that *is* an elevation implements `elevation()`, so composing it into a host is what makes that host announce it. `@source-repo/docker`'s control and create tiers do, so a host that can start containers says so without anybody remembering to say it — which matters, because forgetting is the failure this catches. `server.elevate()` covers what is not an object: a mounted socket, a debug endpoint, a flag.
+
+**The most important field is `until`, and the most important case is its absence.** An elevation nothing will close is the taped-over key — opened for a reason that passed, with nobody coming back. A viewer draws that as worse than a bounded one, and a given `until` is enforced as well as announced so the announcement cannot outlive the thing. A lapsed elevation is not announced: posture is what is true now, and history belongs in the audit trail.
+
+
 ### `@source-repo/docker` — what is running on this host, and nothing that could change it
 
 A plant box with a handful of containers is far commoner than a cluster, and the question asked about one is nearly always the same: what is running, what stopped, and when. This answers that over the network the rest of the site already uses.

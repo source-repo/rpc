@@ -424,6 +424,25 @@ export const App = () => {
                                 {description.validating ? 'arguments checked' : 'arguments not checked'}
                             </span>
                         </header>
+                        {/* Above everything, and impossible to scroll past. A peer that can do
+                            something dangerous says so continuously, so the question "is anything
+                            unlocked on this network right now" has an answer without asking. An
+                            entry with no `until` is drawn as the worse case, because nothing will
+                            close it and somebody has to remember to - which is the failure the
+                            whole idea exists to catch. */}
+                        {description.elevated?.length ? (
+                            <div className="elevated" role="alert">
+                                <strong>elevated</strong>
+                                {description.elevated.map((one) => (
+                                    <span key={one.capability} className={`elevation${one.until === undefined ? ' unbounded' : ''}`}>
+                                        <span className="mono">{one.capability}</span>
+                                        {one.reason ? ` — ${one.reason}` : ''}
+                                        {one.until === undefined ? ' · until someone closes it' : ` · until ${new Date(one.until).toLocaleTimeString()}`}
+                                        {one.grantedBy ? ` · by ${one.grantedBy}` : ''}
+                                    </span>
+                                ))}
+                            </div>
+                        ) : null}
                         <StructurePanel description={description} peers={peers} onSelectPeer={(other) => void select(other)} />
                         {description.namespaces.map((namespace) => (
                             <section key={namespace.name} className="namespace">

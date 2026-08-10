@@ -119,6 +119,18 @@ export class DockerControl extends RpcComponent<{ socketPath: string; manages: n
     }
 
     /**
+     * Composing this in is what makes a host able to change containers, so composing it in is what
+     * says so. Nothing to remember, which matters because forgetting is the failure this catches.
+     */
+    elevation() {
+        if (!this.manage.length) return undefined
+        return {
+            capability: 'docker.control',
+            reason: `may start, stop and remove containers matching ${this.manage.map((rule) => rule.namePrefix ?? `label ${rule.label?.name}`).join(', ')}`
+        }
+    }
+
+    /**
      * The containers this node may act on, and only those.
      *
      * The same list the read-only node serves, narrowed - so a console pointed at this namespace

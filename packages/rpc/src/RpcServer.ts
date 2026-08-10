@@ -1,5 +1,6 @@
 import { EventEmitter } from 'events'
 import { declaredNamespace } from './RPC/Expose.js'
+import type { RpcElevation } from './RPC/Elevation.js'
 import { GenericModule, PeerRegistry, Transport, TransportEvent } from './RPC/Core.js'
 import { ComponentChannels, componentFacade, type RpcComponentLike, type RpcComponentOptions, type RpcComponentProxy } from './RPC/ComponentClient.js'
 import { HostTopology, type HostTopologyOptions, type RpcRef } from './RPC/Topology.js'
@@ -576,6 +577,34 @@ export class RpcServerBase extends EventEmitter implements IManageRpc {
             }
         }
     }
+    /**
+     * Say that this host can currently do something dangerous, for a capability that is not an
+     * object - a mounted socket, a debug endpoint, a flag somebody passed.
+     *
+     * An instance that *is* an elevation announces itself; this is for the rest, which would
+     * otherwise be the one kind nobody could see from outside. It announces and nothing more:
+     * `authorize()` and the capability's own allow-list decide, and would decide the same without
+     * this call. What it buys is that a console watching a plant can say so without asking.
+     *
+     * **Give it an `until`.** An elevation nothing will close is one somebody has to remember to
+     * close, and the reason this exists at all is that people do not. Where one is given it is
+     * enforced here as well as announced, so the announcement cannot outlive the thing.
+     */
+    elevate(elevation: RpcElevation): { lower(): void } {
+        const held = { since: Date.now(), ...elevation }
+        this.rpc.declaredElevations.push(held)
+        const lower = () => {
+            const at = this.rpc.declaredElevations.indexOf(held)
+            if (at >= 0) this.rpc.declaredElevations.splice(at, 1)
+        }
+        if (held.until !== undefined) {
+            const timer = setTimeout(lower, Math.max(0, held.until - Date.now()))
+            timer.unref?.()
+        }
+        this.announceShape()
+        return { lower }
+    }
+
     exposeClass<T>(constructor: new (...args: unknown[]) => T, aliasName?: string): void {
         this.rpc.manageRpc.exposeClass(constructor, aliasName)
         this.announceShape()

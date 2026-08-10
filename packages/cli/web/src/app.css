@@ -1607,3 +1607,32 @@ textarea.control {
     margin: 2px 0 0;
     font-size: 12px;
 }
+
+/* A peer that can do something dangerous says so above everything else. Not a log line and not a
+   badge among badges: the question this answers is "is anything unlocked right now", and an answer
+   somebody has to go looking for is one nobody finds. */
+.elevated {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 10px;
+    margin: 8px 0;
+    padding: 8px 12px;
+    border: 1px solid var(--warn);
+    border-left-width: 4px;
+    border-radius: 4px;
+    background: rgba(240, 180, 41, 0.08);
+    font-size: 13px;
+}
+
+.elevated strong {
+    color: var(--warn);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    font-size: 11px;
+}
+
+/* Nothing will close this one. Drawn louder than a bounded elevation on purpose. */
+.elevation.unbounded {
+    color: var(--bad);
+}

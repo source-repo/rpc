@@ -1,7 +1,7 @@
 import test from 'ava'
 import { randomUUID } from 'crypto'
 import { EventEmitter } from 'events'
-import { rpc, RpcClient, RpcServer, TransportEvent } from './index.js'
+import { rpc, rpcNamespace, RpcClient, RpcServer, TransportEvent, type Introspection } from './index.js'
 
 /**
  * Two things a peer must be able to rely on about its own exposure and its own link.
@@ -187,5 +187,63 @@ test('an exposure bound to a peer outlives a flap and not a departure', async (t
     await new Promise((resolve) => setTimeout(resolve, 250))
     t.falsy(server.rpc.manageRpc.at('bound')?.instance, 'and one that does not, does not')
 
+    await server.close()
+})
+
+test('a peer that can do something dangerous says so, and says it loudest when nothing will stop it', async (t) => {
+    const server = new RpcServer({ name: peer('elev3944'), transports: [{ port: 3944, host: '127.0.0.1' }], exposeIntrospection: true })
+
+    /** An instance that *is* an elevation: composing it in is what makes the host able to do it. */
+    @rpcNamespace('risky')
+    class Risky extends EventEmitter {
+        elevation() {
+            return { capability: 'risky.write', reason: 'may write to the thing' }
+        }
+        @rpc({ semantics: 'query' })
+        async ping() {
+            return 'ok'
+        }
+    }
+
+    server.exposeClassInstance(new Risky())
+    await server.ready()
+
+    const client = new RpcClient('http://localhost:3944', { name: peer('asker3944'), defaultTarget: peer('elev3944') })
+    const described = await (await client.proxy<Introspection>('msgrpc')).describe()
+
+    // Gathered from what is exposed rather than from what somebody remembered to declare, which is
+    // the point: forgetting is the failure this exists to catch.
+    t.is(described.elevated?.length, 1)
+    t.is(described.elevated?.[0].capability, 'risky.write')
+    t.is(described.elevated?.[0].reason, 'may write to the thing')
+    t.is(described.elevated?.[0].until, undefined, 'and nothing will close it, which a viewer draws as the worse case')
+
+    // A host-declared one, for a capability that is not an object - a mounted socket, a flag.
+    const held = server.elevate({ capability: 'debug.endpoint', reason: 'diagnosing', until: Date.now() + 60_000, grantedBy: 'anders' })
+    const withBoth = await (await client.proxy<Introspection>('msgrpc')).describe()
+    t.is(withBoth.elevated?.length, 2)
+    t.true((withBoth.elevated?.find((one) => one.capability === 'debug.endpoint')?.until ?? 0) > Date.now())
+    t.truthy(withBoth.elevated?.find((one) => one.capability === 'debug.endpoint')?.since, 'stamped when it opened, so how long it has been open is answerable')
+
+    held.lower()
+    const lowered = await (await client.proxy<Introspection>('msgrpc')).describe()
+    t.is(lowered.elevated?.length, 1, 'and lowering it stops the announcement')
+
+    await client.close()
+    await server.close()
+})
+
+test('an elevation that has lapsed is not announced, because posture is what is true now', async (t) => {
+    const server = new RpcServer({ name: peer('elev3945'), transports: [{ port: 3945, host: '127.0.0.1' }], exposeIntrospection: true })
+    await server.ready()
+
+    // Already over when it was declared. A viewer asking what a peer can do is not asking what it
+    // could do yesterday - that is what the audit trail is for.
+    server.elevate({ capability: 'gone', until: Date.now() - 1 })
+    const client = new RpcClient('http://localhost:3945', { name: peer('asker3945'), defaultTarget: peer('elev3945') })
+    const described = await (await client.proxy<Introspection>('msgrpc')).describe()
+    t.is(described.elevated, undefined, 'and nothing elevated means the field is absent, so its presence means something')
+
+    await client.close()
     await server.close()
 })

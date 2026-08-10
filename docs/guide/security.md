@@ -76,3 +76,30 @@ const server = new RpcServer({ transports: [{ port: 7843 }], exposeManagement: t
 It is still subject to `authorize`, so you can restrict who may create instances. The `expose*` methods are never remotely reachable.
 
 > Versions before 2.0.0 published all of `ManageRpc` under `manageRpc` with no authentication, so any peer that could reach the transport could construct any `exposeClass`'d class with chosen arguments, or overwrite an exposed name and deny service to every other client. If you are upgrading, treat both as having been reachable.
+
+## A peer says what it can currently do that is dangerous
+
+Before there is any mechanism for *granting* elevated access, there should be one for **seeing** it — because a gate whose state nobody can observe is a gate nobody can audit. Today the question "is anything on this network unlocked right now" should have an answer without calling anything.
+
+`describe()` carries `elevated`, and a console shows it above everything else on the peer:
+
+```
+elevated   docker.create — may create containers from postgres, emqx/emqx · until someone closes it
+```
+
+**It announces and nothing more.** `authorize()`, the AI grants document and the capability's own allow-list decide what may happen, and would decide exactly the same with this field removed. What it buys is that the posture travels.
+
+**It is asked of the instance, not remembered by the host.** A component that *is* an elevation implements `elevation()`, so composing it into a host is what makes the host announce it — the way `dataResources()` works. That matters because the failure this exists to catch is somebody forgetting, and an announcement you have to remember to make is one that will be missed exactly when it counts.
+
+For a capability that is not an object — a mounted socket, a debug endpoint, a flag somebody passed — the host declares it directly:
+
+```typescript
+const held = server.elevate({ capability: 'debug.endpoint', reason: 'diagnosing', until: Date.now() + 2 * 3600_000, grantedBy: 'anders' })
+// …later, or by itself when `until` passes
+held.lower()
+```
+
+**The most important field is `until`, and the most important case is its absence.** An elevation nothing will close is one somebody has to remember to close — the taped-over key, opened for a reason that passed while nobody came back. A viewer draws that as worse than a bounded one rather than the same, and where an `until` is given it is enforced as well as announced, so the announcement cannot outlive the thing.
+
+A lapsed elevation is not announced at all. Posture is what is true now; history belongs in the audit trail.
+

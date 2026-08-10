@@ -1,6 +1,7 @@
 import EventEmitter from 'events'
 import { componentSnapshotEvent, RpcComponent } from './Component.js'
 import { servesDataResources, type RpcDataResource } from './DataProvider.js'
+import { currentElevations, declaresElevation, type RpcElevation } from './Elevation.js'
 import { rpc, rpcNamespace, type RpcEffect } from './Expose.js'
 import type { RpcServerHandler } from './RpcServerHandler.js'
 import { SCHEMA_VERSION, type MethodSchema, type NamespaceSchema, type RpcSchema, type TypeNode } from './Schema.js'
@@ -131,6 +132,18 @@ export interface ServerDescription {
     /** True when arguments are being checked, which tells a caller how much to trust the types. */
     validating: boolean
     namespaces: DescribedNamespace[]
+    /**
+     * What this peer can currently do that is dangerous, announced rather than asked for.
+     *
+     * Absent means nothing is elevated, which is the ordinary state of a plant node and should stay
+     * boring. Present means a console can say so without calling anything - and an entry with no
+     * `until` is the one worth drawing attention to, because nothing will close it by itself.
+     *
+     * Collected from the exposed instances that declare themselves elevations, plus whatever the
+     * host declared directly. Nothing here grants anything; `authorize()` and the capability's own
+     * allow-list decide, and would decide the same with this field removed.
+     */
+    elevated?: RpcElevation[]
     /**
      * This host in the physical structure: its effective root - synthetic when nothing was
      * registered - the root's cross-host parent when one is declared, the deployment's place ids,
@@ -367,11 +380,24 @@ export class Introspection {
 
         const hostTopology = this.handler.hostTopology
         const root = hostTopology?.get(HOST_ROOT)
+        const elevated = currentElevations([
+            ...[...manage.namespaces.values()]
+                .map((held) => held.instance)
+                .filter((instance): instance is object => Boolean(instance) && declaresElevation(instance as object))
+                .map((instance) => (instance as { elevation(): RpcElevation | undefined }).elevation())
+                .filter((one): one is RpcElevation => Boolean(one)),
+            ...this.handler.declaredElevations
+        ])
         return {
             name: this.handler.name,
             ...(schema?.version ? { version: schema.version } : {}),
             validating: !!schema && this.handler.validation !== 'off',
             namespaces: namespaces.sort((a, b) => a.name.localeCompare(b.name)),
+            // Gathered from what is exposed rather than from what somebody remembered to declare:
+            // composing a dangerous capability into a host is what makes the host dangerous, so
+            // that act is what announces it. Omitted entirely when nothing is elevated, so the
+            // ordinary state of a plant node stays boring and the field's presence means something.
+            ...(elevated.length ? { elevated } : {}),
             ...(hostTopology && root
                 ? {
                       host: {

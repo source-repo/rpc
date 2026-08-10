@@ -18,6 +18,7 @@ export * from './RPC/ComponentClient.js'
 // filtered on the peer, so it needs the same matcher rather than a second version of it.
 export * from './RPC/DataProvider.js'
 export * from './RPC/Ticket.js'
+export * from './RPC/Elevation.js'
 // Topology, but not the file store: a page is a host too, volatile by nature - node:fs is not.
 export * from './RPC/Topology.js'
 export * from './RPC/Context.js'

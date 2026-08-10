@@ -98,11 +98,22 @@ export interface DescribedNamespace {
     events: DescribedEvent[]
 }
 
+/** What a peer says it can currently do that is dangerous. An announcement, never a permission. */
+export interface DescribedElevation {
+    capability: string
+    reason?: string
+    since?: number
+    /** Absent means nothing will close it, which is the case worth drawing attention to. */
+    until?: number
+    grantedBy?: string
+}
+
 export interface ServerDescription {
     name: string
     version?: string
     validating: boolean
     namespaces: DescribedNamespace[]
+    elevated?: DescribedElevation[]
     host?: {
         root: DescribedRef
         parent: DescribedRef | null

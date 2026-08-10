@@ -224,6 +224,16 @@
             }
           }
         },
+        "elevated": {
+          "type": {
+            "kind": "array",
+            "items": {
+              "kind": "ref",
+              "name": "RpcElevation"
+            }
+          },
+          "optional": true
+        },
         "host": {
           "type": {
             "kind": "object",
@@ -2451,6 +2461,40 @@
           "type": {
             "kind": "number"
           }
+        }
+      }
+    },
+    "RpcElevation": {
+      "kind": "object",
+      "fields": {
+        "capability": {
+          "type": {
+            "kind": "string"
+          }
+        },
+        "reason": {
+          "type": {
+            "kind": "string"
+          },
+          "optional": true
+        },
+        "since": {
+          "type": {
+            "kind": "number"
+          },
+          "optional": true
+        },
+        "until": {
+          "type": {
+            "kind": "number"
+          },
+          "optional": true
+        },
+        "grantedBy": {
+          "type": {
+            "kind": "string"
+          },
+          "optional": true
         }
       }
     }
