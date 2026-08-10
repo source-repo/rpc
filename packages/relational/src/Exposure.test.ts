@@ -24,11 +24,30 @@ interface DataProxy {
 
 test('a database is browsed over the wire with the verb a record already answers', async (t) => {
     const db = await fixture()
-    const server = new RpcServer({ name: peer('sql3941'), transports: [{ port: 3941, host: '127.0.0.1' }], exposeIntrospection: true })
+    // On for this package's own tests, and the cheapest guard there is on the part most likely to
+    // be wrong. A row type here is *constructed* - a mapping from the database's column types to
+    // TypeNodes - and every mistake in it publishes a shape the rows do not have, silently, because
+    // the rows are perfectly well formed and simply are not what was advertised. This validates
+    // every row of every page against what `dataResources()` declared, and it needs no contract
+    // file to do it: the declaration is made at runtime, which is the whole point of the interface.
+    const server = new RpcServer({
+        name: peer('sql3941'),
+        transports: [{ port: 3941, host: '127.0.0.1' }],
+        exposeIntrospection: true,
+        validateResults: true
+    })
     const service = await exposeRelational(server, 'sql', { db, flavour: 'sqlite' })
     await server.ready()
 
     const client = new RpcClient('http://localhost:3941', { name: peer('asker3941'), defaultTarget: peer('sql3941') })
+    // Torn down here rather than at the end, so a failing assertion closes the listener instead of
+    // leaving the suite hanging on an open socket - which reports as a timeout naming the file
+    // rather than as the assertion that actually failed.
+    t.teardown(async () => {
+        await client.close()
+        await server.close()
+        await db.destroy()
+    })
 
     // The tables arrive as resources, with a row shape drawn from the schema - which is what lets a
     // console draw columns for a table nobody wrote a contract for. Never a row: describe() says
@@ -90,8 +109,4 @@ test('a database is browsed over the wire with the verb a record already answers
     t.is(undeclared.total, 0)
     t.is(undeclared.data.length, 0)
     t.is(service.state.refusals, 1, 'and the node never saw it, so it counts as nothing here')
-
-    await client.close()
-    await server.close()
-    await db.destroy()
 })

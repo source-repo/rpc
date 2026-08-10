@@ -52,7 +52,7 @@ import {
     type RpcProjectionEntry,
     type RpcProjectionSlice
 } from './Component.js'
-import { declaredResource, getList, getMany, getManyReference, readDataRequest, SLOW_DATA_REQUEST_MS, type RpcDataResources, type RpcDataTiming, type RpcGetListParams, type RpcGetManyParams, type RpcGetManyReferenceParams } from './DataProvider.js'
+import { declaredResource, getList, getMany, getManyReference, readDataRequest, SLOW_DATA_REQUEST_MS, type RpcDataResource, type RpcDataResources, type RpcDataTiming, type RpcGetListParams, type RpcGetManyParams, type RpcGetManyReferenceParams } from './DataProvider.js'
 import { RpcSchema, validateParams, validateValue, type ComponentSchema } from './Schema.js'
 import { describeProblems, namespaceProblems } from './Compatibility.js'
 
@@ -840,6 +840,13 @@ export class RpcServerHandler extends MessageModule<Message<RpcMessage>, RpcMess
                             // *which half* was slow rather than only that something was.
                             ...(answer && typeof answer === 'object' ? { queryMs: (answer as RpcDataTiming).queryMs, countMs: (answer as RpcDataTiming).countMs } : {})
                         })
+                    // The same self-check `validateResults` performs on a declared method's return,
+                    // pointed at the one thing a store-backed component gets wrong most easily.
+                    const badRows = this.checkDataRows(payload, declared, answer)
+                    if (badRows) {
+                        await this.sendError(payload.id, source, 'InvalidParams', badRows)
+                        return
+                    }
                     const result = answer && typeof answer === 'object' ? { ...(answer as object), ms: spent } : answer
                     await this.respond(payload.id, source, { type: RpcMessageType.success, result, id: payload.id } as RpcSuccessPayload, MessageType.ResponseMessage)
                 } else await this.sendError(payload.id, source, map ? 'MethodNotFound' : 'ClassNotFound', `${payload.path}.${payload.method} is not exposed`)
@@ -1295,6 +1302,37 @@ export class RpcServerHandler extends MessageModule<Message<RpcMessage>, RpcMess
         if (!returns) return undefined
         const failure = validateValue(result, returns, this.schema.types, 'result')
         return failure ? `${payload.path}.${payload.method} returned a value its own schema forbids: ${failure}` : undefined
+    }
+
+    /**
+     * Catches this server answering `$data` with rows its own declared row type forbids.
+     *
+     * `checkResult` above needs an extracted contract, because a method's return type lives in one.
+     * This one needs nothing of the sort: a resource's `row` is published by `dataResources()` at
+     * runtime - which is the whole point of the interface, since a database's tables are not known
+     * when the component is written - so the declaration is here in hand whether or not the package
+     * serving it has a contract file at all.
+     *
+     * That makes it the cheapest guard a store-backed component will ever get, and it guards the
+     * thing most likely to be wrong. A row type is *constructed*: somebody maps a database's column
+     * types to `TypeNode`s, and every mistake in that mapping produces a viewer drawing the wrong
+     * column for values it will then render wrongly - with nothing anywhere to say so, because the
+     * rows arrive perfectly well formed and simply are not what was advertised. SQLite answering 1
+     * and 0 for a column declared `boolean` is the shape of it.
+     *
+     * Off by default with the rest of `validateResults`: this walks every row of every page, which
+     * is a development and test cost rather than a production one.
+     */
+    private checkDataRows(payload: RpcCallInstanceMethodPayload, declared: RpcDataResource | undefined, answer: unknown): string | undefined {
+        if (!this.validateResults || !declared?.row) return undefined
+        const rows = (answer as { data?: unknown } | undefined)?.data
+        if (!Array.isArray(rows)) return undefined
+        for (const [at, row] of rows.entries()) {
+            const failure = validateValue(row, declared.row, this.schema?.types, `row ${at}`)
+            if (failure)
+                return `${payload.path}: ${declared.path.join('.')} answered a row its own declared row type forbids: ${failure}`
+        }
+        return undefined
     }
 
     private sendError(id: string, target: string, code: RpcErrorCode, message: string) {

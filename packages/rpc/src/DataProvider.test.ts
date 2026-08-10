@@ -581,3 +581,89 @@ test('a fast page behind a slow count says so, which is the whole point of split
     await client.close()
     await server.close()
 })
+
+/**
+ * A row type is *constructed*, and construction is where a store-backed component goes wrong.
+ *
+ * Everything else a resource publishes is either a name it was given or a verb it chose. The row
+ * shape is neither: somebody maps a store's own types onto `TypeNode`s, and every mistake in that
+ * mapping publishes a shape the rows do not have - silently, because the rows are perfectly well
+ * formed and simply are not what was advertised. A viewer then draws the wrong column and renders
+ * the values wrongly, with nothing anywhere to say which of the two is lying.
+ *
+ * `validateResults` already catches this server returning something its own contract forbids. This
+ * is the same self-check pointed at `$data`, and it needs no contract to do it: a resource's `row`
+ * is declared at runtime by `dataResources()`, which is the whole point of that interface, so the
+ * declaration is in hand even for a package with no extracted contract at all.
+ */
+@rpcNamespace('mapped')
+class Mapped extends RpcComponent<{ label: string }, { connected: boolean }> implements RpcDataResources {
+    constructor(private readonly rows: readonly { id: string; active: unknown }[]) {
+        super({ label: 'm' }, { connected: true })
+    }
+
+    dataResources() {
+        return [
+            {
+                path: ['flags'],
+                verbs: ['getList'] as const,
+                row: { kind: 'object' as const, fields: { active: { type: { kind: 'boolean' as const } } } }
+            }
+        ]
+    }
+
+    dataRequest() {
+        return {
+            ids: this.rows.map((row) => row.id),
+            data: this.rows.map(({ active }) => ({ active })),
+            total: this.rows.length,
+            epoch: 'm',
+            revision: 1
+        }
+    }
+}
+
+test('a row that does not match the shape its resource published is caught before it is believed', async (t) => {
+    const server = new RpcServer({ name: peer('mapped3942'), transports: [{ port: 3942, host: '127.0.0.1' }], validateResults: true })
+    // The shape of the real mistake this exists for: a store with no boolean type of its own -
+    // SQLite is the obvious one - answering 1 and 0 for a column the component declared boolean.
+    server.exposeClassInstance(
+        new Mapped([
+            { id: 'a', active: true },
+            { id: 'b', active: 1 }
+        ]),
+        'mapped'
+    )
+    await server.ready()
+
+    const client = new RpcClient('http://localhost:3942', { name: peer('asker3942'), defaultTarget: peer('mapped3942') })
+    t.teardown(async () => {
+        await client.close()
+        await server.close()
+    })
+    const proxy = await client.proxy<{ $data(method: 'getList', resource: readonly string[]): Promise<RpcGetListResult> }>('mapped')
+
+    const refused = await t.throwsAsync(proxy.$data('getList', ['flags']))
+    // Which row and which field, because "a row was wrong" over a page of fifty is a search rather
+    // than a diagnosis.
+    t.regex(String(refused?.message), /flags answered a row its own declared row type forbids/)
+    t.regex(String(refused?.message), /row 1\.active: expected boolean, got number/)
+})
+
+test('and a server that was not asked to validate answers as it always did', async (t) => {
+    // Off by default, and staying off is the point: this walks every row of every page, which is a
+    // development cost worth paying and a production one nobody opted into.
+    const server = new RpcServer({ name: peer('mapped3943'), transports: [{ port: 3943, host: '127.0.0.1' }] })
+    server.exposeClassInstance(new Mapped([{ id: 'b', active: 1 }]), 'mapped')
+    await server.ready()
+
+    const client = new RpcClient('http://localhost:3943', { name: peer('asker3943'), defaultTarget: peer('mapped3943') })
+    t.teardown(async () => {
+        await client.close()
+        await server.close()
+    })
+    const proxy = await client.proxy<{ $data(method: 'getList', resource: readonly string[]): Promise<RpcGetListResult> }>('mapped')
+
+    const answer = await proxy.$data('getList', ['flags'])
+    t.deepEqual(answer.data, [{ active: 1 }])
+})
