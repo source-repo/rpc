@@ -650,6 +650,56 @@ test('a row that does not match the shape its resource published is caught befor
     t.regex(String(refused?.message), /row 1\.active: expected boolean, got number/)
 })
 
+/**
+ * A component that serves resources *and* holds a record of its own, which is the case the refusal
+ * below has to be narrow enough not to break.
+ */
+@rpcNamespace('both')
+class Both extends RpcComponent<{ label: string }, { readings: { [tag: string]: number } }> implements RpcDataResources {
+    constructor() {
+        super({ label: 'b' }, { readings: { 'tag.a': 1, 'tag.b': 2 } })
+    }
+
+    dataResources() {
+        return [{ path: ['customers'], verbs: ['getList'] as const }]
+    }
+
+    dataRequest() {
+        return { ids: ['c1'], data: [{ name: 'Acme' }], total: 1, epoch: 'b', revision: 1 }
+    }
+}
+
+test('a name that could have been a resource and was not is refused, not answered with an empty page', async (t) => {
+    const server = new RpcServer({ name: peer('both3944'), transports: [{ port: 3944, host: '127.0.0.1' }] })
+    server.exposeClassInstance(new Both(), 'both')
+    await server.ready()
+
+    const client = new RpcClient('http://localhost:3944', { name: peer('asker3944'), defaultTarget: peer('both3944') })
+    t.teardown(async () => {
+        await client.close()
+        await server.close()
+    })
+    const proxy = await client.proxy<{ $data(method: 'getList', resource: readonly string[]): Promise<RpcGetListResult> }>('both')
+
+    // The declared resource answers, as before.
+    t.is((await proxy.$data('getList', ['customers'])).total, 1)
+
+    // A misspelling of it does not. For a component whose resources are a closed published list -
+    // a database's tables, a store's collections - `total: 0` renders as a table that exists and
+    // holds nothing, which is the wrong thing to show somebody who mistyped a name.
+    const typo = await t.throwsAsync(proxy.$data('getList', ['custmers']))
+    t.regex(String(typo?.message), /custmers is not a resource of both - it serves customers/)
+
+    // And the narrowness that matters: a record in the component's own state is still served, and
+    // a path into state that reaches nothing is still an empty page rather than an error. State is
+    // data, and a collection a caller expects may simply not have been populated yet - refusing
+    // there would make this less robust than the snapshot it replaces.
+    t.is((await proxy.$data('getList', ['state', 'readings'])).total, 2)
+    const absent = await proxy.$data('getList', ['state', 'notYet'])
+    t.is(absent.total, 0)
+    t.is(absent.data.length, 0)
+})
+
 test('and a server that was not asked to validate answers as it always did', async (t) => {
     // Off by default, and staying off is the point: this walks every row of every page, which is a
     // development cost worth paying and a production one nobody opted into.

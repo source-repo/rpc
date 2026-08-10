@@ -94,19 +94,20 @@ test('a database is browsed over the wire with the verb a record already answers
     const refused = await t.throwsAsync(proxy.$data('getList', ['customers'], { filter: { field: 'nope', op: 'eq', operand: 'x' } }))
     t.regex(String(refused?.message), /not a column of customers/)
 
-    // A path this node never declared does **not** reach it at all: the library falls back to
-    // serving the path out of the component's own props and state, finds nothing there, and answers
-    // an empty page. That rule is right for a component's own record - state is data, and a record
-    // a caller expects may simply not have been populated yet - and it is wrong here, because this
-    // node's resources are a closed published list and `tags` is definitively not one of them.
-    //
-    // Asserted as it behaves rather than as it should, so the day it changes this test says so.
-    // Worth narrowing in the library: a component implementing RpcDataResources could refuse a path
-    // whose root is neither `props` nor `state`, which keeps a node that serves both from losing
-    // access to its own records while making a mistyped table name an error instead of an empty
-    // table.
-    const undeclared = await proxy.$data('getList', ['tags'])
-    t.is(undeclared.total, 0)
-    t.is(undeclared.data.length, 0)
-    t.is(service.state.refusals, 1, 'and the node never saw it, so it counts as nothing here')
+    // A mistyped table is an error, not an empty table. This node's resources are a closed
+    // published list, so `custmers` is definitively not one of them - and `total: 0` would have
+    // rendered as a table that exists and holds nothing, which is the wrong thing to show somebody
+    // who simply misspelled it.
+    const typo = await t.throwsAsync(proxy.$data('getList', ['custmers']))
+    t.regex(String(typo?.message), /custmers is not a resource of sql/)
+    t.regex(String(typo?.message), /it serves customers, orders, sites/, 'and says what it does serve, which describe() already publishes')
+
+    // Same for a table that exists in the database and is not served, so "why can I not see tags"
+    // is answered where it is asked rather than only in props.
+    const unserved = await t.throwsAsync(proxy.$data('getList', ['tags']))
+    t.regex(String(unserved?.message), /is not a resource of sql/)
+
+    // Refused by the library at the door, so the node itself never saw either of them - which is
+    // why its own refusal counter is still at the one this test caused.
+    t.is(service.state.refusals, 1)
 })

@@ -52,7 +52,7 @@ import {
     type RpcProjectionEntry,
     type RpcProjectionSlice
 } from './Component.js'
-import { declaredResource, getList, getMany, getManyReference, readDataRequest, SLOW_DATA_REQUEST_MS, type RpcDataResource, type RpcDataResources, type RpcDataTiming, type RpcGetListParams, type RpcGetManyParams, type RpcGetManyReferenceParams } from './DataProvider.js'
+import { declaredResource, getList, getMany, getManyReference, readDataRequest, servesDataResources, SLOW_DATA_REQUEST_MS, type RpcDataResource, type RpcDataResources, type RpcDataTiming, type RpcGetListParams, type RpcGetManyParams, type RpcGetManyReferenceParams } from './DataProvider.js'
 import { RpcSchema, validateParams, validateValue, type ComponentSchema } from './Schema.js'
 import { describeProblems, namespaceProblems } from './Compatibility.js'
 
@@ -808,6 +808,41 @@ export class RpcServerHandler extends MessageModule<Message<RpcMessage>, RpcMess
                     const declared = declaredResource(inst, request.resource)
                     if (declared && !declared.verbs.includes(request.method)) {
                         await this.sendError(payload.id, source, 'InvalidParams', `$data: ${request.resource.join('.')} answers ${declared.verbs.join(', ')}, not ${request.method}`)
+                        return
+                    }
+                    // A name that is not a resource and does not reach into props or state, on a
+                    // component that serves resources at all, is a caller that mistyped a resource -
+                    // and it is refused rather than answered.
+                    //
+                    // The fallback below deliberately answers an empty list for a path that reaches
+                    // nothing, and that is right for a component's own record: state is data, and a
+                    // collection a caller expects may simply not have been populated yet, so
+                    // refusing would make this less robust than the snapshot it replaces. It is
+                    // wrong for a store-backed component, whose resources are a **closed published
+                    // list**: a database either has that table or does not, and answering `total: 0`
+                    // for `custmers` renders as an empty table rather than as a typo. There is no
+                    // "not populated yet" to protect there.
+                    //
+                    // Narrow on purpose. A component may serve resources *and* hold records of its
+                    // own, so anything under `props` or `state` still falls through to the library
+                    // path with its old behaviour intact - this only claims the names that could
+                    // have been a resource and were not.
+                    if (!declared && servesDataResources(inst) && request.resource[0] !== 'props' && request.resource[0] !== 'state') {
+                        // Named, because "no such resource" without the list is a guessing game -
+                        // and `describe()` already publishes exactly this, so it discloses nothing
+                        // a caller permitted to be here could not already read. Bounded so a node
+                        // serving four hundred tables does not answer a typo with a catalogue.
+                        // (DEV-436: when `$data` is authorized per resource, this list has to be
+                        // narrowed to what the caller may see, or it becomes an enumeration
+                        // surface.)
+                        const serves = (inst as unknown as RpcDataResources).dataResources().map((resource) => resource.path.join('.'))
+                        const named = serves.length > 12 ? `${serves.slice(0, 12).join(', ')} and ${serves.length - 12} more` : serves.join(', ')
+                        await this.sendError(
+                            payload.id,
+                            source,
+                            'InvalidParams',
+                            `$data: ${request.resource.join('.')} is not a resource of ${payload.path}${serves.length ? ` - it serves ${named}` : ', which serves none'}`
+                        )
                         return
                     }
                     // Timed by the dispatcher rather than by whoever answered, so the number is
