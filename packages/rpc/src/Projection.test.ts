@@ -163,6 +163,31 @@ test('turning a page is a re-projection, and the keys keep a stable order across
     await server.close()
 })
 
+test('a slice taking nothing is a count, for one number rather than a record', async (t) => {
+    const server = new RpcServer({ name: peer('field3915'), transports: [{ port: 3915, host: '127.0.0.1' }] })
+    server.exposeClassInstance(new Field())
+    await server.ready()
+
+    const client = new RpcClient('http://localhost:3915', { name: peer('asker3915'), defaultTarget: peer('field3915') })
+    // How many pages are there, without paying for one. A caller deciding whether to page at all
+    // should not have to fetch a page to find out, and the alternative - a count published as a
+    // prop - needs the component's author to have thought of it.
+    const counted = await client.component<Field>('field', undefined, { paths: [{ path: ['state', 'tags'], limit: 0 }] })
+    const view = counted[rpcComponent].getSnapshot()
+
+    t.is(view.slices?.[0].total, 300, 'the size of the record')
+    t.is(view.slices?.[0].keys.length, 0, 'and not one key to pay for it')
+    // Absent rather than an empty object, which is the more honest of the two: `{}` would say the
+    // record is there and empty, where the slice beside it says it holds three hundred and that
+    // none of them were asked for.
+    t.is(view.state.tags as unknown, undefined)
+    t.false(JSON.stringify(view).includes('tag.'), 'nothing of the record travels at all')
+
+    await counted[rpcComponent].close()
+    await client.close()
+    await server.close()
+})
+
 test('a slice of something that is not a record is nothing, said out loud', async (t) => {
     const server = new RpcServer({ name: peer('field3913'), transports: [{ port: 3913, host: '127.0.0.1' }] })
     server.exposeClassInstance(new Field())

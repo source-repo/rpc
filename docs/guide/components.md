@@ -97,6 +97,8 @@ Keys and values arrive **together**, deliberately. Asking for the key list and t
 
 `total` is reported because it is the one thing a caller cannot work out for itself: its entries say what is on this page and nothing about the size of the set they came from. Nothing in the contract can say either.
 
+A `limit` of `0` is therefore a **count**: it takes no entries and still reports `total`, so a caller learns how many pages exist for one number rather than for a record. The alternative — a count published as a prop — needs the component's author to have thought of it, and this needs nothing. The record is then absent from the snapshot rather than present and empty, which is the more honest of the two: `{}` would say it holds nothing, where the slice beside it says it holds three hundred and that none were asked for.
+
 **Keys come back sorted**, and the order is part of the contract rather than an accident. Insertion order is a property of how the component happened to build its state, so page 2 could hold something different after a restart that populated the record in another sequence — a caller paging through would see one entry twice and another not at all, with nothing to indicate it.
 
 Turning a page is a re-projection: the same subscription with a different offset. A slice naming something that is not a record yields an empty slice rather than an error, so "the record is not there" and "nobody asked" stay different answers. A negative or fractional `offset` or `limit` is refused rather than clamped, for the same reason a negative timeout is — a silently adjusted page is one nobody asked for and no way to notice.

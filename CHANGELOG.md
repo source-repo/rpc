@@ -26,6 +26,12 @@ The same line decides how the grid is fed. Typed leaves are **subscribed** to, s
 
 The filter box searches on the peer: a bare word matches the tag name, `field:word` narrows to a field, `&` and `|` combine — so `quality:bad` is answerable at all. Pages are polled at a period the operator sets, down to manual, because a subscription's rate belongs to the component and on a 1200 bit/s link a 50-row page is already seventeen seconds. The next fetch is scheduled when the previous settles rather than on a timer, nothing is asked while the tab is hidden, the last answer stays readable while a fetch is in flight, and a page refetches at once when a call settles.
 
+### A projection slice taking nothing is a count
+
+`{ path: ['state','tags'], limit: 0 }` takes no entries and still reports `total`, so a caller learns how many pages a record has for one number rather than for the record. That always fell out of the arithmetic; it is now stated and tested rather than left as something that happens to work, because a caller relying on it should not have to discover it by trying. `$data`'s `pageSize: 0` answers the same question the same way, and the two agreeing is the point.
+
+The record is absent from such a snapshot rather than present and empty, which is the more honest of the two: `{}` would say it holds nothing, where the slice beside it says it holds three hundred and that none were asked for.
+
 ### Calls issued together travel in one frame
 
 A `POST` carries its type, a uuid, the namespace, the method name and the params, and MQTT adds a request topic, a response topic and correlation data beneath it — so moving one `float64` spends far more on saying where it is going than on the number, and reading three hundred tags one at a time is tens of kilobytes of envelope for a couple of kilobytes of values. Calls issued in one microtask now go as a single `BATCH` frame.
