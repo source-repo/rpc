@@ -1,4 +1,4 @@
-import { DATA_QUESTIONS } from '@source-repo/conformance'
+import { DATA_QUESTIONS, rowsAgainstDeclaration } from '@source-repo/conformance'
 import type { RpcGetListParams, RpcGetListResult, RpcGetManyResult } from '@source-repo/rpc'
 import anyTest, { type TestFn } from 'ava'
 import { randomUUID } from 'node:crypto'
@@ -68,6 +68,10 @@ test('it answers the shared conformance questions the way every other backend do
         const answer = (await service.dataRequest(question.method ?? 'getList', [held.name[question.collection]], question.params as RpcGetListParams)) as RpcGetListResult
         t.deepEqual([...answer.ids], [...question.ids], `${question.asks}${question.because ? ` - ${question.because}` : ''}`)
         t.is(answer.total, question.total ?? question.ids.length, `the count of ${question.asks} is of the matched set, not of the page`)
+        // And that the documents look like what this node said they would. Over a sampled shape
+        // that is an inference being checked against its own collection, which nothing else does.
+        const declared = service.dataResources().find((resource) => resource.path[0] === held.name[question.collection])?.row
+        t.is(rowsAgainstDeclaration(answer.data, declared), undefined, `${question.asks}: the rows match the shape this node published`)
     }
 })
 

@@ -1,4 +1,4 @@
-import { CUSTOMERS, DATA_QUESTIONS, ORDERS, SITES, type ConformanceCollection } from '@source-repo/conformance'
+import { CUSTOMERS, DATA_QUESTIONS, ORDERS, rowsAgainstDeclaration, SITES, type ConformanceCollection } from '@source-repo/conformance'
 import type { RpcGetListParams, RpcGetListResult } from '@source-repo/rpc'
 import anyTest, { type TestFn } from 'ava'
 import { Kysely, MysqlDialect, PostgresDialect, sql } from 'kysely'
@@ -149,6 +149,11 @@ test('every backend answers the same question the same way', async (t) => {
             const answer = (await service.dataRequest(question.method ?? 'getList', [TABLE[question.collection]], question.params as RpcGetListParams)) as RpcGetListResult
             t.deepEqual([...answer.ids], [...question.ids], `${backend.name}: ${question.asks}${question.because ? ` - ${question.because}` : ''}`)
             t.is(answer.total, question.total ?? question.ids.length, `${backend.name}: the count of ${question.asks} is of the matched set, not of the page`)
+            // And that the rows look like what this backend said they would - the same check the
+            // document suite makes, so a shape that drifts from its own data fails identically
+            // wherever it happens.
+            const declared = service.dataResources().find((resource) => resource.path[0] === TABLE[question.collection])?.row
+            t.is(rowsAgainstDeclaration(answer.data, declared), undefined, `${backend.name}: the rows of ${question.asks} match the published shape`)
         }
 })
 

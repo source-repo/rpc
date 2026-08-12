@@ -1,4 +1,4 @@
-import type { RpcGetListParams } from '@source-repo/rpc'
+import { validateValue, type RpcGetListParams, type TypeNode } from '@source-repo/rpc'
 
 /**
  * The questions every store-backed node has to answer the same way, and the rows to ask them of.
@@ -186,3 +186,29 @@ export const DATA_QUESTIONS: readonly DataQuestion[] = [
         because: 'the reference is combined with the caller\'s filter rather than replaced by it'
     }
 ]
+
+/**
+ * Whether the rows a backend just served match the shape it published for them.
+ *
+ * The same comparison `validateResults` makes at the dispatch level, available to a suite that
+ * calls a service directly - which every conformance suite here does, because a translation is best
+ * tested without a socket in front of it. Without this, the questions above check *which* rows come
+ * back and nothing at all about whether they look like what the resource claims they look like.
+ *
+ * It belongs in this package rather than in either node's tests for the reason everything else here
+ * does: it is a rule the contract makes, not a convenience one implementation happens to want. And
+ * it is worth more against a document store than against a table - a column type is a statement the
+ * database makes about every row it will ever hold, while a sampled shape is evidence about the
+ * documents that happened to be read, and the next one owes it nothing.
+ *
+ * Returns the first disagreement, naming the row and the field, or undefined where they all agree.
+ * A resource that publishes no row shape at all cannot disagree with one, and answers undefined.
+ */
+export const rowsAgainstDeclaration = (rows: readonly unknown[], declared: TypeNode | undefined): string | undefined => {
+    if (!declared) return undefined
+    for (const [at, row] of rows.entries()) {
+        const failure = validateValue(row, declared, {}, `row ${at}`)
+        if (failure) return failure
+    }
+    return undefined
+}
