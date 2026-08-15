@@ -226,6 +226,54 @@ const chosenCode = (e: unknown): RpcErrorCode => {
 }
 
 /**
+ * What the library's own dispatch-level methods do.
+ *
+ * These are answered by the handler before any exposed method is looked up, on behalf of every
+ * component at once - so there is no class to carry an `@rpc` declaration and nobody who could
+ * write one. Declared here instead, because the alternative is the conservative default and the
+ * conservative default is wrong here in a specific and quiet way.
+ *
+ * `$data` is a **read**: it is answered from the current snapshot, once, with a deadline on it, and
+ * it changes nothing. Weighed as an operation it required a *write* grant to look at a collection -
+ * so a principal permitted to observe and nothing else could subscribe to a component's state and
+ * not browse its catalogue, which is the surface an engineer commissioning a line actually lives
+ * in, and the one an AI principal is most useful on. Nothing refused it; it was simply classified
+ * as the thing it is not.
+ *
+ * `$acquire` and `$release` are listed too, and they take the same value the default gave them.
+ * Taking the lease that says nobody else may command is an operation, and stating it beside the
+ * read is what makes this a table of what the library does rather than a list of exceptions to be
+ * read as special pleading.
+ *
+ * **A `Map`, and not for style.** An object literal inherits `Object.prototype`, so looking a
+ * method name up in one answers a *function* for `toString`, `valueOf` or `constructor` - and
+ * `effectOf` would hand that back as the effect, which describe() then tries to serialize. The
+ * suite caught precisely that, surfacing three layers away as an encoder refusing a function.
+ */
+const dispatchEffects = new Map<string, RpcEffect>([
+    ['$data', 'observe'],
+    ['$acquire', 'operate'],
+    ['$release', 'operate']
+])
+
+/**
+ * The `$context` service's own methods, and the reason they need their own table.
+ *
+ * These are ordinary words - `read`, `subscribe` - and a component is entitled to have a method
+ * called `read` that means anything at all. So they are keyed to the namespace the handler answers
+ * them on rather than to the name, and a component's `read` goes on being classified by what it
+ * declared. Resolving ambient context is reading it, on every hop of the chain.
+ */
+const contextEffects = new Map<string, RpcEffect>([
+    ['read', 'observe'],
+    ['subscribe', 'observe'],
+    // Dropping one's own subscription, which is the sibling of `off` - and `off` is not authorized
+    // at all, on the grounds that refusing to let somebody stop receiving events is a strange thing
+    // to enforce. Weighed as observation here for the same reason, one rung less absolute.
+    ['unsubscribe', 'observe']
+])
+
+/**
  * Everything one exposed name carries. See ManageRpc.namespaces for why this is one record.
  *
  * Every field but `methods` and `generation` is optional because most names declare none of it: a
@@ -1306,15 +1354,22 @@ export class RpcServerHandler extends MessageModule<Message<RpcMessage>, RpcMess
     }
 
     /**
-     * The effect class this server will enforce for a method: what it declared, or the conservative
-     * default when it declared nothing - a declared `query` observes, and anything else operates.
+     * The effect class this server will enforce for a method: what it declared, what the library
+     * declares for its own surfaces, or the conservative default when nothing declared anything -
+     * a declared `query` observes, and anything else operates.
      *
      * Never undefined, deliberately. An unclassified method is not a harmless one, and a caller
      * asking what a method does should not have to know the defaulting rule to find out.
+     *
+     * A deployment's own declaration wins over the library's, which is the useful direction: a site
+     * that considers a particular component's catalogue sensitive can declare `$data` an operation
+     * on it, and nothing here overrides that.
      */
     effectOf(payload: { path: string; method: string }): RpcEffect {
         const declared = this.manageRpc.at(payload.path)?.effect?.get(payload.method) ?? this.schema?.namespaces[payload.path]?.methods[payload.method]?.effect
         if (declared) return declared
+        const library = payload.path === contextNamespace ? contextEffects.get(payload.method) : dispatchEffects.get(payload.method)
+        if (library) return library
         return this.semanticsOf(payload) === 'query' ? 'observe' : 'operate'
     }
 

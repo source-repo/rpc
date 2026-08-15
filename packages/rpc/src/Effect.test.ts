@@ -1,6 +1,6 @@
 import test from 'ava'
 import { randomUUID } from 'crypto'
-import { declareRpcNamespace, exposeMethods, rpc, rpcNamespace, RpcClient, RpcServer } from './index.js'
+import { declareRpcNamespace, exposeMethods, rpc, rpcNamespace, RpcClient, RpcServer, type RpcServerOptions } from './index.js'
 import { namespaceProblems } from './RPC/Compatibility.js'
 import type { NamespaceSchema } from './RPC/Schema.js'
 
@@ -130,6 +130,56 @@ test('a subclass may reclassify what it overrides', async (t) => {
     t.is(applied?.effect, 'program', 'the nearest declaration wins')
 
     await client.close()
+    await server.close()
+})
+
+test('the library classifies its own surfaces, since no author has a class to declare them on', async (t) => {
+    // `$data`, `$acquire` and the `$context` service are answered by the handler before any exposed
+    // method is looked up, on behalf of every component at once - so nothing about them can carry
+    // an `@rpc`, and until they were listed here they all took the conservative default. That
+    // default is right for a method somebody forgot to classify and wrong for a read the library
+    // performs itself: it made browsing a collection, and describing a node, need a *write* grant.
+    const server = new RpcServer({ name: peer('cell3864'), transports: [{ port: 3864, host: '127.0.0.1' }], exposeIntrospection: true })
+    server.exposeClassInstance(new Cell())
+    await server.ready()
+
+    t.is(server.rpc.effectOf({ path: 'cell', method: '$data' }), 'observe', 'a page of a collection is a read')
+    t.is(server.rpc.effectOf({ path: 'msgrpc', method: 'describe' }), 'observe', 'and so is asking a node what it serves')
+
+    // Taking the lease that says nobody else may command is not a read, and stays where it was.
+    t.is(server.rpc.effectOf({ path: 'cell', method: '$acquire' }), 'operate')
+    t.is(server.rpc.effectOf({ path: 'cell', method: '$release' }), 'operate')
+
+    // The context service's methods are ordinary words, so they are keyed to the namespace the
+    // handler answers them on - and a component with a method called `read` keeps its own default,
+    // because a component is entitled to have one that means anything at all.
+    t.is(server.rpc.effectOf({ path: '$context', method: 'read' }), 'observe')
+    t.is(server.rpc.effectOf({ path: '$context', method: 'subscribe' }), 'observe')
+    t.is(server.rpc.effectOf({ path: 'cell', method: 'read' }), 'operate', 'a component may have a read that writes')
+
+    // And a method name that is also a property of Object.prototype classifies like any other. The
+    // tables above are Maps for this reason alone: an object literal answers a *function* for
+    // `toString`, which would leave here as the method's effect and be reported by describe() until
+    // an encoder refused to serialize it, three layers from the cause.
+    t.is(server.rpc.effectOf({ path: 'cell', method: 'toString' }), 'operate')
+    t.is(server.rpc.effectOf({ path: 'cell', method: 'constructor' }), 'operate')
+    t.is(server.rpc.effectOf({ path: '$context', method: 'valueOf' }), 'operate')
+
+    await server.close()
+})
+
+test('a deployment may still classify a library surface on a component of its own', async (t) => {
+    // The useful direction of the precedence: a site whose catalogue is itself sensitive says so,
+    // and the library's reading of `$data` does not override it.
+    const schema = {
+        namespaces: { cell: { version: '1', methods: { $data: { params: [], paramNames: [], effect: 'operate' } } } }
+    } as unknown as RpcServerOptions['schema']
+
+    const server = new RpcServer({ name: peer('cell3865'), transports: [{ port: 3865, host: '127.0.0.1' }], schema, validation: 'off' })
+    server.exposeClassInstance(new Cell())
+    await server.ready()
+
+    t.is(server.rpc.effectOf({ path: 'cell', method: '$data' }), 'operate')
     await server.close()
 })
 

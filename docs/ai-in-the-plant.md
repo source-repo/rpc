@@ -78,6 +78,8 @@ Passed as `aiGrants` to an `RpcServer`, and the shape of the thing is the point:
 
 The ladder has three rungs. **No badge, nothing** — a principal with no credential does not reach a secured bus. **Badged, observation** — a credentialed AI principal may call `observe`-effect methods and subscribe to events wherever ordinary authorization allows, because diagnosis is where AI earns its place and something that can see everything and touch nothing is useful and safe at once. **Granted, the rungs above** — `ai.tool.write`, `ai.tool.program`, `ai.program.write`, `ai.program.program`, each opened by name, plus `ai.sponsor` for the `security-admin` effect that changes who may do any of it.
 
+**Observation covers every read, including the ones the library performs on a component's behalf.** Describing a node, subscribing to its state, paging a collection with `$data` and resolving ambient context are all reads and are all classified as such — a rung that stopped at declared method calls would let a model watch a plant and not ask what it was watching. Acquiring a component's authority is not a read and needs a grant, which is the line in the right place: taking the lease that says nobody else may command is an operation whatever it is followed by.
+
 Four properties are worth knowing before you rely on it:
 
 - **Closed is the default, everywhere.** A node with no grants document refuses every AI write and every AI programming call. There is nothing to turn on to be safe.

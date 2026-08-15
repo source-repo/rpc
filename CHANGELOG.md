@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+### Reading is observation, including the reads the library performs itself
+
+The AI boundary's second rung says a badged principal may observe wherever ordinary authorization allows — and three of the four things "observe" ought to mean were quietly on the other side of it. Nothing refused them on purpose; they were classified as something they are not, by a default that is right everywhere else.
+
+`describe()` declared no semantics, so it defaulted to `operate`. That made **asking a node what it serves** a write: the one call every console and every model begins with, refused for exercising a power it does not exercise. It is declared `query` now, like every other method on that class, which is what it always was.
+
+`$data` and the `$context` service's `read` and `subscribe` are answered by the handler before any exposed method is looked up, on behalf of every component at once — so there is no class to carry an `@rpc` and nobody who could write one. The library declares effects for them itself now, in one table beside the dispatch code. A principal permitted to observe can browse a collection it was already permitted to watch, and resolve the ambient context it was already permitted to be inside.
+
+`$acquire` and `$release` are in that table too, keeping the value the default gave them: taking the lease that says nobody else may command is an operation. Listing them beside the read is what makes it a table of what the library does rather than a list of exceptions.
+
+**A deployment's own declaration still wins**, which is the useful direction — a site whose catalogue is itself sensitive declares `$data` an operation on that component, and nothing here overrides it.
+
+Found from outside, by a bridge that had wired the four refusal levels up and could not explain why an assistant badged to observe could subscribe to a controller's state and not page its symbol table. The mistake worth keeping is not the classification but its silence: nothing logged a surprise, because from every layer's own point of view the system was working.
+
 ### A peer announces what it can currently do that is dangerous
 
 The half of a development-access design that comes first, because it is the half that tells you whether the rest is working. Today "is anything on this network unlocked right now" has no answer at all, and a gate whose state nobody can see is a gate nobody can audit.

@@ -10,6 +10,7 @@ import {
     rpc,
     rpcNamespace,
     RpcClient,
+    RpcComponent,
     RpcServer,
     validateAiGrants,
     type RpcAiGrants
@@ -221,6 +222,55 @@ test('an AI-authored program does not inherit the tool grant that started it', a
     t.is(await (await spawned.proxy<Cell>('cell')).status(), 'idle', 'though it may still observe')
 
     await spawned.close()
+    await server.close()
+})
+
+test('observation reaches everything that is a read: describing, watching, and browsing a collection', async (t) => {
+    // What the second rung of the ladder is *for*, and it was three-quarters missing. `describe`
+    // declared no semantics and `$data` has no class to declare any on, so both defaulted to
+    // `operate` - which meant a principal badged to observe and nothing else could not ask a node
+    // what it serves, and could not page a collection it was already permitted to watch. Nothing
+    // refused those on purpose; they were classified as the thing they are not.
+    @rpcNamespace('tanks')
+    class Tanks extends RpcComponent<{ site: string }, { level: number; readings: { [tag: string]: number } }> {
+        constructor() {
+            super({ site: 'north' }, { level: 3, readings: Object.fromEntries([...Array(40).keys()].map((n) => [`t${n}`, n])) })
+        }
+
+        @rpc({ semantics: 'idempotent-command', effect: 'operate' })
+        async drain() {
+            this.setState({ level: 0 })
+            return 'draining'
+        }
+    }
+
+    const server = new RpcServer({
+        name: peer('bus3873'),
+        transports: [{ port: 3873, host: '127.0.0.1' }],
+        authenticate: createDerivedAuthenticator({ issuers: { [peer('node')]: SECRET } }),
+        exposeIntrospection: true
+        // No grants document at all, which is the state every node starts in.
+    })
+    server.exposeClassInstance(new Tanks())
+    await server.ready()
+
+    const ai = await aiClient(3873, peer('assistant3873'), ['ai-tool'])
+    const introspection = await ai.proxy<{ describe(): Promise<{ namespaces: unknown[] }> }>('msgrpc')
+    t.true((await introspection.describe()).namespaces.length > 0, 'it may ask what this node serves')
+
+    const tanks = await ai.proxy<{
+        drain(): Promise<string>
+        $data(verb: string, resource: string[], params: unknown): Promise<{ data: unknown[]; total: number }>
+    }>('tanks')
+
+    const page = await tanks.$data('getList', ['state', 'readings'], { pagination: { page: 0, pageSize: 10 } })
+    t.is(page.data.length, 10, 'and page a collection it is already allowed to watch')
+    t.is(page.total, 40)
+
+    // And not one rung further.
+    await t.throwsAsync(tanks.drain(), { message: /Forbidden/ })
+
+    await ai.close()
     await server.close()
 })
 

@@ -2610,7 +2610,8 @@
           "returns": {
             "kind": "ref",
             "name": "ServerDescription"
-          }
+          },
+          "semantics": "query"
         }
       }
     }

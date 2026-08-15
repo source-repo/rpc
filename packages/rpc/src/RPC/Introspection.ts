@@ -299,7 +299,16 @@ export class Introspection {
         return { epoch: this.handler.epoch, seq: seq ?? null, ...(seq !== undefined ? { since: this.handler.eventTrackedSince(namespace, event) } : {}) }
     }
 
-    @rpc
+    /**
+     * Declared a query like everything else on this class, and it was the one that was not.
+     *
+     * Describing a server reads its own maps and changes nothing, so `query` is what it always was.
+     * But an undeclared method defaults to `operate`, and that default reached further than it
+     * looks: it made introspection a *write* in the eyes of the AI boundary, so a principal badged
+     * to observe could not ask a node what it serves - the call every console and every model
+     * begins with, refused for exercising a power it does not exercise.
+     */
+    @rpc({ semantics: 'query' })
     async describe(): Promise<ServerDescription> {
         const manage = this.handler.manageRpc
         const schema = this.handler.schema
