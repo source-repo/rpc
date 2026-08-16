@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+### The owner fence now reaches the far end over MQTT 5
+
+A fenced call carries the owner generation its caller observed, and the target refuses `OwnershipChanged` when that is no longer the generation that rules. Over MQTT 5 it carried nothing: `toOutboundFrame` had no case for `fence` and no user property existed to put it in, so the fence was dropped at the transport and `fenceRefusal` at the far end found nothing to check. **Every fenced call over MQTT 5 arrived unfenced, and ran.**
+
+The failure is worth stating precisely, because it is the opposite of the usual one. A fence is checked by being present, so losing it does not weaken the check — it removes it, and the caller cannot tell, because what comes back is an ordinary successful result. The commands most likely to meet it are the ones it exists for: a queued or redelivered command is exactly the one whose ownership may have moved while it waited.
+
+`mr-fence` carries it now, and the signature covers it — which is the other half. Of every signed field this is the only one an attacker need merely **delete** rather than alter: an unsigned fence could be stripped by anything on the path, turning a command meant to be refused under a new ownership into one that executes, with no key involved and nothing at either end to notice. So **the signed frame version goes 2 → 3** and a version 2 signature is no longer honoured, by the rule the 1 → 2 bump was made under: a receiver that accepts either lets the sender choose the weaker. The gate still applies only to signed frames, so an unsigned plain-MQTT peer announcing an older `mr-v` is unaffected and interop is intact.
+
+Found by reading the two transports side by side rather than from a failure, which is the uncomfortable part. `Topology.test.ts` exercises the fence thoroughly over socket.io and passed throughout; no MQTT 5 test asked. Both now do.
+
 ### Reading is observation, including the reads the library performs itself
 
 The AI boundary's second rung says a badged principal may observe wherever ordinary authorization allows — and three of the four things "observe" ought to mean were quietly on the other side of it. Nothing refused them on purpose; they were classified as something they are not, by a default that is right everywhere else.

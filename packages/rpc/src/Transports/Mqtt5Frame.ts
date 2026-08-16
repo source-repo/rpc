@@ -47,16 +47,27 @@ export const MR = {
      * means the correlation data is the name, so a redelivered packet is the same command and a
      * fresh attempt is a different one.
      */
-    idempotencyKey: 'mr-idem'
+    idempotencyKey: 'mr-idem',
+    /**
+     * The owner generation the caller observed for the instance it is addressing. Absent means an
+     * unfenced call, which is the ordinary case.
+     *
+     * This travels or the fence does not exist. `RpcServerHandler.fenceRefusal` returns early when
+     * the payload carries no fence, so a layout with no representation for one does not weaken the
+     * check - it removes it, and a command whose instance was reassigned mid-flight runs under the
+     * new owner with nothing said. Which is the failure a fence exists to prevent.
+     */
+    fence: 'mr-fence'
 } as const
 
 /**
- * Version 2 covers contentType, the error code, the declared contract version, the response topic,
- * the ttl and the idempotency key in the signature; version 1 covered none of them, and a frame
- * signed under one cannot verify under the other. Bumped rather than negotiated: a receiver that quietly accepted either
- * would let an attacker choose the weaker.
+ * Version 3 adds the owner fence to the signature. Version 2 covers contentType, the error code,
+ * the declared contract version, the response topic, the ttl and the idempotency key; version 1
+ * covered none of them, and a frame signed under one cannot verify under another. Bumped rather
+ * than negotiated: a receiver that quietly accepted either would let an attacker choose the weaker,
+ * and under version 2 the weaker choice is the one where stripping `mr-fence` costs nothing.
  */
-export const FRAME_VERSION = '2'
+export const FRAME_VERSION = '3'
 
 /** Frame versions this build will accept. A frame announcing anything else is refused, not guessed at. */
 export const SUPPORTED_FRAME_VERSIONS = new Set([FRAME_VERSION])
@@ -81,6 +92,12 @@ export interface OutboundFrame {
     ttl?: number
     /** Names the command rather than this attempt at it, when the caller says so. */
     idempotencyKey?: string
+    /**
+     * The owner generation the caller observed, when it fences. Carried flat rather than as the
+     * payload's `{ownerEpoch}` object, because a user property is a string and this layout has
+     * nowhere to put an object.
+     */
+    fence?: string
     /** Encoded as the packet payload: arguments for a request, the value for a result. */
     body: unknown
 }
@@ -107,6 +124,7 @@ export const toOutboundFrame = (message: Message): OutboundFrame | undefined => 
                 version: call.version,
                 ttl: call.ttl,
                 idempotencyKey: call.idempotencyKey,
+                fence: call.fence?.ownerEpoch,
                 body: call.params
             }
         }
@@ -138,6 +156,8 @@ export interface InboundFrame {
     /** What the caller said it would still wait, already narrowed by anything the broker reported. */
     ttl?: number
     idempotencyKey?: string
+    /** The owner generation the caller observed, when it fenced. See MR.fence. */
+    fence?: string
     body: unknown
 }
 
@@ -156,6 +176,9 @@ export const fromInboundFrame = (frame: InboundFrame): Message | undefined => {
                 version: frame.version,
                 ttl: frame.ttl,
                 idempotencyKey: frame.idempotencyKey,
+                // Absent rather than `{ownerEpoch: undefined}`: fenceRefusal tests the fence object
+                // for presence, so an empty one would be a fence against nothing rather than none.
+                ...(frame.fence ? { fence: { ownerEpoch: frame.fence } } : {}),
                 // A caller that sends no payload means no arguments.
                 params: Array.isArray(frame.body) ? frame.body : frame.body === undefined || frame.body === null ? [] : [frame.body]
             }

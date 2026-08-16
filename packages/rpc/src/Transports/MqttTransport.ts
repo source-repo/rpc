@@ -639,6 +639,7 @@ export class MqttTransport extends GenericModule<Message, unknown, Message, unkn
             version: values[MR.contractVersion],
             ttl: this.remainingTtl(values[MR.ttl], properties?.messageExpiryInterval),
             idempotencyKey: values[MR.idempotencyKey],
+            fence: values[MR.fence],
             body: decoded
         })
         if (!message) {
@@ -849,12 +850,14 @@ export class MqttTransport extends GenericModule<Message, unknown, Message, unkn
             correlation: correlation ?? '',
             // Rebuilt from what arrived, so tampering with any of them fails the signature rather
             // than changing how the payload is read, where the answer is sent, what the caller does
-            // about a failure, or whether a command that is already too late still runs.
+            // about a failure, whether a command that is already too late still runs, or whether it
+            // runs under an ownership its caller never observed.
             contentType: contentType ?? '',
             code: values[MR.code] ?? '',
             contractVersion: values[MR.contractVersion] ?? '',
             ttl: values[MR.ttl] ?? '',
             idempotencyKey: values[MR.idempotencyKey] ?? '',
+            fence: values[MR.fence] ?? '',
             timestamp,
             nonce,
             payload: body
@@ -979,6 +982,7 @@ export class MqttTransport extends GenericModule<Message, unknown, Message, unkn
         if (frame.version) userProperties[MR.contractVersion] = frame.version
         if (frame.ttl !== undefined) userProperties[MR.ttl] = String(frame.ttl)
         if (frame.idempotencyKey) userProperties[MR.idempotencyKey] = frame.idempotencyKey
+        if (frame.fence) userProperties[MR.fence] = frame.fence
 
         if (this.sign) {
             const nonce = createNonce()
@@ -997,6 +1001,7 @@ export class MqttTransport extends GenericModule<Message, unknown, Message, unkn
                 contractVersion: frame.version ?? '',
                 ttl: frame.ttl !== undefined ? String(frame.ttl) : '',
                 idempotencyKey: frame.idempotencyKey ?? '',
+                fence: frame.fence ?? '',
                 timestamp,
                 nonce,
                 payload: body

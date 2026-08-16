@@ -1,6 +1,8 @@
 <!-- The wire identifiers in this document are deliberately unchanged by the 3.0 rename: the packages and the command became Source RPC, the protocol stayed msgrpc. A peer deployed against v1 or v2 keeps working, which is the whole point of writing the format down.
 
-  What did change in 3.0 is the signed frame version, `mr-v`, which went 1 -> 2. Version 2 covers the content type, the error code, the declared contract version, the response topic and the ttl in the signature; version 1 covered none of them, and a frame signed under version 1 no longer verifies. That gate applies only to signed frames - an unsigned plain-MQTT peer sending `mr-v: 1` is still accepted, because its version says nothing about security and interop is the point. See the Security section of the changelog. -->
+  What did change in 3.0 is the signed frame version, `mr-v`, which went 1 -> 2. Version 2 covers the content type, the error code, the declared contract version, the response topic and the ttl in the signature; version 1 covered none of them, and a frame signed under version 1 no longer verifies. That gate applies only to signed frames - an unsigned plain-MQTT peer sending `mr-v: 1` is still accepted, because its version says nothing about security and interop is the point. See the Security section of the changelog.
+
+  Version 3 adds `mr-fence` and covers it in the signature. The gate rule is unchanged and applies for a sharper reason: version 2 signed everything except the fence, so honouring a version 2 signature on a version 3 network would let a sender choose the form in which deleting one property disarms the check entirely. -->
 
 # msgrpc over MQTT 5 — frame layout
 
@@ -51,7 +53,7 @@ MQTT permits a user property to repeat. **A frame with any `mr-*` property prese
 
 | property | on | meaning |
 | --- | --- | --- |
-| `mr-v` | all | frame format version, currently `2` |
+| `mr-v` | all | frame format version, currently `3` |
 | `mr-src` | all | sending peer name |
 | `mr-kind` | all | `call` \| `subscribe` \| `unsubscribe` \| `result` \| `error` \| `event` |
 | `mr-path` | call, subscribe, event | exposed instance name |
@@ -61,7 +63,14 @@ MQTT permits a user property to repeat. **A frame with any `mr-*` property prese
 | `mr-ver` | call, subscribe | contract version the caller declares |
 | `mr-ttl` | call, subscribe | milliseconds the caller will still wait, counted from sending |
 | `mr-idem` | call | names the command this is an attempt at, when the caller distinguishes the two |
+| `mr-fence` | call | the owner generation the caller observed for `mr-path`, when it fences |
 | `mr-nonce`, `mr-ts`, `mr-sig` | signed frames | replay and signature fields |
+
+### Why `mr-fence` had to exist
+
+A fence is checked by being present. A responder that finds no fence on a call does not fall back to a weaker check — it applies none, and runs the command under whatever ownership holds the instance now. So a layout with no representation for a fence does not degrade the guarantee, it removes it, and silently: the caller sees an ordinary successful call and has no way to learn its fence never travelled.
+
+That is what this layout did until frame version 3. `mr-fence` did not exist, `toOutboundFrame` dropped the payload's `fence`, and every fenced call over MQTT 5 arrived unfenced — including the queued and redelivered ones a fence exists for in the first place. The socket.io path carried it throughout, so the feature's own tests went on passing while the transport a plant actually runs on ignored it.
 
 ### Why `mr-ttl` as well as `messageExpiryInterval`
 
@@ -81,12 +90,13 @@ contentType              application/msgpack
 payloadFormatIndicator   0
 messageExpiryInterval    10                       # seconds, from mr-ttl rounded up
 userProperties
-  mr-v                   2
+  mr-v                   3
   mr-src                 hmi
   mr-kind                call
   mr-path                plant
   mr-method              writeSetpoint
   mr-ttl                 10000                    # ms the caller will still wait
+  mr-fence               e-7f21c9                 # only when the caller fences on owner generation
   mr-nonce               <base64>                 # signed frames only
   mr-ts                  1785187832623            # signed frames only
   mr-sig                 <base64>                 # signed frames only
@@ -111,7 +121,7 @@ topic                    msgrpc/v2/rsp/hmi        # whatever responseTopic said
 correlationData          <echoed verbatim>
 contentType              application/msgpack      # mirrors the request
 userProperties
-  mr-v                   2
+  mr-v                   3
   mr-src                 plantServer
   mr-kind                result
   mr-nonce, mr-ts, mr-sig                         # signed frames only
@@ -121,7 +131,7 @@ payload                  <msgpack of 1200>        # the return value, encoded ba
 Errors keep the shape with `mr-kind: error`, an `mr-code` carrying the `RpcErrorCode`, and a payload of `{name, message, stack?}`:
 
 ```
-userProperties   mr-v=2  mr-src=plantServer  mr-kind=error  mr-code=Forbidden
+userProperties   mr-v=3  mr-src=plantServer  mr-kind=error  mr-code=Forbidden
 payload          <msgpack of {"name":"RpcError","message":"not permitted to call plant.writeSetpoint"}>
 ```
 
@@ -133,7 +143,7 @@ Putting the code in a property means an operator can see *why* a call failed in 
 topic            msgrpc/v2/evt/hmi
                  # no correlationData: unsolicited
 userProperties
-  mr-v           2
+  mr-v           3
   mr-src         plantServer
   mr-kind        event
   mr-path        plant
@@ -149,7 +159,7 @@ The signature must cover everything that decides what a frame means and where it
 ```
 signedInput = utf8(JSON.stringify([
     v, topic, responseTopic, src, kind, path, methodOrEvent, correlation,
-    contentType, code, contractVersion, ttl, idempotencyKey, ts, nonce
+    contentType, code, contractVersion, ttl, idempotencyKey, fence, ts, nonce
 ])) || payload
 ```
 
@@ -158,6 +168,8 @@ Fields are signed **positionally by value**, so the `mr-` property naming does n
 **Everything the receiver acts on is covered.** Version 1 left out `contentType`, on the reasoning that it only says how to read bytes that are themselves signed — so altering it could make a payload fail to parse but never change what was authorised. That reasoning is wrong, and the counterexample is one byte long: `0x31` is the JSON text `"1"`, which is the number 1, and a MsgPack positive fixint, which is 49. Both parse. Both verified. Flipping one unsigned property turned a signed `writeSetpoint(1)` into a signed `writeSetpoint(49)`.
 
 The same argument covers the rest of what version 2 added: `code` decides what a caller does about a failure, `contractVersion` decides whether the call is accepted at all, `responseTopic` decides where the answer is published, `ttl` decides whether a command that is already too late still runs, and `mr-idem` decides whether a command that has already run runs again.
+
+Version 3 adds `fence`, and it is the sharpest case of the rule rather than an exception to it. Every other signed field can be *changed* to change the meaning of a frame; `mr-fence` only has to be **removed**. An unsigned fence would mean anyone on the path could turn a command that was meant to be refused under a new ownership into one that executes, by deleting a property — no key, no forgery, and nothing at either end to notice.
 
 `messageExpiryInterval` is deliberately **not** signed, because the broker is required to decrement it in flight and a signature over it would break on the first queued message. Nothing is lost: it may only narrow the signed `mr-ttl`, so rewriting it can delay or drop a frame — which anyone able to rewrite it could do anyway — but cannot buy a stale command more time.
 
@@ -184,7 +196,7 @@ A responder serving one namespace:
 
 1. Subscribe `<prefix>/req/<name>`.
 2. On a message, read `mr-path` and `mr-method` and decode the payload as an argument array using `contentType`.
-3. If `mr-ttl` is present, stop and answer `mr-code=Timeout` when more than that many milliseconds have passed since the message arrived — less whatever the broker already deducted from `messageExpiryInterval`. Check it just before running the method, not on arrival. If `mr-idem` is present and the method is one a repeat would change something with, look the key up before running and answer from the recorded outcome if it is there.
+3. If `mr-ttl` is present, stop and answer `mr-code=Timeout` when more than that many milliseconds have passed since the message arrived — less whatever the broker already deducted from `messageExpiryInterval`. Check it just before running the method, not on arrival. If `mr-idem` is present and the method is one a repeat would change something with, look the key up before running and answer from the recorded outcome if it is there. If `mr-fence` is present and you keep a record of who owns `mr-path`, compare the two and answer `mr-code=OwnershipChanged` on any difference — including when you hold no record at all, which fails closed rather than running a command whose fence you cannot check.
 4. Publish the result to the packet's `responseTopic`, echoing `correlationData`, with `mr-kind=result` and the same `contentType`.
 
 No msgrpc framing, no `$` splitting, no nested envelope. A caller is the mirror image. A third party that prefers JSON simply sets `contentType: application/json` and gets JSON replies.

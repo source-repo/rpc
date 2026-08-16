@@ -135,6 +135,50 @@ test('batched calls survive the MQTT 5 layout, which has no representation for a
     await server.close()
 })
 
+test('an owner fence survives the MQTT 5 layout, where it used to be dropped in flight', async (t) => {
+    if (skipWithoutBroker(t)) return
+    const prefix = prefixFor('fence-v5')
+    const ran: string[] = []
+    class Oven {
+        async setMode(mode: string) {
+            ran.push(mode)
+            return mode
+        }
+    }
+    const server = new RpcServer({ name: peer('fenceServer'), transports: [{ brokerurl: BROKER_URL, sessionExpirySeconds: TEST_SESSION_EXPIRY, prefix }] })
+    await server.ready()
+    await server.topology.declare('oven', { owner: { peer: 'mes', instance: 'batch-1' } })
+    server.exposeClassInstance(new Oven(), 'oven')
+
+    const client = new RpcClient(undefined, {
+        name: peer('fenceAsker'),
+        defaultTarget: peer('fenceServer'),
+        transport: new MqttTransport(peer('fenceAsker'), BROKER_URL, { prefix, sessionExpirySeconds: TEST_SESSION_EXPIRY })
+    })
+    await client.ready()
+    const observed = server.topology.get('oven')!
+    type Fenceable = { setMode(mode: string): Promise<string>; $with(o: { ownerEpoch: string }): { setMode(mode: string): Promise<string> } }
+    const oven = await client.proxy<Fenceable>('oven')
+
+    // The generation the caller observed is still the one that rules, so the fence lets it through.
+    t.is(await oven.$with({ ownerEpoch: observed.ownerEpoch }).setMode('auto'), 'auto')
+
+    // The unit is reassigned - a maintenance job takes it - and the old world's command must now be
+    // refused. `toOutboundFrame` had no case for `fence` and no `mr-` property carried it, so
+    // `fenceRefusal` at the far end found nothing to check: this call ran the method and returned
+    // 'manual'. The socket.io test covering the same sequence in Topology.test.ts passed throughout,
+    // which is why a fence that fenced nothing on the plant transport went unnoticed.
+    await server.topology.update('oven', { owner: { peer: 'mes', instance: 'job-9' } }, { expectedVersion: observed.version })
+    const stale = await t.throwsAsync(oven.$with({ ownerEpoch: observed.ownerEpoch }).setMode('manual'))
+    t.regex(String(stale?.message), /OwnershipChanged/)
+    t.deepEqual(ran, ['auto'], 'the refused command must not have run')
+
+    t.is(await oven.$with({ ownerEpoch: server.topology.get('oven')!.ownerEpoch }).setMode('manual'), 'manual', 'the new generation commands freely')
+
+    await client.close()
+    await server.close()
+})
+
 test('a plain MQTT 5 client can call an msgrpc server', async (t) => {
     if (skipWithoutBroker(t)) return
     const prefix = prefixFor('interop-call')
@@ -438,7 +482,23 @@ const until = async (condition: () => boolean, timeout = 5000) => {
 // A peer name is the MQTT client id, so two tests sharing one evict each other when ava runs them
 // concurrently - the very collision this transport warns about. Each signing test gets its own pair.
 const SIGN_SECRETS: { [peer: string]: string } = Object.fromEntries(
-    ['hmi-v5', 'srv-v5', 'rogue-v5', 'hmi-ct', 'srv-ct', 'hmi-ct2', 'srv-ct2', 'hmi-code', 'srv-code', 'hmi-rt', 'srv-rt', 'hmi-ttl', 'srv-ttl'].map((name) => [
+    [
+        'hmi-v5',
+        'srv-v5',
+        'rogue-v5',
+        'hmi-ct',
+        'srv-ct',
+        'hmi-ct2',
+        'srv-ct2',
+        'hmi-code',
+        'srv-code',
+        'hmi-rt',
+        'srv-rt',
+        'hmi-ttl',
+        'srv-ttl',
+        'hmi-fence',
+        'srv-fence'
+    ].map((name) => [
         peer(name),
         `${name}-secret`
     ])
@@ -478,6 +538,10 @@ const publishSignedV5 = async (
         sentTtl?: number
         idempotencyKey?: string
         sentIdempotencyKey?: string
+        /** The owner generation the signature covers. */
+        fence?: string
+        /** What the packet actually carries. Omitting it where `fence` is signed is the strip attack. */
+        sentFence?: string | null
     }
 ) => {
     const body = opts.rawBody ?? new Uint8Array(msgPackEncode(opts.body))
@@ -502,12 +566,16 @@ const publishSignedV5 = async (
         contractVersion: '',
         ttl,
         idempotencyKey: opts.idempotencyKey ?? '',
+        fence: opts.fence ?? '',
         timestamp,
         nonce,
         payload: body
     })
     const signature = await createHmacSigner(SIGN_SECRETS[opts.signAs])(canonical, { source: opts.source })
     const sentTtl = opts.sentTtl ?? opts.ttl
+    // null means "send no mr-fence at all", which is the interesting case and not the same as
+    // sending a different one: it is what an attacker does to turn a fenced call into a free one.
+    const sentFence = opts.sentFence === null ? undefined : (opts.sentFence ?? opts.fence)
     await client.publishAsync(opts.topic, Buffer.from(body), {
         qos: 1,
         properties: {
@@ -523,6 +591,7 @@ const publishSignedV5 = async (
                 ...(opts.sentCode ?? opts.code ? { [MR.code]: (opts.sentCode ?? opts.code)! } : {}),
                 ...(sentTtl !== undefined ? { [MR.ttl]: String(sentTtl) } : {}),
                 ...((opts.sentIdempotencyKey ?? opts.idempotencyKey) ? { [MR.idempotencyKey]: (opts.sentIdempotencyKey ?? opts.idempotencyKey)! } : {}),
+                ...(sentFence ? { [MR.fence]: sentFence } : {}),
                 [MR.nonce]: nonce,
                 [MR.timestamp]: String(timestamp),
                 [MR.signature]: signature
@@ -1046,6 +1115,80 @@ test('the stated deadline cannot be extended after signing', async (t) => {
     })
     await until(() => asked.length > 0)
     t.deepEqual(asked, [9])
+
+    await client.endAsync()
+    await server.close()
+})
+
+test('the owner fence cannot be stripped after signing', async (t) => {
+    if (skipWithoutBroker(t)) return
+    const prefix = prefixFor('v5sign-fence')
+    const ran: string[] = []
+    class Oven {
+        async setMode(mode: string) {
+            ran.push(mode)
+            return mode
+        }
+    }
+    const server = new RpcServer({
+        name: peer('srv-fence'),
+        transports: [
+            {
+                brokerurl: BROKER_URL,
+                sessionExpirySeconds: TEST_SESSION_EXPIRY,
+                prefix,
+                sign: createHmacSigner(SIGN_SECRETS[peer('srv-fence')]),
+                verify: v5Verifier
+            }
+        ],
+        requireAuthenticatedPeers: true
+    })
+    await server.ready()
+    await server.topology.declare('oven', { owner: { peer: 'mes', instance: 'batch-1' } })
+    server.exposeClassInstance(new Oven(), 'oven')
+    const rejected: { reason?: string }[] = []
+    server.transports[0].on('rejected', (info: { reason?: string }) => rejected.push(info))
+    const client = await connectAsync(BROKER_URL, { protocolVersion: 5 })
+    const epoch = server.topology.get('oven')!.ownerEpoch
+
+    // A fence is the one signed field whose removal is not a downgrade to a weaker check but the
+    // removal of the check itself: with no fence in the payload, fenceRefusal returns early and the
+    // command runs under whatever ownership now holds the unit. Under frame version 2 the fence was
+    // outside the canonical form, so stripping the property left the signature perfectly good.
+    await publishSignedV5(client, {
+        topic: `${prefix}/req/${peer('srv-fence')}`,
+        source: peer('hmi-fence'),
+        signAs: peer('hmi-fence'),
+        kind: 'call',
+        path: 'oven',
+        method: 'setMode',
+        correlation: 'fence-1',
+        body: ['manual'],
+        fence: epoch,
+        sentFence: null
+    })
+    await new Promise((resolve) => setTimeout(resolve, 700))
+    t.deepEqual(ran, [], 'a frame whose fence was stripped after signing must not run the method')
+    t.true(
+        rejected.some((info) => info.reason === 'bad signature'),
+        'stripping the fence must fail the signature rather than merely arrive unfenced'
+    )
+
+    // The same call carrying the fence it was signed with does run, so the refusal above is about
+    // the strip and not about the frame.
+    await publishSignedV5(client, {
+        topic: `${prefix}/req/${peer('srv-fence')}`,
+        source: peer('hmi-fence'),
+        signAs: peer('hmi-fence'),
+        kind: 'call',
+        path: 'oven',
+        method: 'setMode',
+        correlation: 'fence-2',
+        body: ['auto'],
+        fence: epoch
+    })
+    await until(() => ran.length > 0)
+    t.deepEqual(ran, ['auto'], 'the fence reached the far end and matched the generation it named')
 
     await client.endAsync()
     await server.close()

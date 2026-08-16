@@ -82,6 +82,13 @@ export interface SignedFrameV5 {
      * a retry into a fresh command, or one command into a repeat of somebody else's.
      */
     idempotencyKey: string
+    /**
+     * The owner generation the caller observed, empty when it did not fence. Signed because the
+     * receiver acts on it by refusing: stripping it is not a downgrade to a weaker check but a
+     * removal of the check, and it turns a command the caller meant to be refused under a new
+     * ownership into one that runs.
+     */
+    fence: string
     timestamp: number
     nonce: string
     payload: Uint8Array
@@ -101,8 +108,9 @@ export interface SignedFrameV5 {
  * The same argument applies to anything else the receiver acts on rather than merely transports: the
  * error code decides what a caller does about a failure, the declared contract version decides
  * whether the call is accepted at all, the response topic decides where the answer is published, the
- * ttl decides whether the method runs at all, and the idempotency key decides whether it runs again.
- * All five are covered.
+ * ttl decides whether the method runs at all, the idempotency key decides whether it runs again, and
+ * the owner fence decides whether it runs under an ownership the caller never observed. All six are
+ * covered.
  *
  * The MQTT message expiry is deliberately **not** covered, because the broker is meant to decrement
  * it in flight and a signature over it would break on the first queued message. Nothing is lost:
@@ -125,6 +133,7 @@ export const canonicalSignedBytesV5 = (frame: SignedFrameV5): Uint8Array => {
             frame.contractVersion,
             frame.ttl,
             frame.idempotencyKey,
+            frame.fence,
             frame.timestamp,
             frame.nonce
         ])
