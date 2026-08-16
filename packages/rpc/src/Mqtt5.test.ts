@@ -1247,16 +1247,15 @@ test('a deferred method answers twice over MQTT 5, and the second answer arrives
     // for at all, so the transport reported it unroutable and this await never settled.
     t.deepEqual(await ticket.result, { rows: 7 })
 
-    // Progress is deliberately not asserted here, and the reason is a defect rather than a quirk of
-    // this test. A caller cannot attach a progress listener until the receipt has arrived and handed
-    // it a ticket, so any progress delivered in the window between those two is emitted to an
-    // EventEmitter with nothing on it and lost - and `TicketRegistry.hold` drains its early queue
-    // before it has even built the ticket, so a progress that overtook its receipt is lost outright.
-    // Over socket.io that window is sub-millisecond and nothing notices. Over MQTT, with a broker
-    // round trip and a loaded event loop, both frames are routinely handled before the caller's
-    // continuation runs. That wants fixing in the ticket API - buffering progress until the first
-    // subscription - not papering over here. The vanilla-caller test below proves the frames
-    // themselves travel, which is what this change is responsible for.
+    // Asserted again, where it could not be before. A caller cannot subscribe until it holds the
+    // ticket, so on this transport - a broker round trip and a loaded event loop - the first
+    // progress was routinely delivered to an EventEmitter with nothing on it and lost. The registry
+    // holds progress until the first subscriber and replays it, so this is now a promise rather
+    // than a race that happened to be quick enough over socket.io.
+    const seen: number[] = []
+    ticket.on('progress', (update) => seen.push(update))
+    await until(() => seen.length > 0, 8000)
+    t.deepEqual(seen, [50], 'progress reached the caller that subscribed after the receipt')
 
     await client.close()
     await server.close()

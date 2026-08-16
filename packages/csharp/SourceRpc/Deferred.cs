@@ -84,10 +84,66 @@ public sealed class RpcTicket<T>
     /// <summary>What the work produced, when it produces it.</summary>
     public Task<T> Result => _result.Task;
 
-    /// <summary>Reported by the far end while the work runs. Never fired after <see cref="Result"/> settles.</summary>
-    public event Action<object?>? Progress;
+    private readonly List<object?> _early = [];
+    private Action<object?>? _handlers;
+    private bool _subscribed;
 
-    internal void OnProgress(object? value) => Progress?.Invoke(value);
+    /// <summary>
+    /// Reported by the far end while the work runs.
+    ///
+    /// **Progress that arrived before anyone subscribed is replayed to the first subscriber.** A
+    /// caller cannot attach a handler until it holds the ticket, and it cannot hold the ticket until
+    /// the call has answered - so on a fast link the first progress is routinely already here by
+    /// then. Without the replay it would be delivered to an empty event and silently lost, which is
+    /// the same defect the TypeScript ticket registry has and the reason it is worth spelling out.
+    /// </summary>
+    public event Action<object?>? Progress
+    {
+        add
+        {
+            if (value is null)
+                return;
+            object?[] waiting;
+            lock (_early)
+            {
+                _handlers += value;
+                _subscribed = true;
+                waiting = _early.ToArray();
+                _early.Clear();
+            }
+            // To the handler that just arrived, and only it: the others were not there.
+            foreach (var held in waiting)
+                value(held);
+        }
+        remove
+        {
+            lock (_early)
+                _handlers -= value;
+        }
+    }
+
+    /// <summary>How much progress is held for a subscriber that has not arrived. Bounded, because one may never.</summary>
+    private const int MaximumHeldProgress = 64;
+
+    internal void OnProgress(object? value)
+    {
+        Action<object?>? handlers;
+        lock (_early)
+        {
+            if (!_subscribed)
+            {
+                // Oldest first, because a caller arriving late wants where the work has got to
+                // rather than where it began - and a job that reports for an hour must not grow
+                // this without bound while nobody is listening.
+                if (_early.Count >= MaximumHeldProgress)
+                    _early.RemoveAt(0);
+                _early.Add(value);
+                return;
+            }
+            handlers = _handlers;
+        }
+        handlers?.Invoke(value);
+    }
 
     internal void Resolve(T value) => _result.TrySetResult(value);
 

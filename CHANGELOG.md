@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+### A ticket's answer is no longer lost when it arrives before the caller holds the ticket
+
+Both sides had a window between a deferred call being answered and the caller having something to put the answer on, and both dropped what arrived in it. The window is not exotic: completing the receipt's promise *queues* the caller's continuation rather than running it, so the far end's next frame can and does arrive first.
+
+**In C# the answer itself was lost**, which is the serious half. A ticket frame arriving before the ticket existed was discarded, so `resolved` could vanish and `Result` would never complete - a caller waiting for ever rather than being told anything. Reproduced with a method that resolves *before* returning its receipt, which sends the outcome ahead of the answer it belongs to: `INSTANT: LOST - the answer never arrived`. The sink now holds early frames and replays them in order when the ticket opens, and says whether that already settled it so the correlation is not tracked for nothing.
+
+**In TypeScript the answer survived** - a promise remembers what it was resolved with - **but progress did not.** `TicketRegistry.open` drains its early queue before the ticket object exists, so held progress went to an EventEmitter with nothing on it; and progress arriving between the receipt and the caller's `ticket.on('progress', …)` went the same way. Progress is now held until the first subscriber and replayed to it, bounded at 64 and dropping oldest first, because a caller arriving late wants where the work has got to rather than where it began.
+
+That closes something written down here two entries ago as known and unfixed, and it lets the MQTT deferred test assert progress again - an assertion that had to be weakened when it was written, because on a broker round trip with a loaded event loop the loss was routine rather than rare. Checked in both directions: removing the hold makes that test fail.
+
 ### The C# side enforces deadlines, fences and idempotency, and can answer later
 
 The three semantics the main library treats as central, now checked in front of the responder rather than described as somebody else's problem. Verified across languages: the interop suite drives each of them from a real TypeScript client against the real C# hub, over both hub protocols.

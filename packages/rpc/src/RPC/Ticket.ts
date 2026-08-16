@@ -157,7 +157,22 @@ interface Held {
     /** The peer this call was sent to. Nobody else may answer it. */
     target: string
     lapses?: ReturnType<typeof setTimeout>
+    /**
+     * Progress that arrived before anything was listening for it.
+     *
+     * A caller cannot subscribe until it holds the ticket, and it cannot hold the ticket until the
+     * call has answered - so on a fast link, and always for a reply that arrived early enough to be
+     * held, the first progress is here before there is anywhere to put it. Emitting it to an
+     * EventEmitter with no listeners is not delivery, it is a silent drop, and the caller sees a job
+     * that reports nothing until it finishes.
+     */
+    heldProgress?: unknown[]
+    /** Set by the first `on('progress')`, after which progress is emitted rather than held. */
+    watched?: boolean
 }
+
+/** How much progress is held for a subscriber that has not arrived. Bounded, because one may never. */
+const MAX_HELD_PROGRESS = 64
 
 /**
  * The caller's half: tickets outstanding, and the rule about who may answer one.
@@ -208,6 +223,14 @@ export class RpcTickets {
             result: answer,
             on: (event: 'progress' | 'abandoned', listener: (...args: never[]) => void) => {
                 events.on(event, listener as (...args: unknown[]) => void)
+                if (event === 'progress' && !entry.watched) {
+                    entry.watched = true
+                    const held = entry.heldProgress ?? []
+                    entry.heldProgress = undefined
+                    // To the listener that just arrived, and only it: nothing else was there. On a
+                    // later turn, so a subscriber cannot be called back inside its own `on`.
+                    for (const value of held) queueMicrotask(() => (listener as (...args: unknown[]) => void)(value))
+                }
                 return ticket
             },
             off: (event: 'progress' | 'abandoned', listener: (...args: never[]) => void) => {
@@ -229,6 +252,15 @@ export class RpcTickets {
         const entry = this.held.get(id)
         if (!entry || entry.target !== from) return false
         if (outcome === 'progress') {
+            if (!entry.watched) {
+                // Oldest first when the bound is reached: a caller arriving late wants where the
+                // work has got to rather than where it began, and a job that reports for an hour
+                // must not grow this without limit while nobody is listening.
+                const held = (entry.heldProgress ??= [])
+                if (held.length >= MAX_HELD_PROGRESS) held.shift()
+                held.push(value)
+                return true
+            }
             entry.events.emit('progress', value)
             return true
         }

@@ -96,6 +96,11 @@ static async Task RunAsClient(string url, string target)
         Console.WriteLine($"EVENT: {(ticks.Count > 0 ? ticks[0] : "<none>")}");
     }
 
+    // The race: a deferred method whose answer arrives before the caller has its ticket.
+    var instant = await client.CallDeferredAsync<string>(target, "meter", "instant");
+    var settled = await Task.WhenAny(instant.Result, Task.Delay(TimeSpan.FromSeconds(5)));
+    Console.WriteLine(settled == instant.Result ? $"INSTANT: {await instant.Result}" : "INSTANT: LOST - the answer never arrived");
+
     try
     {
         await client.CallAsync<string>(target, "meter", "refuse");
@@ -180,6 +185,18 @@ internal sealed class Meter : ISourceRpcResponder
                     await Task.Delay(50);
                     await deferred.ResolveAsync($"finished {invocation.Arg<string>(0)}");
                 });
+                return deferred.Receipt;
+            }
+
+            case "instant":
+            {
+                // Answers before it has finished saying it will answer later. The progress and the
+                // outcome are sent from inside the method, so both ticket frames leave *before* the
+                // receipt the dispatcher sends when this returns - the worst ordering a client can
+                // be handed, and a legitimate one for work that turns out to be already done.
+                var deferred = invocation.Defer<string>();
+                await deferred.ProgressAsync(1);
+                await deferred.ResolveAsync("instantly");
                 return deferred.Receipt;
             }
 

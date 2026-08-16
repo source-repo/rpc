@@ -127,7 +127,11 @@ public sealed class SourceRpcClient : IAsyncDisposable
             if (answer.Deferred == true && answer.Body is not null)
             {
                 var receipt = Convert<RpcTicketReceipt>(answer.Body);
-                sink.Open(receipt?.ExpiresAt ?? 0);
+                // Opening replays whatever arrived while there was no ticket to put it on, and says
+                // whether that already settled the thing - in which case there is nothing left to
+                // track and holding the correlation would only leak it.
+                if (sink.Open(receipt?.ExpiresAt ?? 0))
+                    _tickets.TryRemove(correlation, out _);
                 return sink.Ticket;
             }
             // Not deferred after all: the method answered outright.
@@ -341,33 +345,78 @@ public sealed class SourceRpcClient : IAsyncDisposable
         bool Settle(string? outcome, object? body);
     }
 
+    /// <summary>
+    /// Holds a ticket's answers, including the ones that arrive before there is a ticket to put
+    /// them on.
+    ///
+    /// That window is not exotic, it is the ordinary case on a fast link: the far end may send its
+    /// first ticket frame the instant it has accepted the work, and a method that turns out to have
+    /// nothing to wait for sends the *outcome* before the receipt it is answering with. Both beat
+    /// the caller's continuation, because completing the receipt's task queues that continuation
+    /// rather than running it. Dropping those frames lost the progress, and lost `resolved` too -
+    /// which is not a missing notification but a caller that waits for ever.
+    /// </summary>
     private sealed class TicketSink<T>(string correlation) : IRpcTicketSink
     {
+        private readonly List<(string? Outcome, object? Body)> _early = [];
         private RpcTicket<T>? _ticket;
+        private bool _settled;
 
         public RpcTicket<T> Ticket => _ticket ?? throw new InvalidOperationException("the ticket has not been opened");
 
-        public void Open(long expiresAt) =>
-            _ticket ??= new RpcTicket<T>(correlation, DateTimeOffset.FromUnixTimeMilliseconds(expiresAt == 0 ? DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() : expiresAt));
+        /// <summary>Build the ticket and replay whatever already arrived. True when it is already settled.</summary>
+        public bool Open(long expiresAt)
+        {
+            (string?, object?)[] waiting;
+            lock (_early)
+            {
+                _ticket ??= new RpcTicket<T>(
+                    correlation,
+                    DateTimeOffset.FromUnixTimeMilliseconds(expiresAt == 0 ? DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() : expiresAt));
+                waiting = _early.Select(one => (one.Outcome, one.Body)).ToArray();
+                _early.Clear();
+            }
+            var settled = false;
+            foreach (var (outcome, body) in waiting)
+                settled |= Deliver(outcome, body);
+            return settled;
+        }
 
         public bool Settle(string? outcome, object? body)
         {
-            var ticket = _ticket;
-            if (ticket is null)
-                return false;
+            lock (_early)
+            {
+                if (_ticket is null)
+                {
+                    // Held rather than dropped. Replayed by Open, in arrival order.
+                    _early.Add((outcome, body));
+                    return false;
+                }
+            }
+            return Deliver(outcome, body);
+        }
+
+        private bool Deliver(string? outcome, object? body)
+        {
+            var ticket = _ticket!;
             switch (outcome)
             {
                 case "progress":
                     ticket.OnProgress(body);
                     return false;
                 case "rejected":
+                    _settled = true;
                     ticket.Reject(new SourceRpcException(RpcErrorCode.Exception, MessageOf(body)));
                     return true;
                 default:
+                    _settled = true;
                     ticket.Resolve(Convert<T>(body)!);
                     return true;
             }
         }
+
+        /// <summary>Whether the answer has already been delivered, so the client can stop tracking it.</summary>
+        public bool Settled => _settled;
     }
 
     private sealed class Subscription(SourceRpcClient client, string target, string path, string eventName, Action<object?[]> handler) : IRpcSubscription
