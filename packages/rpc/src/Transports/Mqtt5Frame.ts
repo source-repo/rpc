@@ -1,24 +1,14 @@
 import { stringToUint8Array, uint8ArrayToString } from 'uint8array-extras'
-import { Message, MessageType } from '../RPC/Core.js'
-import {
-    RpcCallInstanceMethodPayload,
-    RpcErrorCode,
-    RpcErrorPayload,
-    RpcEventPayload,
-    RpcMessage,
-    RpcMessageType,
-    RpcRemoteError,
-    RpcSuccessPayload
-} from '../RPC/Messages.js'
 
 /**
- * Mapping between msgrpc messages and the MQTT 5 packet layout described in
- * docs/mqtt5-frame-spec.md.
+ * The MQTT 5 half of the frame mapping: what the neutral frame in RPC/Frame.ts is called on this
+ * wire, and how it is read back off it. The layout is described in docs/mqtt5-frame-spec.md.
  *
  * The point is that a peer needs no msgrpc code to take part: where to reply and how to correlate
  * come from the protocol's own Response Topic and Correlation Data, and everything else is a
- * readable user property. Kept separate from the transport so the mapping can be read, and tested,
- * without a broker.
+ * readable user property. Kept separate from the transport so the naming can be read, and tested,
+ * without a broker - and separate from the frame itself so that adding a field to the protocol is
+ * not the same act as deciding what MQTT calls it.
  */
 
 /** Control properties are prefixed so a broker or gateway injecting its own cannot be mistaken for one. */
@@ -57,162 +47,42 @@ export const MR = {
      * check - it removes it, and a command whose instance was reassigned mid-flight runs under the
      * new owner with nothing said. Which is the failure a fence exists to prevent.
      */
-    fence: 'mr-fence'
+    fence: 'mr-fence',
+    /**
+     * On a result: this is the receipt for a method that answers later, not the answer. `1` when
+     * set, absent otherwise - a caller hydrates a ticket on the property being there rather than on
+     * its value, so there is no false to spell.
+     */
+    deferred: 'mr-deferred',
+    /** On a ticket: `progress`, `resolved` or `rejected`. Which of the three decides whether the caller's promise settles. */
+    outcome: 'mr-outcome',
+    /**
+     * On an event: this emission's position in the server's per-(namespace, event) count, and the
+     * server incarnation that count belongs to.
+     *
+     * Together they are what lets a watcher say "gapless" rather than merely "saw nothing":
+     * consecutive stamps under one epoch prove nothing fell between them. Carried as properties
+     * rather than folded into the payload because the payload is the emit arguments and nothing
+     * else, which is what makes an event readable to a peer with no msgrpc code.
+     */
+    seq: 'mr-seq',
+    epoch: 'mr-epoch'
 } as const
 
 /**
- * Version 3 adds the owner fence to the signature. Version 2 covers contentType, the error code,
- * the declared contract version, the response topic, the ttl and the idempotency key; version 1
- * covered none of them, and a frame signed under one cannot verify under another. Bumped rather
- * than negotiated: a receiver that quietly accepted either would let an attacker choose the weaker,
- * and under version 2 the weaker choice is the one where stripping `mr-fence` costs nothing.
+ * Version 3 covers the whole protocol: it adds the owner fence, the deferred marker, the ticket
+ * outcome and the event cursor, all of them in the signature. Version 2 covered contentType, the
+ * error code, the declared contract version, the response topic, the ttl and the idempotency key;
+ * version 1 covered none of them, and a frame signed under one cannot verify under another.
+ *
+ * Bumped rather than negotiated: a receiver that quietly accepted either would let an attacker
+ * choose the weaker, and under version 2 the weaker choice is the one where deleting `mr-fence`
+ * disarms the owner check for free.
  */
 export const FRAME_VERSION = '3'
 
 /** Frame versions this build will accept. A frame announcing anything else is refused, not guessed at. */
 export const SUPPORTED_FRAME_VERSIONS = new Set([FRAME_VERSION])
-
-export type FrameKind = 'call' | 'subscribe' | 'unsubscribe' | 'result' | 'error' | 'event'
-
-/** Which per-peer topic a frame belongs on. */
-export type Channel = 'req' | 'rsp' | 'evt'
-
-export interface OutboundFrame {
-    kind: FrameKind
-    channel: Channel
-    /** The request id, carried as MQTT correlation data. Absent on events. */
-    correlation?: string
-    path?: string
-    method?: string
-    event?: string
-    code?: string
-    /** Contract version the caller declares, when it has one. */
-    version?: string
-    /** Milliseconds the caller will still wait. Drives the MQTT message expiry as well. */
-    ttl?: number
-    /** Names the command rather than this attempt at it, when the caller says so. */
-    idempotencyKey?: string
-    /**
-     * The owner generation the caller observed, when it fences. Carried flat rather than as the
-     * payload's `{ownerEpoch}` object, because a user property is a string and this layout has
-     * nowhere to put an object.
-     */
-    fence?: string
-    /** Encoded as the packet payload: arguments for a request, the value for a result. */
-    body: unknown
-}
-
-const requestKind = (method: string): FrameKind =>
-    method === 'on' ? 'subscribe' : method === 'off' || method === 'removeListener' ? 'unsubscribe' : 'call'
-
-/** Kinds that expect an answer, and so are the only ones entitled to say where it should go. */
-export const isRequestKind = (kind: string | undefined) => kind === 'call' || kind === 'subscribe' || kind === 'unsubscribe'
-
-/** Undefined for anything this layout has no representation for, which the transport drops. */
-export const toOutboundFrame = (message: Message): OutboundFrame | undefined => {
-    const payload = message.payload as RpcMessage | undefined
-    if (!payload) return undefined
-    switch (payload.type) {
-        case RpcMessageType.CallInstanceMethod: {
-            const call = payload as RpcCallInstanceMethodPayload
-            return {
-                kind: requestKind(call.method),
-                channel: 'req',
-                correlation: call.id,
-                path: call.path,
-                method: call.method,
-                version: call.version,
-                ttl: call.ttl,
-                idempotencyKey: call.idempotencyKey,
-                fence: call.fence?.ownerEpoch,
-                body: call.params
-            }
-        }
-        case RpcMessageType.success: {
-            const success = payload as RpcSuccessPayload
-            return { kind: 'result', channel: 'rsp', correlation: success.id, body: success.result }
-        }
-        case RpcMessageType.error: {
-            const error = payload as RpcErrorPayload
-            return { kind: 'error', channel: 'rsp', correlation: error.id, code: error.code, body: error.error }
-        }
-        case RpcMessageType.event: {
-            const event = payload as RpcEventPayload
-            return { kind: 'event', channel: 'evt', event: event.event, path: event.path, body: event.params }
-        }
-        default:
-            return undefined
-    }
-}
-
-export interface InboundFrame {
-    kind: string
-    correlation?: string
-    path?: string
-    method?: string
-    event?: string
-    code?: string
-    version?: string
-    /** What the caller said it would still wait, already narrowed by anything the broker reported. */
-    ttl?: number
-    idempotencyKey?: string
-    /** The owner generation the caller observed, when it fenced. See MR.fence. */
-    fence?: string
-    body: unknown
-}
-
-/** Undefined when the frame does not describe anything this RPC layer can dispatch. */
-export const fromInboundFrame = (frame: InboundFrame): Message | undefined => {
-    switch (frame.kind) {
-        case 'call':
-        case 'subscribe':
-        case 'unsubscribe': {
-            if (!frame.correlation || !frame.path || !frame.method) return undefined
-            const payload: RpcCallInstanceMethodPayload = {
-                type: RpcMessageType.CallInstanceMethod,
-                id: frame.correlation,
-                path: frame.path,
-                method: frame.method,
-                version: frame.version,
-                ttl: frame.ttl,
-                idempotencyKey: frame.idempotencyKey,
-                // Absent rather than `{ownerEpoch: undefined}`: fenceRefusal tests the fence object
-                // for presence, so an empty one would be a fence against nothing rather than none.
-                ...(frame.fence ? { fence: { ownerEpoch: frame.fence } } : {}),
-                // A caller that sends no payload means no arguments.
-                params: Array.isArray(frame.body) ? frame.body : frame.body === undefined || frame.body === null ? [] : [frame.body]
-            }
-            return { type: MessageType.RequestMessage, payload }
-        }
-        case 'result': {
-            if (!frame.correlation) return undefined
-            const payload: RpcSuccessPayload = { type: RpcMessageType.success, id: frame.correlation, result: frame.body }
-            return { type: MessageType.ResponseMessage, payload }
-        }
-        case 'error': {
-            if (!frame.correlation) return undefined
-            const payload: RpcErrorPayload = {
-                type: RpcMessageType.error,
-                id: frame.correlation,
-                code: (frame.code ?? 'Exception') as RpcErrorCode,
-                error: frame.body as RpcRemoteError | undefined
-            }
-            return { type: MessageType.ErrorMessage, payload }
-        }
-        case 'event': {
-            if (!frame.event) return undefined
-            const payload: RpcEventPayload = {
-                type: RpcMessageType.event,
-                event: frame.event,
-                path: frame.path,
-                params: Array.isArray(frame.body) ? frame.body : [frame.body]
-            }
-            return { type: MessageType.EventMessage, payload }
-        }
-        default:
-            return undefined
-    }
-}
 
 export type RawUserProperties = { [key: string]: string | string[] } | undefined
 
@@ -231,6 +101,19 @@ export const readControlProperties = (properties: RawUserProperties): { values: 
         values[key] = value
     }
     return { values }
+}
+
+/**
+ * A count read back off the wire, or undefined for anything that is not one.
+ *
+ * Every user property is a string, and this one is compared and ordered rather than merely echoed.
+ * A `seq` of "NaN" or "1e400" would make a watcher's gap arithmetic produce nonsense quietly, so
+ * what cannot be read as a whole number is treated as a frame that carried no count at all.
+ */
+export const readCount = (value: string | undefined) => {
+    if (value === undefined) return undefined
+    const count = Number(value)
+    return Number.isSafeInteger(count) && count >= 0 ? count : undefined
 }
 
 export const correlationToString = (correlation: Uint8Array | undefined) => (correlation ? uint8ArrayToString(correlation) : undefined)

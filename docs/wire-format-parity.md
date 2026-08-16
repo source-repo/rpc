@@ -1,6 +1,8 @@
 # One frame model, two transports
 
-**Status: proposal.** Nothing here is implemented. It exists because a peer written in another language currently has to implement msgrpc twice — once for MQTT 5, once for socket.io — and the two share no vocabulary.
+**Status: steps 1 and 2 done, step 3 outstanding.** The frame model is complete and MQTT 5 carries all of it; socket.io still speaks the `$`-delimited layout. It exists because a peer written in another language has to implement msgrpc twice — once for MQTT 5, once for socket.io — and the two share no vocabulary.
+
+What is done: the four losses in the table below are closed, and the neutral frame they were missing from now lives in `packages/rpc/src/RPC/Frame.ts` with `Transports/Mqtt5Frame.ts` holding only the `mr-` naming. `mr-v` went 2 → 3 once, covering the fence, the deferred marker, the ticket kind and the event cursor together, since 3 had not shipped. What remains is section 2 below — the socket.io v2 frame — which after that move is a mapping exercise rather than a design one.
 
 ## The thing that changes the order of the work
 
@@ -72,8 +74,14 @@ socket.io itself is still a protocol an implementer has to obtain a library for,
 
 Worth doing, in this order:
 
-1. **`fence` over MQTT 5** — on its own, ahead of everything else here. It is a silent safety failure, not an interop inconvenience.
-2. **The neutral frame plus the missing kinds**, with the `mr-v` bump. This is the part that makes "the protocol" a thing that exists in one place.
-3. **The socket.io v2 frame**, which after step 2 is a mapping exercise rather than a design one.
+1. ~~**`fence` over MQTT 5**~~ — **done.** On its own, ahead of everything else here, because it was a silent safety failure rather than an interop inconvenience.
+2. ~~**The neutral frame plus the missing kinds**~~ — **done**, folded into the same `mr-v` 2 → 3 bump rather than a second one. This is the part that makes "the protocol" a thing that exists in one place.
+3. **The socket.io v2 frame** — outstanding, and now a mapping exercise rather than a design one.
 
-Steps 1 and 2 are worth it even if nobody ever writes a non-TS peer, because they are the difference between four features that work and four features that work on one transport. Step 3 is the one that answers the original question, and it is the cheapest of the three.
+Steps 1 and 2 were worth it even though nobody has yet written a non-TS peer, because they were the difference between four features that work and four features that work on one transport. Step 3 is the one that answers the original question, and it is the cheapest of the three.
+
+### What step 2 turned up that is still open
+
+**Progress on a ticket is lost if it arrives before the caller can listen.** A caller receives its ticket only when the receipt arrives, and `TicketRegistry.hold` drains its early-held queue before the ticket object is constructed — so progress that overtook the receipt is emitted to nothing, and progress arriving in the window between the receipt and the caller's `ticket.on('progress', …)` is dropped for want of a listener. Over socket.io that window is sub-millisecond, which is why nothing ever caught it. Over MQTT it is a broker round trip wide, and it is reproducible under load.
+
+This is a defect in the ticket API rather than in any wire format, and the fix is to buffer progress on the ticket until its first subscription. Left out of the frame work deliberately: it is a change to what a ticket promises, and it should be argued on its own.

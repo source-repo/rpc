@@ -7,17 +7,15 @@ import type { IPublishPacket } from 'mqtt-packet'
 import { MessageSigner, MessageVerifier, RpcIdentity } from '../RPC/Auth.js'
 import { canonicalSignedBytes, canonicalSignedBytesV5, createNonce, ReplayGuard } from '../RPC/Signing.js'
 import { refuseDelivery } from '../RPC/Undeliverable.js'
+import { Channel, fromInboundFrame, isFinalReply, isReplyKind, isRequestKind, toOutboundFrame } from '../RPC/Frame.js'
 import {
-    Channel,
     correlationToBytes,
     correlationToString,
     FRAME_VERSION,
-    fromInboundFrame,
-    isRequestKind,
     MR,
     readControlProperties,
-    SUPPORTED_FRAME_VERSIONS,
-    toOutboundFrame
+    readCount,
+    SUPPORTED_FRAME_VERSIONS
 } from './Mqtt5Frame.js'
 import { isUsableShape } from './Presence.js'
 import { RpcMessageType, type RpcBatchPayload, type RpcMessage } from '../RPC/Messages.js'
@@ -640,6 +638,12 @@ export class MqttTransport extends GenericModule<Message, unknown, Message, unkn
             ttl: this.remainingTtl(values[MR.ttl], properties?.messageExpiryInterval),
             idempotencyKey: values[MR.idempotencyKey],
             fence: values[MR.fence],
+            // Presence, not value: `mr-deferred` is only ever sent as '1', and a caller that read
+            // it as a boolean would hydrate a ticket for a sender that wrote 'false'.
+            deferred: values[MR.deferred] !== undefined,
+            outcome: values[MR.outcome],
+            seq: readCount(values[MR.seq]),
+            epoch: values[MR.epoch],
             body: decoded
         })
         if (!message) {
@@ -790,6 +794,15 @@ export class MqttTransport extends GenericModule<Message, unknown, Message, unkn
         return Math.min(Math.max(1, Math.ceil(ttl / 1000)), 0xffffffff)
     }
 
+    /**
+     * Where a caller asked to be answered, and in what. Held until the reply that ends the
+     * exchange - see `isFinalReply` - rather than until the first one, because a deferred method
+     * answers twice and both answers belong to the caller that asked.
+     *
+     * The bound below is what stops a caller that never gets its final reply from growing this
+     * without limit: a request whose method throws before answering, or a deferred one abandoned
+     * mid-flight, leaves a note that nothing will ever release.
+     */
     private rememberReply(correlation: string, contentType: string | undefined, topic: string | undefined) {
         // Only what differs from what would be derived anyway, so an ordinary exchange between two
         // of our own peers adds nothing to this map.
@@ -801,13 +814,6 @@ export class MqttTransport extends GenericModule<Message, unknown, Message, unkn
             if (oldest.done) break
             this.pendingReplies.delete(oldest.value)
         }
-    }
-
-    /** One request, one answer: taking it also forgets it. */
-    private takeReply(correlation: string) {
-        const pending = this.pendingReplies.get(correlation)
-        if (pending) this.pendingReplies.delete(correlation)
-        return pending
     }
 
     /** A peer may speak JSON while this one defaults to msgpack; contentType says which. */
@@ -858,6 +864,10 @@ export class MqttTransport extends GenericModule<Message, unknown, Message, unkn
             ttl: values[MR.ttl] ?? '',
             idempotencyKey: values[MR.idempotencyKey] ?? '',
             fence: values[MR.fence] ?? '',
+            deferred: values[MR.deferred] ?? '',
+            outcome: values[MR.outcome] ?? '',
+            seq: values[MR.seq] ?? '',
+            epoch: values[MR.epoch] ?? '',
             timestamp,
             nonce,
             payload: body
@@ -963,7 +973,14 @@ export class MqttTransport extends GenericModule<Message, unknown, Message, unkn
         }
         // A reply goes where its request asked and in the encoding it arrived in; anything else goes
         // to the addressee's own channel in this peer's own encoding.
-        const pending = frame.channel === 'rsp' && frame.correlation ? this.takeReply(frame.correlation) : undefined
+        //
+        // Read rather than taken, and released only on the reply that ends the exchange. A deferred
+        // method answers twice - a `result` marked deferred, then a `ticket` carrying what the work
+        // produced - and taking the note on the first would send every later answer to the derived
+        // topic in this peer's own encoding. A caller that named its own response topic would get
+        // its receipt where it asked and its actual answer somewhere it is not listening.
+        const pending = isReplyKind(frame.kind) && frame.correlation ? this.pendingReplies.get(frame.correlation) : undefined
+        if (frame.correlation && isFinalReply(frame)) this.pendingReplies.delete(frame.correlation)
         const topic = pending?.topic ?? this.channelTopic(frame.channel, target)
         const codec = pending?.contentType ? this.codecFor(pending.contentType) : this.codec
         const body = codec.encode(frame.body)
@@ -983,6 +1000,10 @@ export class MqttTransport extends GenericModule<Message, unknown, Message, unkn
         if (frame.ttl !== undefined) userProperties[MR.ttl] = String(frame.ttl)
         if (frame.idempotencyKey) userProperties[MR.idempotencyKey] = frame.idempotencyKey
         if (frame.fence) userProperties[MR.fence] = frame.fence
+        if (frame.deferred) userProperties[MR.deferred] = '1'
+        if (frame.outcome) userProperties[MR.outcome] = frame.outcome
+        if (frame.seq !== undefined) userProperties[MR.seq] = String(frame.seq)
+        if (frame.epoch) userProperties[MR.epoch] = frame.epoch
 
         if (this.sign) {
             const nonce = createNonce()
@@ -1002,6 +1023,12 @@ export class MqttTransport extends GenericModule<Message, unknown, Message, unkn
                 ttl: frame.ttl !== undefined ? String(frame.ttl) : '',
                 idempotencyKey: frame.idempotencyKey ?? '',
                 fence: frame.fence ?? '',
+                // The exact strings the properties carry, so the verifier can rebuild this from
+                // what arrived without knowing how a boolean or a number was spelled.
+                deferred: frame.deferred ? '1' : '',
+                outcome: frame.outcome ?? '',
+                seq: frame.seq !== undefined ? String(frame.seq) : '',
+                epoch: frame.epoch ?? '',
                 timestamp,
                 nonce,
                 payload: body

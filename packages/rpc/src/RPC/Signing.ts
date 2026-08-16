@@ -89,6 +89,28 @@ export interface SignedFrameV5 {
      * ownership into one that runs.
      */
     fence: string
+    /**
+     * `1` when this result is a receipt for an answer still to come, empty otherwise. Signed
+     * because the caller acts on it by *continuing to wait*: clearing it settles a promise with the
+     * receipt in place of the answer, and setting it on an ordinary result hangs the caller until
+     * its deadline, for a ticket nobody is going to send.
+     */
+    deferred: string
+    /**
+     * A ticket's `progress`, `resolved` or `rejected`, empty on anything that is not one. This one
+     * field is the whole meaning of the frame: rewriting `resolved` to `progress` strands the
+     * caller on a promise that never settles, and the reverse settles it with a value the work
+     * never produced.
+     */
+    outcome: string
+    /**
+     * An event's position in its server's count, and the incarnation that count belongs to. Empty
+     * on anything else. Signed because a watcher's claim of gaplessness is arithmetic on exactly
+     * these two - rewriting them can close a real gap or open an imaginary one, and being able to
+     * say nothing fell between two emissions is the entire point of carrying them.
+     */
+    seq: string
+    epoch: string
     timestamp: number
     nonce: string
     payload: Uint8Array
@@ -109,8 +131,12 @@ export interface SignedFrameV5 {
  * error code decides what a caller does about a failure, the declared contract version decides
  * whether the call is accepted at all, the response topic decides where the answer is published, the
  * ttl decides whether the method runs at all, the idempotency key decides whether it runs again, and
- * the owner fence decides whether it runs under an ownership the caller never observed. All six are
- * covered.
+ * the owner fence decides whether it runs under an ownership the caller never observed.
+ *
+ * Version 3 finished the job on the answering side, where the same rule had never been applied: the
+ * deferred marker decides whether a caller keeps waiting, a ticket's outcome decides whether its
+ * promise settles and which way, and an event's sequence and epoch decide whether a watcher may
+ * claim it missed nothing. Everything either end acts on is now covered.
  *
  * The MQTT message expiry is deliberately **not** covered, because the broker is meant to decrement
  * it in flight and a signature over it would break on the first queued message. Nothing is lost:
@@ -134,6 +160,10 @@ export const canonicalSignedBytesV5 = (frame: SignedFrameV5): Uint8Array => {
             frame.ttl,
             frame.idempotencyKey,
             frame.fence,
+            frame.deferred,
+            frame.outcome,
+            frame.seq,
+            frame.epoch,
             frame.timestamp,
             frame.nonce
         ])

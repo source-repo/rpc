@@ -2,7 +2,7 @@
 
   What did change in 3.0 is the signed frame version, `mr-v`, which went 1 -> 2. Version 2 covers the content type, the error code, the declared contract version, the response topic and the ttl in the signature; version 1 covered none of them, and a frame signed under version 1 no longer verifies. That gate applies only to signed frames - an unsigned plain-MQTT peer sending `mr-v: 1` is still accepted, because its version says nothing about security and interop is the point. See the Security section of the changelog.
 
-  Version 3 adds `mr-fence` and covers it in the signature. The gate rule is unchanged and applies for a sharper reason: version 2 signed everything except the fence, so honouring a version 2 signature on a version 3 network would let a sender choose the form in which deleting one property disarms the check entirely. -->
+  Version 3 makes the layout carry the whole protocol. It adds `mr-fence`, `mr-deferred`, the `ticket` kind with `mr-outcome`, and the event cursor `mr-seq`/`mr-epoch` — four things that travelled over socket.io and were dropped here without a word — and covers all of them in the signature. The gate rule is unchanged and applies for a sharper reason than before: version 2 signed everything except the fence, so honouring a version 2 signature on a version 3 network would let a sender choose the form in which deleting one property disarms the check entirely. -->
 
 # msgrpc over MQTT 5 — frame layout
 
@@ -55,7 +55,7 @@ MQTT permits a user property to repeat. **A frame with any `mr-*` property prese
 | --- | --- | --- |
 | `mr-v` | all | frame format version, currently `3` |
 | `mr-src` | all | sending peer name |
-| `mr-kind` | all | `call` \| `subscribe` \| `unsubscribe` \| `result` \| `error` \| `event` |
+| `mr-kind` | all | `call` \| `subscribe` \| `unsubscribe` \| `result` \| `error` \| `event` \| `ticket` |
 | `mr-path` | call, subscribe, event | exposed instance name |
 | `mr-method` | call, subscribe | method name |
 | `mr-event` | event | event name |
@@ -64,6 +64,9 @@ MQTT permits a user property to repeat. **A frame with any `mr-*` property prese
 | `mr-ttl` | call, subscribe | milliseconds the caller will still wait, counted from sending |
 | `mr-idem` | call | names the command this is an attempt at, when the caller distinguishes the two |
 | `mr-fence` | call | the owner generation the caller observed for `mr-path`, when it fences |
+| `mr-deferred` | result | `1` when this result is a receipt and the answer comes later as a `ticket` |
+| `mr-outcome` | ticket | `progress` \| `resolved` \| `rejected` |
+| `mr-seq`, `mr-epoch` | event | this emission's position in the server's count, and the incarnation it counts within |
 | `mr-nonce`, `mr-ts`, `mr-sig` | signed frames | replay and signature fields |
 
 ### Why `mr-fence` had to exist
@@ -137,6 +140,29 @@ payload          <msgpack of {"name":"RpcError","message":"not permitted to call
 
 Putting the code in a property means an operator can see *why* a call failed in MQTT Explorer without decoding the payload.
 
+## Deferred answers, and the one place a correlation is reused
+
+A method that answers later replies **twice** on one correlation: a receipt now, and the answer when the work finishes. The receipt is an ordinary `result` carrying `mr-deferred: 1`, and its payload is the ticket — an id and an expiry — rather than the answer:
+
+```
+userProperties   mr-v=3  mr-src=plantServer  mr-kind=result  mr-deferred=1
+payload          <msgpack of {"id":"…","expiresAt":1785187892623}>
+```
+
+Everything after it is `mr-kind: ticket` on the same `correlationData`, with `mr-outcome` saying whether the exchange is over. `progress` may arrive any number of times; `resolved` and `rejected` arrive once and end it. A rejected ticket carries `{name, message, stack?}` the way an error does; the others carry the value.
+
+```
+userProperties   mr-v=3  mr-src=plantServer  mr-kind=ticket  mr-outcome=progress
+payload          <msgpack of 50>
+
+userProperties   mr-v=3  mr-src=plantServer  mr-kind=ticket  mr-outcome=resolved
+payload          <msgpack of {"rows":100000}>
+```
+
+**This is the only place the one-publish-one-correlation rule bends, and it bends deliberately.** The spec refuses to represent a batch for exactly this reason — a batch has as many correlations as it has calls, so it would need a second pairing rule beside MQTT's own. A deferred call needs no second rule: it has *one* correlation and more than one publish against it, which correlation data already expresses, and `mr-outcome` says which publish ends the exchange. Nothing has to guess.
+
+The consequence for a responder is that **the response topic and content type must be held until the outcome, not until the first reply**. Releasing them on the receipt sends every later answer to a derived topic in the responder's own encoding — so a caller that named its own reply topic gets its receipt where it asked and its actual answer somewhere it is not listening.
+
 ## Event
 
 ```
@@ -148,9 +174,13 @@ userProperties
   mr-kind        event
   mr-path        plant
   mr-event       alarm
+  mr-seq         41                               # when the server counts this event
+  mr-epoch       e-3f9c                           # the incarnation that count belongs to
   mr-nonce, mr-ts, mr-sig                         # signed frames only
 payload          <msgpack of ["high pressure"]>   # the emit argument array
 ```
+
+`mr-seq` and `mr-epoch` are what let a subscriber say **"gapless"** rather than only "saw nothing": consecutive counts within one epoch prove nothing fell between two emissions. The count runs whether or not anyone is subscribed, which is the point — a counter that only advanced while someone watched could never describe the gap. The epoch bounds the promise honestly, because a sequence orders within one server incarnation and says nothing across a restart, so a subscriber seeing a new epoch knows to treat its held cursor as unknowable rather than to subtract and get a plausible number.
 
 ## Signing
 
@@ -159,7 +189,8 @@ The signature must cover everything that decides what a frame means and where it
 ```
 signedInput = utf8(JSON.stringify([
     v, topic, responseTopic, src, kind, path, methodOrEvent, correlation,
-    contentType, code, contractVersion, ttl, idempotencyKey, fence, ts, nonce
+    contentType, code, contractVersion, ttl, idempotencyKey, fence,
+    deferred, outcome, seq, epoch, ts, nonce
 ])) || payload
 ```
 
@@ -170,6 +201,8 @@ Fields are signed **positionally by value**, so the `mr-` property naming does n
 The same argument covers the rest of what version 2 added: `code` decides what a caller does about a failure, `contractVersion` decides whether the call is accepted at all, `responseTopic` decides where the answer is published, `ttl` decides whether a command that is already too late still runs, and `mr-idem` decides whether a command that has already run runs again.
 
 Version 3 adds `fence`, and it is the sharpest case of the rule rather than an exception to it. Every other signed field can be *changed* to change the meaning of a frame; `mr-fence` only has to be **removed**. An unsigned fence would mean anyone on the path could turn a command that was meant to be refused under a new ownership into one that executes, by deleting a property — no key, no forgery, and nothing at either end to notice.
+
+Version 3 also applies the rule on the **answering** side, where it had never been applied at all. `mr-deferred` decides whether a caller keeps waiting — clear it and the caller settles with the receipt in place of the answer, set it on an ordinary result and the caller hangs until its deadline for a ticket nobody will send. `mr-outcome` is the entire meaning of a ticket: rewriting `resolved` to `progress` strands the caller, and the reverse settles it with a value the work never produced. `mr-seq` and `mr-epoch` are the arithmetic behind a gaplessness claim, so rewriting them can close a real gap or open an imaginary one. All four are covered.
 
 `messageExpiryInterval` is deliberately **not** signed, because the broker is required to decrement it in flight and a signature over it would break on the first queued message. Nothing is lost: it may only narrow the signed `mr-ttl`, so rewriting it can delay or drop a frame — which anyone able to rewrite it could do anyway — but cannot buy a stale command more time.
 
@@ -197,7 +230,7 @@ A responder serving one namespace:
 1. Subscribe `<prefix>/req/<name>`.
 2. On a message, read `mr-path` and `mr-method` and decode the payload as an argument array using `contentType`.
 3. If `mr-ttl` is present, stop and answer `mr-code=Timeout` when more than that many milliseconds have passed since the message arrived — less whatever the broker already deducted from `messageExpiryInterval`. Check it just before running the method, not on arrival. If `mr-idem` is present and the method is one a repeat would change something with, look the key up before running and answer from the recorded outcome if it is there. If `mr-fence` is present and you keep a record of who owns `mr-path`, compare the two and answer `mr-code=OwnershipChanged` on any difference — including when you hold no record at all, which fails closed rather than running a command whose fence you cannot check.
-4. Publish the result to the packet's `responseTopic`, echoing `correlationData`, with `mr-kind=result` and the same `contentType`.
+4. Publish the result to the packet's `responseTopic`, echoing `correlationData`, with `mr-kind=result` and the same `contentType`. If the work will finish later, mark that result `mr-deferred=1` and send the answer afterwards as `mr-kind=ticket` with an `mr-outcome` — on the same correlation and the same response topic, which means keeping both until the outcome rather than releasing them after the receipt.
 
 No msgrpc framing, no `$` splitting, no nested envelope. A caller is the mirror image. A third party that prefers JSON simply sets `contentType: application/json` and gets JSON replies.
 
@@ -212,9 +245,11 @@ No msgrpc framing, no `$` splitting, no nested envelope. A caller is the mirror 
 
 ## Implementation shape
 
-The RPC handlers currently build a `Message` object that is msgpack-encoded and then framed with a `$` header, so a transport only ever sees opaque bytes. MQTT 5 needs structured access to kind, path, method, correlation and arguments.
+The RPC handlers build a `Message` object that is msgpack-encoded and then framed with a `$` header, so a transport only ever sees opaque bytes. MQTT 5 needs structured access to kind, path, method, correlation and arguments.
 
-That means introducing a transport-independent `RpcFrame` — `{kind, src, target, path, method, event, correlation, args | result | error}` — that handlers emit and each transport maps to its own wire form. socket.io keeps today's `Message` + msgpack + `$` header; MQTT maps to properties plus a bare payload. It is a refactor of the module chain rather than a patch to the MQTT transport, and it is the bulk of the work.
+The transport-independent frame this section called for now exists, as `RPC/Frame.ts`. It is the flat form of the protocol — kind, correlation, path, method, event, and the fields a receiver acts on — and `Transports/Mqtt5Frame.ts` holds only what MQTT calls each of them. socket.io still uses today's `Message` + msgpack + `$` header and is the remaining half of the job; see `docs/wire-format-parity.md`.
+
+**Splitting the two was not tidying.** While one file held both the protocol and one transport's names for it, "add a field to the protocol" and "decide what MQTT calls it" were the same act — and a field could therefore be added to the payload, honoured by socket.io, and never noticed to be missing here. That is precisely how the owner fence, the deferred marker, the ticket kind and the event cursor all came to work on one transport and not the other. The rule that replaces it is in the file: anything a `Message` can carry has to be representable in the frame, and a payload field that a receiver *acts on* belongs there before it belongs in any transport.
 
 ## Decisions
 

@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+### The frame is the protocol now, and MQTT 5 carries all of it
+
+The owner fence below was not the only thing the MQTT 5 layout could not say. Three more travelled over socket.io and were dropped at the broker without a word, and they were all missing for one structural reason: the frame lived inside the MQTT transport, so *adding a field to the protocol* and *deciding what MQTT calls it* were the same act — and a field could be added to the payload, honoured by socket.io, and never noticed to be absent here.
+
+**`RPC/Frame.ts`** is that frame, moved out and made the thing both transports map to. `Transports/Mqtt5Frame.ts` keeps only the `mr-` names. The rule now has somewhere to live: anything a `Message` can carry must be representable in the frame, and a payload field a receiver *acts on* belongs there before it belongs in any transport.
+
+What that recovered, over MQTT 5:
+
+- **Deferred methods answer at all.** `RpcMessageType.ticket` had no case in `toOutboundFrame`, so every later answer was reported unroutable and discarded: `defer()` produced a receipt and then nothing, and the caller waited out the ticket. `mr-kind: ticket` with `mr-outcome` carries it, and `mr-deferred` marks the receipt so a caller knows to wait rather than settling with the receipt in place of the answer.
+- **A deferred answer goes where the caller asked.** `takeReply` was *"one request, one answer: taking it also forgets it"*, so the receipt consumed the note and every later answer fell back to a derived topic in this peer's own encoding. A caller that named its own response topic got its receipt where it asked and its actual answer on a topic it was not listening to, in an encoding it never agreed to. The note is now held until the reply that ends the exchange — `isFinalReply` — and released there.
+- **Events carry their cursor.** `seq` and `epoch` were dropped, so a subscriber could only ever report "saw nothing" and never "missed nothing". `mr-seq` and `mr-epoch` carry them.
+
+All four are covered by the signature, on the same reasoning as the fields version 2 added: `mr-deferred` decides whether a caller keeps waiting, `mr-outcome` decides whether its promise settles and which way, and the cursor is the arithmetic behind a gaplessness claim. Since **`mr-v` was still unreleased at 3**, this rides that bump rather than minting a fourth — one wire break instead of two.
+
+**A ticket is the one place a correlation carries more than one publish**, and that is deliberate rather than smuggled: unlike a batch, which the spec still refuses to represent, a deferred call has *one* correlation and several publishes against it, which correlation data already expresses, and `mr-outcome` says which one ends it.
+
+Known and not fixed here: **progress delivered before a caller can attach a listener is lost**. A caller only receives its ticket once the receipt arrives, and `TicketRegistry.hold` drains its early queue before the ticket object exists, so progress that arrived in between is emitted to nothing. Over socket.io the window is sub-millisecond and nobody noticed; over MQTT it is a broker round trip wide. That is a defect in the ticket API rather than in the wire format, and it wants buffering progress until the first subscription.
+
 ### The owner fence now reaches the far end over MQTT 5
 
 A fenced call carries the owner generation its caller observed, and the target refuses `OwnershipChanged` when that is no longer the generation that rules. Over MQTT 5 it carried nothing: `toOutboundFrame` had no case for `fence` and no user property existed to put it in, so the fence was dropped at the transport and `fenceRefusal` at the far end found nothing to check. **Every fenced call over MQTT 5 arrived unfenced, and ran.**

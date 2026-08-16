@@ -2,7 +2,8 @@ import anyTest, { TestFn } from 'ava'
 import { randomUUID } from 'crypto'
 import { connectAsync, MqttClient } from 'mqtt'
 import { decode as msgPackDecode, encode as msgPackEncode } from '@msgpack/msgpack'
-import { MqttTransport, RpcClient, RpcServer } from './index.js'
+import EventEmitter from 'events'
+import { MqttTransport, rpc, rpcNamespace, RpcClient, RpcServer, type RpcInvocationHandle, type RpcTicket } from './index.js'
 import type { MqttTransport as MqttTransportType } from './Transports/MqttTransport.js'
 import { canonicalSignedBytesV5, createHmacSigner, createHmacVerifier, createNonce } from './RPC/Signing.js'
 import { FRAME_VERSION, MR } from './Transports/Mqtt5Frame.js'
@@ -567,6 +568,12 @@ const publishSignedV5 = async (
         ttl,
         idempotencyKey: opts.idempotencyKey ?? '',
         fence: opts.fence ?? '',
+        // These four only ever ride on replies and events, which this helper does not build - it is
+        // a caller. Empty is what a request signs, and a receiver rebuilds the same.
+        deferred: '',
+        outcome: '',
+        seq: '',
+        epoch: '',
         timestamp,
         nonce,
         payload: body
@@ -1191,5 +1198,177 @@ test('the owner fence cannot be stripped after signing', async (t) => {
     t.deepEqual(ran, ['auto'], 'the fence reached the far end and matched the generation it named')
 
     await client.endAsync()
+    await server.close()
+})
+
+// -------------------------------------------------- what the v5 layout could not say until v3
+//
+// Three things travelled over socket.io and died at the MQTT 5 boundary, because `toOutboundFrame`
+// had no representation for them and nothing reported the loss. Each is tested here on the
+// transport that dropped it, and once with a vanilla mqtt.js caller, since a shape no third party
+// can read is not really part of the wire format.
+
+@rpcNamespace('jobs5')
+class Jobs5 {
+    @rpc({ semantics: 'non-repeatable-command', injectInvocation: true })
+    async start(rows: number, inv: RpcInvocationHandle): Promise<RpcTicket<{ rows: number }, number>> {
+        const reply = inv.defer<{ rows: number }, number>()
+        void (async () => {
+            await new Promise((resolve) => setTimeout(resolve, 30))
+            reply.progress(50)
+            await new Promise((resolve) => setTimeout(resolve, 30))
+            reply.resolve({ rows })
+        })()
+        return reply.ticket
+    }
+}
+
+test('a deferred method answers twice over MQTT 5, and the second answer arrives', async (t) => {
+    if (skipWithoutBroker(t)) return
+    const prefix = prefixFor('defer-v5')
+    const server = new RpcServer({ name: peer('jobServer'), transports: [{ brokerurl: BROKER_URL, sessionExpirySeconds: TEST_SESSION_EXPIRY, prefix }] })
+    server.exposeClassInstance(new Jobs5())
+    await server.ready()
+
+    const client = new RpcClient(undefined, {
+        name: peer('jobAsker'),
+        defaultTarget: peer('jobServer'),
+        transport: new MqttTransport(peer('jobAsker'), BROKER_URL, { prefix, sessionExpirySeconds: TEST_SESSION_EXPIRY })
+    })
+    await client.ready()
+    const jobs = await client.proxy<Jobs5>('jobs5')
+
+    // The receipt. `deferred` had no property to travel in, so this used to arrive as an ordinary
+    // result and the caller settled its promise with the ticket object instead of waiting on it.
+    const ticket = await jobs.start(7)
+    t.is(typeof ticket.id, 'string')
+
+    // And the answer itself, which is a TICKET frame - a message type `toOutboundFrame` had no case
+    // for at all, so the transport reported it unroutable and this await never settled.
+    t.deepEqual(await ticket.result, { rows: 7 })
+
+    // Progress is deliberately not asserted here, and the reason is a defect rather than a quirk of
+    // this test. A caller cannot attach a progress listener until the receipt has arrived and handed
+    // it a ticket, so any progress delivered in the window between those two is emitted to an
+    // EventEmitter with nothing on it and lost - and `TicketRegistry.hold` drains its early queue
+    // before it has even built the ticket, so a progress that overtook its receipt is lost outright.
+    // Over socket.io that window is sub-millisecond and nothing notices. Over MQTT, with a broker
+    // round trip and a loaded event loop, both frames are routinely handled before the caller's
+    // continuation runs. That wants fixing in the ticket API - buffering progress until the first
+    // subscription - not papering over here. The vanilla-caller test below proves the frames
+    // themselves travel, which is what this change is responsible for.
+
+    await client.close()
+    await server.close()
+})
+
+test('a deferred answer goes where the caller asked, in the encoding it asked for', async (t) => {
+    if (skipWithoutBroker(t)) return
+    const prefix = prefixFor('defer-topic')
+    const server = new RpcServer({ name: peer('jobServer2'), transports: [{ brokerurl: BROKER_URL, sessionExpirySeconds: TEST_SESSION_EXPIRY, prefix }] })
+    server.exposeClassInstance(new Jobs5())
+    await server.ready()
+
+    // A vanilla caller that listens somewhere of its own choosing and speaks JSON - both things the
+    // transport has to remember for the life of the exchange rather than for the first reply.
+    // `takeReply` forgot the note on the receipt, so every later answer fell back to the derived
+    // topic in this peer's own msgpack: the caller got its receipt where it asked, and the actual
+    // answer on a topic it was not listening to, in an encoding it had not agreed to.
+    const listenOn = `${prefix}/rsp/somewhere-of-my-own`
+    const caller: MqttClient = await connectAsync(BROKER_URL, { protocolVersion: 5 })
+    await caller.subscribeAsync(listenOn, { qos: 1 })
+    const heard: { kind?: string; outcome?: string; deferred?: string; contentType?: string; body: unknown }[] = []
+    caller.on('message', (_topic, payload, packet) => {
+        const contentType = (props(packet) as { contentType?: string }).contentType
+        heard.push({
+            kind: userProp(packet, MR.kind),
+            outcome: userProp(packet, MR.outcome),
+            deferred: userProp(packet, MR.deferred),
+            contentType,
+            body: payload.length ? JSON.parse(payload.toString('utf8')) : undefined
+        })
+    })
+
+    await caller.publishAsync(`${prefix}/req/${peer('jobServer2')}`, Buffer.from(JSON.stringify([4])), {
+        qos: 1,
+        properties: {
+            responseTopic: listenOn,
+            correlationData: Buffer.from('defer-topic-1'),
+            contentType: 'application/json',
+            payloadFormatIndicator: true,
+            userProperties: { [MR.version]: FRAME_VERSION, [MR.source]: peer('outsider'), [MR.kind]: 'call', [MR.path]: 'jobs5', [MR.method]: 'start' }
+        }
+    })
+
+    // The receipt, then the progress, then the outcome - all three on the topic that was named.
+    await until(() => heard.length >= 3, 8000)
+    t.is(heard[0].kind, 'result')
+    t.is(heard[0].deferred, '1', 'the receipt says an answer is still to come, or a caller cannot know to wait')
+    t.deepEqual(
+        heard.slice(1).map((m) => [m.kind, m.outcome]),
+        [
+            ['ticket', 'progress'],
+            ['ticket', 'resolved']
+        ]
+    )
+    t.deepEqual(heard[2].body, { rows: 4 }, 'and the answer is the value the work produced')
+    t.true(
+        heard.every((m) => m.contentType === 'application/json'),
+        'every reply in the exchange keeps the encoding the caller asked for, not just the first'
+    )
+
+    await caller.endAsync()
+    await server.close()
+})
+
+@rpcNamespace('alarm5')
+class AlarmPanel5 extends EventEmitter {
+    @rpc({ semantics: 'query' })
+    async ping() {
+        return 'ok'
+    }
+    raise(level: number) {
+        this.emit('raised', level)
+    }
+}
+
+test('an event carries its cursor over MQTT 5, so a watcher can still claim it missed nothing', async (t) => {
+    if (skipWithoutBroker(t)) return
+    const prefix = prefixFor('cursor-v5')
+    const panel = new AlarmPanel5()
+    const server = new RpcServer({
+        name: peer('panelServer'),
+        transports: [{ brokerurl: BROKER_URL, sessionExpirySeconds: TEST_SESSION_EXPIRY, prefix }],
+        exposeIntrospection: true
+    })
+    server.exposeClassInstance(panel)
+    await server.ready()
+
+    const client = new RpcClient(undefined, {
+        name: peer('watcher'),
+        defaultTarget: peer('panelServer'),
+        transport: new MqttTransport(peer('watcher'), BROKER_URL, { prefix, sessionExpirySeconds: TEST_SESSION_EXPIRY })
+    })
+    await client.ready()
+    const proxy = await client.proxy<{ on(event: string, handler: (...args: unknown[]) => void): Promise<unknown> }>('alarm5')
+
+    const stamps: (number | undefined)[] = []
+    const epochs: (string | undefined)[] = []
+    await proxy.on('raised', () => {
+        stamps.push(client.rpcClient?.lastDeliveredStamp?.seq)
+        epochs.push(client.rpcClient?.lastDeliveredStamp?.epoch)
+    })
+    panel.raise(1)
+    panel.raise(2)
+    await until(() => stamps.length === 2, 8000)
+
+    // Consecutive stamps under one epoch are the whole promise: they say nothing fell between these
+    // two. Over MQTT 5 both fields were dropped at the transport, so every delivery arrived
+    // unstamped and a watcher could only ever report "saw nothing".
+    t.deepEqual(stamps, [1, 2], 'the emission count reached the watcher')
+    t.truthy(epochs[0], 'and the incarnation it counts within, since a sequence alone orders nothing across a restart')
+    t.is(epochs[0], epochs[1])
+
+    await client.close()
     await server.close()
 })
