@@ -1,0 +1,4 @@
+# .NET build output for the core, the bindings and the test host.
+**/bin/
+**/obj/
+nupkg/

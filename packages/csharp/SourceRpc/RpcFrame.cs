@@ -3,7 +3,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using MessagePack;
 
-namespace SourceRpc.SignalR;
+namespace SourceRpc;
 
 /// <summary>
 /// One msgrpc frame, as described in docs/flat-frame-spec.md.
@@ -209,6 +209,15 @@ public sealed record RpcFrame
             return default;
         }
     }
+
+    /// <summary>
+    /// A reply carrying an error code.
+    ///
+    /// The enum member's name *is* the string the wire carries and the string a TypeScript caller
+    /// turns back into a typed rejection, so the conversion lives here and happens once rather than
+    /// at every call site where a `.ToString()` could quietly be forgotten or spelled differently.
+    /// </summary>
+    public RpcFrame Reply(string kind, object? body, RpcErrorCode code) => Reply(kind, body, code.ToString());
 
     /// <summary>A reply addressed back to whoever sent this, with the correlation carried over.</summary>
     public RpcFrame Reply(string kind, object? body = null, string? code = null) =>

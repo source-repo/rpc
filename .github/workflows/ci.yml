@@ -80,7 +80,7 @@ jobs:
             SOURCE_RPC_REQUIRE_BROKER: '1'
             SOURCE_RPC_REQUIRE_SQL: '1'
             SOURCE_RPC_REQUIRE_MONGO: '1'
-            # @source-repo/signalr talks to a C# hub built from packages/signalr/csharp. It is not a
+            # @source-repo/signalr talks to a C# hub built from packages/csharp. It is not a
             # service container because it is built from this repository rather than pulled, so it
             # is started as a step below - after the checkout that contains it.
             SOURCE_RPC_TEST_SIGNALR_HUB: http://127.0.0.1:5217/rpc
@@ -95,7 +95,7 @@ jobs:
                   cache: npm
 
             # For the SignalR interop tests, which drive a real TypeScript client against the real
-            # C# hub in packages/signalr/csharp. Without an SDK those tests skip - and
+            # C# hub in packages/csharp. Without an SDK those tests skip - and
             # SOURCE_RPC_REQUIRE_SIGNALR above turns that skip into a failure, so this is not
             # optional here. 8.0 because that is what the hub targets.
             - uses: actions/setup-dotnet@v6
@@ -157,8 +157,8 @@ jobs:
               env:
                   DOTNET_USE_POLLING_FILE_WATCHER: '1'
               run: |
-                  dotnet build packages/signalr/csharp/testhost/TestHost.csproj -c Release
-                  nohup dotnet run --project packages/signalr/csharp/testhost/TestHost.csproj \
+                  dotnet build packages/csharp/TestHost/TestHost.csproj -c Release
+                  nohup dotnet run --project packages/csharp/TestHost/TestHost.csproj \
                       -c Release --no-build -- --urls http://127.0.0.1:5217 > /tmp/signalr-hub.log 2>&1 &
                   node tools/wait-for-port.mjs 5217 "SignalR hub"
 
@@ -248,9 +248,9 @@ jobs:
             # construction, which is all these tests need.
             - name: Run the suite against a SignalR hub
               run: |
-                  dotnet build packages/signalr/csharp/testhost/TestHost.csproj -c Release
+                  dotnet build packages/csharp/TestHost/TestHost.csproj -c Release
                   Start-Process -FilePath dotnet `
-                      -ArgumentList 'run','--project','packages/signalr/csharp/testhost/TestHost.csproj','-c','Release','--no-build','--','--urls','http://127.0.0.1:5217' `
+                      -ArgumentList 'run','--project','packages/csharp/TestHost/TestHost.csproj','-c','Release','--no-build','--','--urls','http://127.0.0.1:5217' `
                       -RedirectStandardOutput signalr-hub.log -RedirectStandardError signalr-hub.err -NoNewWindow
                   node tools/wait-for-port.mjs 5217 "SignalR hub"
                   npm test

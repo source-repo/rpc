@@ -14,7 +14,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <ProjectReference Include="../SourceRpc.SignalR.csproj" />
+    <ProjectReference Include="../SourceRpc.SignalR/SourceRpc.SignalR.csproj" />
   </ItemGroup>
 
 </Project>

@@ -2,6 +2,32 @@
 
 ## Unreleased
 
+### The C# side becomes a package a .NET application can use without knowing its internals
+
+Two packages now, and the split is the load-bearing part: **`SourceRpc`** holds the frame, the dispatcher, the client, routing, the error model and telemetry, and depends on nothing but the BCL; **`SourceRpc.SignalR`** holds a hub and a client transport, and is the only one that needs ASP.NET Core. A device running an MQTT client should not carry a web framework to get a protocol, and now it does not have to.
+
+`ISourceRpcTransport` is the seam a binding implements — start a link, send a frame, raise an event when one arrives — and correlation, deadlines, subscriptions, error mapping and dispatch stay in the core where they are written once. Three transports each reimplementing those is how they come to disagree about what a timeout means, which this library already prevented once on the TypeScript side. `TransportContract` records what a binding has to get right. **socket.io will be a client only**: there is no reasonable C# socket.io server and none is needed, since the TypeScript side already serves socket.io.
+
+**A .NET process can now call out as well as answer.** `SourceRpcClient` over any transport, with `SignalRClientTransport` as the first: `CallAsync<T>`, `SubscribeAsync`, correlation, a deadline that travels as `ttl`, and error codes that survive the round trip. A client is a peer, so it can also be called - give it a dispatcher and frames addressed to it are served down the same link.
+
+Registration is now two lines and mentions nothing internal:
+
+```csharp
+builder.Services.AddSourceRpc(o => o.Name = "vs-automation").AddResponder<AutomationSurface>();
+app.MapSourceRpc("/rpc");
+```
+
+An application sees `RpcInvocation` rather than the frame — `Arg<T>(0)` reads the same under either hub protocol, `Deadline` is a moment rather than the duration the wire carries, `Source` has been checked rather than asserted — and `ISourceRpcEvents` rather than an implementation. Options are validated at startup, because a peer with no name is a misconfiguration and a plant service that fails to start beats one that runs unreachable.
+
+**Errors are deliberate now.** `SourceRpcException` carries the code a caller acts on and a message written to be read; anything else that escapes becomes `Exception` with a generic message while the real one goes to the log, because a vendor exception can carry a file path, a connection string or the innards of a COM error. `IncludeExceptionDetail` opts in.
+
+**Telemetry and logging are first-class**, through `System.Diagnostics.Metrics` and `ActivitySource` rather than an OpenTelemetry dependency: `.AddMeter("SourceRpc").AddSource("SourceRpc")` in a host's own exporter picks up calls, durations, errors, frames, routing failures, connections and subscriptions. Tagged with path and method and never with arguments or results - a dimension is a label on a time series, and plant data does not belong in one.
+
+Two failures worth recording, because both were silent:
+
+- **A SignalR hub type must be public.** Made internal - as hiding implementation suggests - it is discovered, mapped and connected to, and then never invoked, because SignalR builds its method executor by compiling an expression tree that cannot reference an internal type. It is public with a comment saying why, rather than by oversight.
+- **A dependency cycle produced the same symptom.** Dispatcher needs the responder, the responder needs the event publisher, the publisher needs to know who is subscribed: a container that cannot build any of the three yields a hub whose methods are never invoked, an `invoke` that never returns, and nothing in the log. The subscription registry is shared rather than owned, and the test host turns on `ValidateOnBuild` so the next one is a startup exception naming the cycle.
+
 ### Fixes from an outside review of the SignalR binding
 
 An external review of `main` found several things, and the concrete ones checked out against the code. Four are fixed here; the rest are recorded below rather than rushed.

@@ -21,7 +21,10 @@
         "docs:build": "vitepress build docs",
         "docs:preview": "vitepress preview docs",
         "example:contract": "node packages/cli/dist/index.js extract --project examples/display-context/tsconfig.contract.json --out examples/display-context/contract.json",
-        "example:build": "node packages/cli/dist/index.js strip examples/display-context/plant.ts --out examples/display-context/dist"
+        "example:build": "node packages/cli/dist/index.js strip examples/display-context/plant.ts --out examples/display-context/dist",
+        "build:csharp": "dotnet build packages/csharp/SourceRpc.sln -c Release",
+        "pack:csharp": "dotnet pack packages/csharp/SourceRpc.sln -c Release -o packages/csharp/nupkg",
+        "hub": "DOTNET_USE_POLLING_FILE_WATCHER=1 dotnet run --project packages/csharp/TestHost/TestHost.csproj -c Release -- --urls http://127.0.0.1:5217"
     },
     "devDependencies": {
         "@eslint/js": "^10.0.1",
