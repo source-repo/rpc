@@ -28,14 +28,17 @@ public sealed class RpcHub : Hub
     private readonly SourceRpcOptions _options;
     private readonly SourceRpcTelemetry _telemetry;
     private readonly ILogger<RpcHub> _log;
+    private readonly IHubContext<RpcHub> _context;
 
     public RpcHub(
         RpcRouter peers,
         RpcDispatcher dispatcher,
         IOptions<SourceRpcOptions> options,
         SourceRpcTelemetry telemetry,
-        ILogger<RpcHub> log)
+        ILogger<RpcHub> log,
+        IHubContext<RpcHub> context)
     {
+        _context = context;
         _peers = peers;
         _dispatcher = dispatcher;
         _options = options.Value;
@@ -140,7 +143,14 @@ public sealed class RpcHub : Hub
         // Everything the frame *means* is the dispatcher's: kinds, error mapping, deadline
         // conversion, the "already subscribed" answer. The hub's remaining job is who may speak,
         // where a frame goes, and putting the reply on the right connection.
-        var reply = await _dispatcher.HandleAsync(frame, new RpcCaller(frame.Src, Context.User, Context.ConnectionAborted));
+        // The reply delegate is what lets a method defer, and it goes through IHubContext rather
+        // than this hub's own Clients: a deferred answer is sent *after* the invocation that
+        // produced it, by which time the Hub instance and everything hanging off Context has been
+        // disposed. Capturing the connection id and sending through the context outlives that.
+        var connectionId = Context.ConnectionId;
+        var reply = await _dispatcher.HandleAsync(
+            frame,
+            new RpcCaller(frame.Src, Context.User, Context.ConnectionAborted, later => _context.Clients.Client(connectionId).SendAsync("frame", later)));
         if (reply is not null)
             await Answer(reply);
     }

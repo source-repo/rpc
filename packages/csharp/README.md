@@ -110,6 +110,22 @@ Counters, a duration histogram and spans, through `System.Diagnostics.Metrics` a
 
 `rpc.calls`, `rpc.call.duration`, `rpc.errors`, `rpc.frames.sent`, `rpc.frames.received`, `rpc.frames.rejected`, `rpc.routing.failures`, `rpc.connections`, `rpc.subscriptions`. Tagged with path and method, never with arguments or results: a dimension is a label on a time series, and plant data does not belong in one.
 
+## Publishing to a local feed
+
+A NuGet feed is a folder. Registering one on the machine takes a line, and then `dotnet add package` finds these the same way it finds anything from nuget.org:
+
+```
+mkdir -p ~/nuget-local
+dotnet nuget add source ~/nuget-local -n source-local     # writes ~/.nuget/NuGet/NuGet.Config
+
+npm run pack:csharp
+dotnet nuget push packages/csharp/nupkg/*.nupkg -s source-local
+```
+
+A consumer anywhere on the machine then does `dotnet add package SourceRpc.SignalR`, and `SourceRpc` comes with it as a transitive dependency. That is worth doing before a real registry exists, because it removes the failure a cross-repository `ProjectReference` invites: a relative path out of one working tree and into another, which resolves on the machine that wrote it and ships broken from anywhere else.
+
+**Bump the version before re-pushing.** A folder feed will not replace an existing `<id>.<version>.nupkg`, and a consumer that has already restored `4.6.0` has it cached in `~/.nuget/packages` regardless — so republishing the same number is the one way to be sure everybody is looking at something different from what you built.
+
 ## Building and testing
 
 ```
@@ -130,6 +146,43 @@ dotnet run --project packages/csharp/TestHost -c Release -- client http://127.0.
 builder.Host.UseDefaultServiceProvider(o => { o.ValidateOnBuild = true; o.ValidateScopes = true; });
 ```
 
+## Deadlines, fences, idempotency and deferred answers
+
+Checked in front of the responder, in the order that matters. A fence asks whether this command still belongs to the world its caller observed; the deadline asks whether anyone is still waiting; the store asks whether it has already been done. Running first and checking after would answer all three too late.
+
+**The owner fence** is enforced when an `IRpcOwnership` is registered, and **refused when one is not**:
+
+```csharp
+.AddOwnership<TopologyOwnership>()
+```
+
+Both directions fail closed — a fence with no ownership recorded anywhere, and a fence against an instance this process holds no record of. A peer that accepted a fence it could not check would be telling the caller its command had been guarded when nothing had guarded it, which is worse than refusing.
+
+**Idempotency** answers a repeat from the record rather than running it again:
+
+```csharp
+.AddIdempotencyStore<InMemoryIdempotencyStore>()   // or something durable
+```
+
+The outcome is written *before* the caller is answered, because a crash between running and recording leaves a command that ran and can be run again — the record is the commit point, not the reply. A store that cannot be reached **refuses the command**: failing open would mean the one condition under which double execution is possible is also the one under which nothing is checking. `InMemoryIdempotencyStore` forgets on restart and says so; a host that dispenses or starts a pump wants something durable.
+
+**A method can answer later:**
+
+```csharp
+case "build":
+{
+    var deferred = call.Defer<BuildResult>();
+    _ = Task.Run(async () =>
+    {
+        await deferred.ProgressAsync(50);
+        await deferred.ResolveAsync(await BuildAsync());
+    });
+    return deferred.Receipt;          // the caller is told at once that an answer is coming
+}
+```
+
+The ticket's id is the call's own correlation, so nothing is minted and nothing extra travels — and a caller accepts the later answer only for a call it actually made, to the peer it made it to, which is what leaves a forged result nothing to attach itself to. From C#, `client.CallDeferredAsync<T>(…)` returns an `RpcTicket<T>` with a `Result` task and a `Progress` event.
+
 ## What is not here yet
 
-Tickets (deferred answers), idempotency for non-repeatable commands, and enforcement of the owner fence — the fence *arrives*, as `call.Fence`, and comparing it against a record of who owns the instance is the responder's to do. Each is described in the frame spec, and each is worth adding where it earns its place.
+Method semantics are not declared, so the idempotency store is consulted whenever a call carries a key rather than only for methods marked non-repeatable — the caller sending a key is taken as the request. Introspection (`describe()`) is not implemented either.

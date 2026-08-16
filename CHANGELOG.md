@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+### The C# side enforces deadlines, fences and idempotency, and can answer later
+
+The three semantics the main library treats as central, now checked in front of the responder rather than described as somebody else's problem. Verified across languages: the interop suite drives each of them from a real TypeScript client against the real C# hub, over both hub protocols.
+
+**The owner fence is enforced**, and refused where it cannot be. Register an `IRpcOwnership` and a fenced call is compared against it; register none and a fenced call is refused rather than run. Both directions fail closed, including a fence against an instance no record covers — because a peer that accepted a fence it could not check would be telling the caller its command had been guarded when nothing had.
+
+**Idempotency answers a repeat from the record.** The outcome is written before the caller is answered, since a crash between running and recording leaves a command that ran and can be run again; and a store that cannot be reached refuses the command, because failing open would mean the one condition under which double execution is possible is also the one under which nothing is checking for it. `InMemoryIdempotencyStore` is provided and honest about forgetting on restart.
+
+**A deadline is checked immediately before running**, not only on arrival: what that catches is the time spent queued inside the process, which the caller cannot see and a broker cannot deduct.
+
+**A method can answer later.** `call.Defer<T>()` returns a handle whose receipt the responder returns; the caller is told at once that an answer is coming and gets it, with progress on the way, down the same link. The ticket's id is the call's own correlation, so nothing is minted and a forged answer has nothing to attach itself to. `CallDeferredAsync<T>` is the C# caller's side of it.
+
+Found while wiring it: **a deferred answer cannot be sent through the hub's own `Clients`.** It is sent after the invocation that produced it, by which time the Hub instance and everything hanging off `Context` has been disposed - so the reply channel captures the connection id and goes through `IHubContext` instead.
+
 ### The C# side becomes a package a .NET application can use without knowing its internals
 
 Two packages now, and the split is the load-bearing part: **`SourceRpc`** holds the frame, the dispatcher, the client, routing, the error model and telemetry, and depends on nothing but the BCL; **`SourceRpc.SignalR`** holds a hub and a client transport, and is the only one that needs ASP.NET Core. A device running an MQTT client should not carry a web framework to get a protocol, and now it does not have to.

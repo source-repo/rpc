@@ -187,6 +187,63 @@ for (const useMsgPack of [false, true]) {
         await client.close()
     })
 
+    test.serial(`a deferred C# method answers twice, and the ticket carries the answer [${protocol}]`, async (t) => {
+        if (skipWithoutHub(t)) return
+        const client = clientOn('hmi7', useMsgPack)
+        await client.ready()
+        const meter = await client.proxy<{ slow(tag: string): Promise<{ id: string; expiresAt: number }> }>('meter')
+
+        // The call answers at once with a receipt rather than the answer - `deferred: true` on the
+        // wire - and the TypeScript client turns that into a ticket the caller waits on.
+        const ticket = (await meter.slow('the-job')) as unknown as { id: string; expiresAt: number; result: Promise<string>; on(e: string, h: (v: unknown) => void): unknown }
+        t.is(typeof ticket.id, 'string', 'the receipt names the call it belongs to')
+        t.true(ticket.expiresAt > Date.now(), 'and says how long an answer is still expected')
+
+        t.is(await ticket.result, 'finished the-job', 'and the answer arrives on the ticket')
+
+        await client.close()
+    })
+
+    test.serial(`an owner fence is enforced by the C# hub [${protocol}]`, async (t) => {
+        if (skipWithoutHub(t)) return
+        const client = clientOn('hmi8', useMsgPack)
+        await client.ready()
+        type Fenceable = { read(tag: string): Promise<string>; $with(o: { ownerEpoch: string }): { read(tag: string): Promise<string> } }
+        const meter = await client.proxy<Fenceable>('meter')
+
+        // The generation the hub records is the one that rules, so this goes through.
+        t.is(await meter.$with({ ownerEpoch: 'e-owner' }).read('flow'), 'flow=42')
+
+        // A caller fencing on a generation that is no longer current is refused rather than run.
+        // Losing the fence would not weaken this check, it would remove it - and the caller could
+        // not tell the difference from a command that succeeded.
+        const stale = await t.throwsAsync(meter.$with({ ownerEpoch: 'e-stale' }).read('flow'))
+        t.regex(String(stale?.message), /OwnershipChanged|owner generation/)
+
+        await client.close()
+    })
+
+    test.serial(`an idempotency key is answered from the record rather than run again [${protocol}]`, async (t) => {
+        if (skipWithoutHub(t)) return
+        const client = clientOn('hmi9', useMsgPack)
+        await client.ready()
+        type Counted = { count(): Promise<number>; $with(o: { idempotencyKey: string }): { count(): Promise<number> } }
+        const meter = await client.proxy<Counted>('meter')
+
+        // `count` increments only when it actually runs, so the same answer twice is the record
+        // answering rather than the method running a second time.
+        const key = `once-${protocol}-${run}`
+        const first = await meter.$with({ idempotencyKey: key }).count()
+        const again = await meter.$with({ idempotencyKey: key }).count()
+        t.is(again, first, 'the retry was answered from the record')
+
+        // A different key is a different command, and does run.
+        const other = await meter.$with({ idempotencyKey: `${key}-other` }).count()
+        t.is(other, first + 1, 'and a command that is not a repeat still runs')
+
+        await client.close()
+    })
+
     test.serial(`an argument survives the journey out as well as the answer coming back [${protocol}]`, async (t) => {
         if (skipWithoutHub(t)) return
         const client = clientOn('hmi6', useMsgPack)

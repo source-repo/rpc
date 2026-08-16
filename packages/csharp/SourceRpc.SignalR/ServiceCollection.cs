@@ -28,6 +28,31 @@ public sealed class SourceRpcBuilder
         return this;
     }
 
+    /// <summary>
+    /// Record who owns each instance, so owner-fenced calls can be enforced.
+    ///
+    /// Without one, a call carrying a fence is **refused** - a peer that accepted a fence it could
+    /// not check would be telling the caller its command had been guarded when nothing had.
+    /// </summary>
+    public SourceRpcBuilder AddOwnership<T>() where T : class, IRpcOwnership
+    {
+        Services.AddSingleton<IRpcOwnership, T>();
+        return this;
+    }
+
+    /// <summary>
+    /// Keep the outcomes of commands that carry an idempotency key, so a retry is answered rather
+    /// than re-executed.
+    ///
+    /// Use <see cref="InMemoryIdempotencyStore"/> only where a restart forgetting an outcome is
+    /// acceptable; a host that dispenses, advances a batch or starts a pump wants something durable.
+    /// </summary>
+    public SourceRpcBuilder AddIdempotencyStore<T>() where T : class, IRpcIdempotencyStore
+    {
+        Services.AddSingleton<IRpcIdempotencyStore, T>();
+        return this;
+    }
+
     /// <summary>Register an already-constructed responder.</summary>
     public SourceRpcBuilder AddResponder(ISourceRpcResponder responder)
     {
@@ -85,7 +110,12 @@ public static class SourceRpcServiceCollectionExtensions
             provider.GetRequiredService<SubscriptionTable>(),
             provider.GetRequiredService<SourceRpcTelemetry>(),
             provider.GetService<ISourceRpcResponder>(),
-            provider.GetRequiredService<ILoggerFactory>().CreateLogger<RpcDispatcher>()));
+            provider.GetRequiredService<ILoggerFactory>().CreateLogger<RpcDispatcher>(),
+            // Optional, and their absence is meaningful rather than neutral: with no ownership
+            // registered a fenced call is refused rather than run unchecked, and with no store an
+            // idempotency key is carried and ignored. Both are the safe reading of "I cannot check".
+            provider.GetService<IRpcOwnership>(),
+            provider.GetService<IRpcIdempotencyStore>()));
         services.TryAddSingleton<ISourceRpcEvents, SourceRpcEvents>();
 
         return new SourceRpcBuilder(services);

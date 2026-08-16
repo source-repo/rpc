@@ -64,6 +64,43 @@ public sealed class RpcInvocation
     /// <summary>The frame this came from, for anything the shape above does not cover.</summary>
     public required RpcFrame Frame { get; init; }
 
+    /// <summary>How a later answer reaches this caller. Set by the dispatcher; null when the binding offers none.</summary>
+    internal Func<RpcFrame, Task>? Reply { get; init; }
+
+    /// <summary>
+    /// Answer this call later, down the same link.
+    ///
+    /// Return the deferred's <see cref="RpcDeferred{T}.Receipt"/> from the responder and the caller
+    /// is told at once that an answer is coming; resolve, reject or report progress on the deferred
+    /// afterwards, from whatever is doing the work.
+    ///
+    /// The ticket's id is this call's own correlation, so nothing is minted and nothing extra
+    /// travels - and a caller accepts the later answer only for a call it actually made, to the
+    /// peer it made it to, which is what makes a forged result have nothing to attach itself to.
+    /// </summary>
+    public RpcDeferred<T> Defer<T>(TimeSpan? expiresIn = null)
+    {
+        if (Reply is null)
+            throw new SourceRpcException(
+                RpcErrorCode.Exception,
+                "this call arrived over a link that cannot deliver a later answer, so it cannot be deferred");
+
+        var correlation = Frame.Corr ?? "";
+        var expiresAt = DateTimeOffset.UtcNow + (expiresIn ?? TimeSpan.FromMinutes(5));
+        var reply = Reply;
+        var frame = Frame;
+        return new RpcDeferred<T>(correlation, expiresAt, (outcome, value) =>
+            reply(new RpcFrame
+            {
+                Src = frame.Tgt,
+                Tgt = frame.Src,
+                Kind = "ticket",
+                Corr = correlation,
+                Outcome = outcome,
+                Body = value
+            }));
+    }
+
     /// <summary>
     /// The argument at <paramref name="index"/>, converted, whichever hub protocol delivered it.
     ///

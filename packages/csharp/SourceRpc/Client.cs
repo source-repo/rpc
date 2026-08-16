@@ -31,6 +31,7 @@ public sealed class SourceRpcClient : IAsyncDisposable
 
     private readonly ConcurrentDictionary<string, TaskCompletionSource<RpcFrame>> _pending = new();
     private readonly ConcurrentDictionary<string, List<Action<object?[]>>> _handlers = new();
+    private readonly ConcurrentDictionary<string, IRpcTicketSink> _tickets = new();
 
     /// <summary>Creates a client over a transport. The transport is started by <see cref="StartAsync"/>.</summary>
     public SourceRpcClient(
@@ -86,6 +87,60 @@ public sealed class SourceRpcClient : IAsyncDisposable
             Body = args ?? []
         };
         return await ExchangeAsync(frame, correlation, cancellationToken);
+    }
+
+    /// <summary>
+    /// Call a method that answers later, and hold the ticket it answers with.
+    ///
+    /// The call itself returns as soon as the far end has accepted the work; the answer arrives on
+    /// <see cref="RpcTicket{T}.Result"/>, and anything reported on the way on its Progress event.
+    /// A method that is *not* deferred answers this with its value directly, so the ticket resolves
+    /// immediately - which keeps a caller working when a method stops deferring.
+    /// </summary>
+    public async Task<RpcTicket<T>> CallDeferredAsync<T>(
+        string target,
+        string path,
+        string method,
+        object?[]? args = null,
+        CancellationToken cancellationToken = default)
+    {
+        var correlation = Guid.NewGuid().ToString("N");
+        var frame = new RpcFrame
+        {
+            Src = _options.Name,
+            Tgt = target,
+            Kind = "call",
+            Corr = correlation,
+            Path = path,
+            Method = method,
+            Ttl = (long)_options.CallTimeout.TotalMilliseconds,
+            Body = args ?? []
+        };
+
+        // Registered before the exchange, because the far end may send its first ticket frame the
+        // instant it has answered the call - and on a fast link that can beat this code to it.
+        var sink = new TicketSink<T>(correlation);
+        _tickets[correlation] = sink;
+        try
+        {
+            var answer = await ExchangeAsync(frame, correlation, cancellationToken);
+            if (answer.Deferred == true && answer.Body is not null)
+            {
+                var receipt = Convert<RpcTicketReceipt>(answer.Body);
+                sink.Open(receipt?.ExpiresAt ?? 0);
+                return sink.Ticket;
+            }
+            // Not deferred after all: the method answered outright.
+            _tickets.TryRemove(correlation, out _);
+            sink.Open(0);
+            sink.Settle("resolved", answer.Body);
+            return sink.Ticket;
+        }
+        catch
+        {
+            _tickets.TryRemove(correlation, out _);
+            throw;
+        }
     }
 
     /// <summary>
@@ -166,6 +221,20 @@ public sealed class SourceRpcClient : IAsyncDisposable
                 // nothing to attach itself to, which is what makes a forged answer harmless.
                 if (_pending.TryGetValue(corr, out var waiting))
                     waiting.TrySetResult(frame);
+                return;
+
+            case "ticket" when frame.Corr is { Length: > 0 } ticketCorr:
+                // A later answer for a call already answered once. Accepted only for a ticket this
+                // peer is holding, which is a fact it has rather than one the frame asserts.
+                if (_tickets.TryGetValue(ticketCorr, out var sink))
+                {
+                    if (sink.Settle(frame.Outcome, frame.Body))
+                        _tickets.TryRemove(ticketCorr, out _);
+                }
+                else
+                {
+                    _log.LogDebug("SourceRpc ignored a ticket frame for {Correlation}, which is not a call this peer has out", ticketCorr);
+                }
                 return;
 
             case "event":
@@ -263,6 +332,42 @@ public sealed class SourceRpcClient : IAsyncDisposable
     {
         _transport.FrameReceived -= OnFrameAsync;
         await _transport.DisposeAsync();
+    }
+
+    /// <summary>What a ticket frame is delivered to, without the client knowing the ticket's type.</summary>
+    private interface IRpcTicketSink
+    {
+        /// <summary>Returns true when this settles the ticket, so it can be forgotten.</summary>
+        bool Settle(string? outcome, object? body);
+    }
+
+    private sealed class TicketSink<T>(string correlation) : IRpcTicketSink
+    {
+        private RpcTicket<T>? _ticket;
+
+        public RpcTicket<T> Ticket => _ticket ?? throw new InvalidOperationException("the ticket has not been opened");
+
+        public void Open(long expiresAt) =>
+            _ticket ??= new RpcTicket<T>(correlation, DateTimeOffset.FromUnixTimeMilliseconds(expiresAt == 0 ? DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() : expiresAt));
+
+        public bool Settle(string? outcome, object? body)
+        {
+            var ticket = _ticket;
+            if (ticket is null)
+                return false;
+            switch (outcome)
+            {
+                case "progress":
+                    ticket.OnProgress(body);
+                    return false;
+                case "rejected":
+                    ticket.Reject(new SourceRpcException(RpcErrorCode.Exception, MessageOf(body)));
+                    return true;
+                default:
+                    ticket.Resolve(Convert<T>(body)!);
+                    return true;
+            }
+        }
     }
 
     private sealed class Subscription(SourceRpcClient client, string target, string path, string eventName, Action<object?[]> handler) : IRpcSubscription

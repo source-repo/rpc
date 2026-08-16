@@ -52,7 +52,11 @@ builder.Services
         // this host opts in. A plant service should not: see the option's own documentation.
         options.IncludeExceptionDetail = true;
     })
-    .AddResponder<Meter>();
+    .AddResponder<Meter>()
+    // A fixed owner for the interop suite to fence against, and an in-memory store so a repeated
+    // idempotency key is answered from the record rather than run twice.
+    .AddOwnership<FixedOwner>()
+    .AddIdempotencyStore<InMemoryIdempotencyStore>();
 
 var app = builder.Build();
 app.MapSourceRpc("/rpc");
@@ -106,6 +110,18 @@ static async Task RunAsClient(string url, string target)
     Console.WriteLine("CLIENT-OK");
 }
 
+/// <summary>
+/// A fixed owner generation, standing in for a real topology record.
+///
+/// The interop suite fences against `e-owner` and expects `e-stale` to be refused. A real host reads
+/// this from wherever ownership is actually recorded - and answering null for an instance it does
+/// not know is correct rather than lazy, because a fence that cannot be checked must fail closed.
+/// </summary>
+internal sealed class FixedOwner : IRpcOwnership
+{
+    public string? OwnerEpochOf(string path) => path == "meter" ? "e-owner" : null;
+}
+
 /// <summary>The whole exposed surface: one instance, a few methods, one event.</summary>
 internal sealed class Meter : ISourceRpcResponder
 {
@@ -114,6 +130,8 @@ internal sealed class Meter : ISourceRpcResponder
     // Constructed by the container, so it can take whatever it needs - here the event publisher, in
     // a real host a PLC client and a logger beside it.
     public Meter(ISourceRpcEvents events) => _events = events;
+
+    private int _ran;
 
     public async ValueTask<object?> InvokeAsync(RpcInvocation invocation, CancellationToken cancellationToken = default)
     {
@@ -149,6 +167,26 @@ internal sealed class Meter : ISourceRpcResponder
 
             case "echo":
                 return invocation.Arg<string>(0);
+
+            case "slow":
+            {
+                // Answers later. The caller is told so at once and gets the answer when the work
+                // finishes, with progress on the way.
+                var deferred = invocation.Defer<string>();
+                _ = Task.Run(async () =>
+                {
+                    await Task.Delay(50);
+                    await deferred.ProgressAsync(50);
+                    await Task.Delay(50);
+                    await deferred.ResolveAsync($"finished {invocation.Arg<string>(0)}");
+                });
+                return deferred.Receipt;
+            }
+
+            case "count":
+                // Counts every time it actually runs, so a caller can tell an answer that came from
+                // the idempotency record from one that ran the method again.
+                return Interlocked.Increment(ref _ran);
 
             case "whoami":
                 // Proves the invocation carries a checked source rather than the frame's own claim.
