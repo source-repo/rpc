@@ -6,6 +6,7 @@ import { FrameCodec, msgPackCodec } from '../RPC/Codec.js'
 import { RpcAuthenticator, RpcIdentity } from '../RPC/Auth.js'
 import { refuseDelivery } from '../RPC/Undeliverable.js'
 import { isUsablePeerName, isUsableShape, MAX_CARRIED_PEERS, MAX_RELAY_HOPS, PRESENCE_EVENT, PresenceAnnouncement, PresenceUpdate, RelayContext, RelayRule } from './Presence.js'
+import { FRAME_EVENT, fromWireFrame, LEGACY_FRAME_EVENT, SOCKET_FRAME_VERSION, toWireFrame } from './SocketIoFrame.js'
 
 type Servers = HttpServer | HttpsServer | SocketIo.Server
 
@@ -129,8 +130,16 @@ export class SocketIoServerTransport extends GenericModule<Message, unknown, Mes
             // The whole body is guarded, not just the parse: this is an async listener, so anything
             // that escapes it is an unhandled rejection, and Node's default is to end the process.
             // One peer sending one bad frame must not take down a server answering everybody else.
-            socket.on('message', (messageArray) =>
+            socket.on(LEGACY_FRAME_EVENT, (messageArray) =>
                 void this.onSocketMessage(socket, messageArray).catch((e) =>
+                    this.emit(TransportEvent.rejected, { source: 'unknown', reason: `failed to handle frame: ${String(e)}`, error: e })
+                )
+            )
+            // The v2 layout arrives on its own event, which is the whole of the version negotiation:
+            // socket.io hands an event to the listener registered for it or to nobody, so a server
+            // that registers both serves both populations without reading a byte to tell them apart.
+            socket.on(FRAME_EVENT, (frameArray) =>
+                void this.onSocketFrame(socket, frameArray).catch((e) =>
                     this.emit(TransportEvent.rejected, { source: 'unknown', reason: `failed to handle frame: ${String(e)}`, error: e })
                 )
             )
@@ -169,6 +178,7 @@ export class SocketIoServerTransport extends GenericModule<Message, unknown, Mes
         } else this.readyFlag = true
     }
 
+    /** The `$`-delimited layout. Kept whole, so a v1 peer is served exactly as it was. */
     private async onSocketMessage(socket: SocketIo.Socket, messageArray: ArrayBufferLike) {
         const [header, payload, reason] = this.extractHeader(new Uint8Array(messageArray))
         if (!header) {
@@ -176,19 +186,10 @@ export class SocketIoServerTransport extends GenericModule<Message, unknown, Mes
             this.emit(TransportEvent.rejected, { source: 'unknown', reason: reason ?? 'no msgrpc header' })
             return
         }
-        const identity = socket.data.identity as RpcIdentity | undefined
-        if (this.authenticate) {
-            // The source field is written by the sender. Pinning it to the identity this
-            // connection authenticated as is what stops one peer addressing messages as
-            // another and inheriting its rights.
-            if (!identity || header.source !== identity.name) {
-                this.emit(TransportEvent.rejected, { source: header.source, reason: 'source does not match authenticated identity' })
-                return
-            }
-            this.peerIdentities.set(header.source, identity)
-        }
+        if (!this.vouchesFor(socket, header.source)) return
         // Learned before the routing check, so a peer stays addressable even when a particular
         // frame turns out to be undeliverable.
+        this.noteDialect(socket, 1)
         this.learnPeer(header.source, socket)
         let message: Message
         try {
@@ -197,6 +198,63 @@ export class SocketIoServerTransport extends GenericModule<Message, unknown, Mes
             this.emit(TransportEvent.rejected, { source: header.source, reason: `undecodable frame: ${String(e)}` })
             return
         }
+        await this.routeInbound(socket, message, header.source, header.target, header.hops ?? 0)
+    }
+
+    /**
+     * The flat layout. The frame is one decode, so the source arrives with everything else rather
+     * than ahead of it - which changes nothing about who is trusted, because `authenticate` runs as
+     * socket.io middleware and refuses the *connection*. Nothing unauthenticated reaches either
+     * listener; the check below is about a connected peer claiming a name that is not its own.
+     */
+    private async onSocketFrame(socket: SocketIo.Socket, frameArray: ArrayBufferLike) {
+        let read
+        try {
+            read = fromWireFrame(this.codec.decode(new Uint8Array(frameArray)))
+        } catch (e) {
+            this.emit(TransportEvent.rejected, { source: 'unknown', reason: `undecodable frame: ${String(e)}` })
+            return
+        }
+        if ('reason' in read) {
+            this.emit(TransportEvent.rejected, { source: 'unknown', reason: read.reason })
+            return
+        }
+        if (!this.vouchesFor(socket, read.source)) return
+        this.noteDialect(socket, SOCKET_FRAME_VERSION)
+        this.learnPeer(read.source, socket)
+        await this.routeInbound(socket, read.message, read.source, read.target, read.hops)
+    }
+
+    /**
+     * The source field is written by the sender. Pinning it to the identity this connection
+     * authenticated as is what stops one peer addressing messages as another and inheriting its
+     * rights. False means the frame has been refused and reported.
+     */
+    private vouchesFor(socket: SocketIo.Socket, source: string) {
+        const identity = socket.data.identity as RpcIdentity | undefined
+        if (!this.authenticate) return true
+        if (!identity || source !== identity.name) {
+            this.emit(TransportEvent.rejected, { source, reason: 'source does not match authenticated identity' })
+            return false
+        }
+        this.peerIdentities.set(source, identity)
+        return true
+    }
+
+    /**
+     * Remember which layout this connection speaks, so replies and pushed events go back in it.
+     *
+     * Recorded from a frame as well as from the presence announcement, because a peer may choose
+     * not to announce at all - `announcePresence: false` - and still be learned from the frames it
+     * sends. Whichever arrives first is right; both say the same thing.
+     */
+    private noteDialect(socket: SocketIo.Socket, version: number) {
+        socket.data.frameVersion = version
+    }
+
+    private async routeInbound(socket: SocketIo.Socket, message: Message, source: string, target: string, hops: number) {
+        const header = { source, target, hops }
+        const identity = socket.data.identity as RpcIdentity | undefined
         // Whether this frame is for us at all. A server used to run whatever reached it, testing
         // the target only for being a name it had heard of - so a call addressed to another peer
         // was executed here, the addressee never saw it, and the caller was answered by the wrong
@@ -409,6 +467,10 @@ export class SocketIoServerTransport extends GenericModule<Message, unknown, Mes
             }
             this.peerIdentities.set(name, identity)
         }
+        // Before anything is sent back on this socket. A peer that announces and then only listens -
+        // one that subscribes to events and never calls - is addressed without this transport ever
+        // seeing a frame from it, so the announcement is the only place its dialect can be learned.
+        if (typeof announcement.v === 'number') this.noteDialect(socket, announcement.v)
         // Before learnPeer, whose broadcast should carry the newly announced hash rather than the
         // one from before the restart. When the peer is already connected and only its surface
         // changed, learnPeer sees nothing to do - so the change is broadcast from here instead,
@@ -504,7 +566,7 @@ export class SocketIoServerTransport extends GenericModule<Message, unknown, Mes
             return
         }
         try {
-            socket.emit('message', this.frameMessage(this.buildHeader(source, target, { hops }), this.codec.encode(message)))
+            this.emitFrame(socket, message, source, target, hops)
         } catch (e) {
             // Relaying is done on someone else's behalf, so there is no caller here to reject.
             // Reported instead, or an unframeable relay would be indistinguishable from a lost one.
@@ -521,7 +583,30 @@ export class SocketIoServerTransport extends GenericModule<Message, unknown, Mes
             this.emit(TransportEvent.unroutable, { source, target })
             return
         }
-        socket.emit('message', this.frameMessage(this.buildHeader(source, target), this.codec.encode(message)))
+        try {
+            this.emitFrame(socket, message, source, target)
+        } catch (e) {
+            this.emit(TransportEvent.unroutable, { source, target, reason: `cannot frame: ${String(e)}`, error: e })
+        }
+    }
+
+    /**
+     * Put one frame on a connection in whichever layout that peer speaks.
+     *
+     * A peer is answered in its own dialect rather than in this server's, which is what lets one
+     * listener serve both populations at once. An unknown dialect is the `$`-delimited one: a peer
+     * that has said nothing about itself is by definition not one that announced v2, and the older
+     * layout is the one every peer can read.
+     */
+    private emitFrame(socket: SocketIo.Socket, message: Message, source: string, target: string, hops = 0) {
+        if (socket.data.frameVersion !== SOCKET_FRAME_VERSION) {
+            const header = this.buildHeader(source, target, hops ? { hops } : undefined)
+            socket.emit(LEGACY_FRAME_EVENT, this.frameMessage(header, this.codec.encode(message)))
+            return
+        }
+        const wire = toWireFrame(message, source, target, hops)
+        if (!wire) throw new Error(`SocketIoServerTransport '${this.name}': no frame representation for this message`)
+        socket.emit(FRAME_EVENT, this.codec.encode(wire))
     }
 
     override async close() {

@@ -32,6 +32,15 @@ export interface PresenceAnnouncement {
      * it came is how two hubs end up each believing the other is the way to it.
      */
     carrying?: string[]
+    /**
+     * The frame layout this peer speaks: 2 for the flat frame, absent for the `$`-delimited one.
+     *
+     * Frames themselves negotiate by event name and need nothing announced - but a server has to
+     * address a peer it has not yet heard a frame *from*. An event pushed to a subscriber is the
+     * ordinary case, and a peer that announced itself and then only listened would otherwise have
+     * to be guessed at. Stated rather than assumed, so the guess is never made.
+     */
+    v?: number
 }
 
 /**

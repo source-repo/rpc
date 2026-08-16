@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+### socket.io speaks the same protocol, in one flat frame
+
+The last of the three steps in `docs/wire-format-parity.md`, and the one the whole exercise was for: a peer written outside TypeScript now implements msgrpc **once**. The new layout is written down in [`docs/socketio-frame-spec.md`](docs/socketio-frame-spec.md).
+
+The old frame was `JSON header` + `'$'` + `msgpack(Message)`, and its real cost was never the nesting — it was **two encodings in one frame**, which means a boundary that has to be found before either can be read. Because the header is JSON, a peer name containing a `$` puts one inside a quoted string where it is data rather than punctuation, so finding it means walking the bytes with JSON's own quoting rules: brace depth, string state, backslash escapes, and a 1024-byte limit past which frames are dropped. That is `findHeaderEnd`, and `Framing.test.ts` and `Resilience.test.ts` exist because this library got it wrong first. Asking a third-party implementer to reproduce it byte-exactly, on pain of silently losing frames, was the actual barrier.
+
+**One map in one encoding has no boundary to find.** Reading a frame is `codec.decode(bytes)` — the call a caller already had to make for the body — and the field names are the MQTT 5 property names with `mr-` removed, so the two wire formats now differ only in their framing and share their vocabulary. `time` and `seq` are gone, having been carried and never read; `nonce` and `sig` were never here, because socket.io authenticates the connection once at the handshake and pins each frame's source to it, which is a stronger claim than a per-frame signature and is checked in one place.
+
+**A batch travels as one frame carrying many**, which is new. MQTT 5 has to unpack a batch into one publish per call — one correlation per publish is its rule — so this is the transport where the envelope actually pays, and now it does.
+
+**Version negotiation is the socket.io event name.** A peer emitting `frame` speaks v2, one emitting `message` speaks v1, and a server registers both and answers each peer in its own dialect — so an upgrade needs no coordination and no configuration. Presence gained a `v` field for the one case frames cannot cover: a peer that announces itself and then only listens, which a server must be able to address without ever having heard a frame from it.
+
+The honest limit, stated because it is the one that bites: **a v2 client against a pre-v2 server emits an event that server has no listener for**, and socket.io delivers it to nobody, so the call times out with nothing said. There is no handshake in which the client could learn better first. `SocketIoClientTransport` therefore takes a `frameVersion`, and this is one more reason the packages that track `rpc` version with it.
+
 ### The frame is the protocol now, and MQTT 5 carries all of it
 
 The owner fence below was not the only thing the MQTT 5 layout could not say. Three more travelled over socket.io and were dropped at the broker without a word, and they were all missing for one structural reason: the frame lived inside the MQTT transport, so *adding a field to the protocol* and *deciding what MQTT calls it* were the same act — and a field could be added to the payload, honoured by socket.io, and never noticed to be absent here.

@@ -82,7 +82,7 @@ The console calls `ovenSrv` without knowing it is on MQTT. `ovenSrv` calls the b
 - **Commands that run once.** Give the server a durable [`RpcIdempotencyStore`](https://github.com/source-repo/rpc/tree/main/packages/rpc#commands) and a redelivery after a crash is answered from the record instead of executed again. It is consulted only for non-repeatable commands, the outcome is written *before* the answer goes out, and a store that cannot be reached refuses the command rather than failing open.
 - **Deadlines that survive the trip.** A request carries the milliseconds its caller will still wait; the MQTT broker is given the same expiry; and the deadline is read again *after* the call has queued, so a command that waited out its caller is refused rather than run late.
 - **Ordering where it matters.** One call at a time per instance, or per key — which is how a server fronting fifty devices keeps each device's commands in order without serialising itself behind the slowest of them.
-- **Two transports, one model.** Including an [MQTT 5 wire format](https://github.com/source-repo/rpc/blob/main/docs/mqtt5-frame-spec.md) that a plain MQTT.js peer can speak with none of this code — reply address, correlation, method and deadline are packet properties, not an opaque envelope.
+- **Two transports, one model, one vocabulary.** Both an [MQTT 5 wire format](https://github.com/source-repo/rpc/blob/main/docs/mqtt5-frame-spec.md) and a [socket.io one](https://github.com/source-repo/rpc/blob/main/docs/socketio-frame-spec.md) that a plain MQTT.js or socket.io peer can speak with none of this code. Reply address, correlation, method and deadline are packet properties or flat fields, never an opaque envelope — and they carry the same names on both, so a peer in another language implements the protocol once.
 - **Authentication on both sides of the seam.** Per-connection tokens where there is a connection, per-frame signing (HMAC or Ed25519) with replay protection where there is not. An authenticated name is pinned: a peer cannot address frames as another peer.
 
 ## The tooling is half the point
@@ -113,7 +113,8 @@ The two package READMEs are the complete reference for their package — every o
 | [Deploying a network](https://github.com/source-repo/rpc/blob/main/docs/deploying-a-network.md) | broker, bus, console, ports, TLS, containers, and watching one that is already misbehaving |
 | [Writing a simulator](https://github.com/source-repo/rpc/blob/main/docs/writing-a-simulator.md) | the four rungs from a fake built out of a contract to a peer of your own, and when to stop climbing |
 | [The security model](https://github.com/source-repo/rpc/blob/main/docs/security-model.md) | what is checked where, why the two transports differ, and the limits stated plainly |
-| [MQTT 5 frame spec](https://github.com/source-repo/rpc/blob/main/docs/mqtt5-frame-spec.md) | the wire format, so a peer that is not this library can join |
+| [MQTT 5 frame spec](https://github.com/source-repo/rpc/blob/main/docs/mqtt5-frame-spec.md) | the wire format over a broker, so a peer that is not this library can join |
+| [socket.io frame spec](https://github.com/source-repo/rpc/blob/main/docs/socketio-frame-spec.md) | the same protocol over a connection, in one flat frame |
 | [Tooling roadmap](https://github.com/source-repo/rpc/blob/main/notes/tooling-roadmap.md) | what the CLI could become, and what each piece would cost |
 
 | reference | |
@@ -164,7 +165,7 @@ npm test             # the MQTT tests need a broker:
 
 Without a broker the MQTT tests skip themselves, which is right on a laptop and wrong in CI; `SOURCE_RPC_REQUIRE_BROKER=1` turns the skip into a failure, and the workflow sets it alongside the broker it starts.
 
-[`docs/mqtt5-frame-spec.md`](https://github.com/source-repo/rpc/blob/main/docs/mqtt5-frame-spec.md) describes the wire format. [`CHANGELOG.md`](https://github.com/source-repo/rpc/blob/main/CHANGELOG.md) covers what breaks between versions.
+[`docs/mqtt5-frame-spec.md`](https://github.com/source-repo/rpc/blob/main/docs/mqtt5-frame-spec.md) and [`docs/socketio-frame-spec.md`](https://github.com/source-repo/rpc/blob/main/docs/socketio-frame-spec.md) describe the two wire formats. [`CHANGELOG.md`](https://github.com/source-repo/rpc/blob/main/CHANGELOG.md) covers what breaks between versions.
 
 The packages and the command were renamed in 3.0 — `msgrpc` became Source RPC — but **the protocol did not change**. Topic prefixes are still `msgrpc/v1` and `msgrpc/v2`, introspection is still the `msgrpc` namespace, and MQTT 5 user properties still carry the `mr-` prefix: renaming those would strand every deployed peer for no engineering gain.
 

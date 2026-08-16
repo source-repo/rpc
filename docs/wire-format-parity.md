@@ -1,8 +1,12 @@
 # One frame model, two transports
 
-**Status: steps 1 and 2 done, step 3 outstanding.** The frame model is complete and MQTT 5 carries all of it; socket.io still speaks the `$`-delimited layout. It exists because a peer written in another language has to implement msgrpc twice — once for MQTT 5, once for socket.io — and the two share no vocabulary.
+**Status: done.** This note recorded why a peer written in another language had to implement msgrpc twice — once for MQTT 5, once for socket.io — and what to do about it. All three steps are finished; it is kept as the reasoning behind the two frame specs rather than as a plan.
 
-What is done: the four losses in the table below are closed, and the neutral frame they were missing from now lives in `packages/rpc/src/RPC/Frame.ts` with `Transports/Mqtt5Frame.ts` holding only the `mr-` naming. `mr-v` went 2 → 3 once, covering the fence, the deferred marker, the ticket kind and the event cursor together, since 3 had not shipped. What remains is section 2 below — the socket.io v2 frame — which after that move is a mapping exercise rather than a design one.
+- The four losses in the table below are closed, and the neutral frame they were missing from lives in `packages/rpc/src/RPC/Frame.ts`, with `Transports/Mqtt5Frame.ts` holding only the `mr-` naming.
+- `mr-v` went 2 → 3 **once**, covering the fence, the deferred marker, the ticket kind and the event cursor together, since 3 had not shipped.
+- socket.io speaks the flat frame, specified in [`socketio-frame-spec.md`](socketio-frame-spec.md), negotiated by event name and serving both populations from one listener.
+
+The two wire formats now differ in their framing and share their vocabulary, which was the whole objective: `path`, `method`, `corr`, `ttl`, `fence`, `outcome` and the rest mean one thing and are spelled one way, whether they arrive as MQTT user properties or as fields in a map.
 
 ## The thing that changes the order of the work
 
@@ -76,9 +80,9 @@ Worth doing, in this order:
 
 1. ~~**`fence` over MQTT 5**~~ — **done.** On its own, ahead of everything else here, because it was a silent safety failure rather than an interop inconvenience.
 2. ~~**The neutral frame plus the missing kinds**~~ — **done**, folded into the same `mr-v` 2 → 3 bump rather than a second one. This is the part that makes "the protocol" a thing that exists in one place.
-3. **The socket.io v2 frame** — outstanding, and now a mapping exercise rather than a design one.
+3. ~~**The socket.io v2 frame**~~ — **done**, and after step 2 it was a mapping exercise rather than a design one, as predicted.
 
-Steps 1 and 2 were worth it even though nobody has yet written a non-TS peer, because they were the difference between four features that work and four features that work on one transport. Step 3 is the one that answers the original question, and it is the cheapest of the three.
+Steps 1 and 2 were worth it even though nobody has yet written a non-TS peer, because they were the difference between four features that work and four features that work on one transport. Step 3 is the one that answered the original question, and it was the cheapest of the three.
 
 ### What step 2 turned up that is still open
 

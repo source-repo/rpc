@@ -3,12 +3,23 @@ import { GenericModule, IGenericModule, Message, TransportEvent } from '../RPC/C
 import { FrameCodec, msgPackCodec } from '../RPC/Codec.js'
 import { refuseDelivery } from '../RPC/Undeliverable.js'
 import { isUsablePeerName, isUsableShape, MAX_RELAY_HOPS, PRESENCE_EVENT, PresenceAnnouncement, PresenceUpdate } from './Presence.js'
+import { FRAME_EVENT, fromWireFrame, LEGACY_FRAME_EVENT, SOCKET_FRAME_VERSION, toWireFrame } from './SocketIoFrame.js'
 
 export class SocketIoClientTransport extends GenericModule<Message, unknown, Message, unknown> {
     socket?: Socket
     connected = false
     /** Owned here rather than by a converter above, so the transport decides its own wire form. */
     codec: FrameCodec = msgPackCodec
+    /**
+     * Send the flat frame rather than the `$`-delimited one. See docs/socketio-frame-spec.md.
+     *
+     * Both are read on the way in, so a server of either vintage can answer this peer. What this
+     * decides is what goes *out*, and the honest limit is worth stating: a v2 frame reaches a
+     * pre-v2 server as an event it has no listener for, which socket.io delivers to nobody - so the
+     * call times out with nothing said. That is why this is a flag and not merely a rewrite, and
+     * why `rpc` and its dependants version together.
+     */
+    frameVersion: 1 | 2 = SOCKET_FRAME_VERSION
     /** Peers this transport has been told are online, so a reconnect can report only what changed. */
     readonly knownPeers = new Set<string>()
     /** Peers reachable through whatever owns this transport, advertised to the far end. */
@@ -56,9 +67,12 @@ export class SocketIoClientTransport extends GenericModule<Message, unknown, Mes
          * with its own certificate authority should pass `ca` in the socket options instead, which
          * keeps verification on.
          */
-        public allowInsecureTls = false
+        public allowInsecureTls = false,
+        /** Which frame layout to send. See the `frameVersion` field for what the older one costs. */
+        frameVersion: 1 | 2 = SOCKET_FRAME_VERSION
     ) {
         super(name, sources)
+        this.frameVersion = frameVersion
         // Deferred by a microtask so whatever constructs this transport can finish wiring it
         // before the link comes up. A resumed MQTT session is delivered its queued messages the
         // instant it connects, and a frame arriving before the RPC handler is piped in would find
@@ -130,7 +144,7 @@ export class SocketIoClientTransport extends GenericModule<Message, unknown, Mes
             this.warnAboutInsecureTls()
         }
         this.socket = urlSocketIo ? io(urlSocketIo, this.options) : io(this.options)
-        this.socket.on('message', async (messageArray) => {
+        this.socket.on(LEGACY_FRAME_EVENT, async (messageArray) => {
             try {
                 const [header, payload, reason] = this.extractHeader(new Uint8Array(messageArray))
                 if (!header) {
@@ -142,6 +156,20 @@ export class SocketIoClientTransport extends GenericModule<Message, unknown, Mes
                 await this.deliver(message, header.source, header.target, header.hops ?? 0)
             } catch (e) {
                 // A peer that sends a frame this codec cannot read must not take the client down.
+                this.emit(TransportEvent.rejected, { source: 'unknown', reason: `undecodable frame: ${String(e)}`, error: e })
+            }
+        })
+        // Both layouts are read regardless of which one this peer sends, so a server may answer in
+        // whichever it speaks and an upgrade needs no coordination in this direction.
+        this.socket.on(FRAME_EVENT, async (frameArray) => {
+            try {
+                const read = fromWireFrame(this.codec.decode(new Uint8Array(frameArray)))
+                if ('reason' in read) {
+                    this.emit(TransportEvent.rejected, { source: 'unknown', reason: read.reason })
+                    return
+                }
+                await this.deliver(read.message, read.source, read.target, read.hops)
+            } catch (e) {
                 this.emit(TransportEvent.rejected, { source: 'unknown', reason: `undecodable frame: ${String(e)}`, error: e })
             }
         })
@@ -215,6 +243,9 @@ export class SocketIoClientTransport extends GenericModule<Message, unknown, Mes
         const announcement: PresenceAnnouncement = { name: this.name }
         if (this.carrying.length) announcement.carrying = this.carrying
         if (this.shape) announcement.shape = this.shape
+        // So the server can address this peer before it has sent a frame - an event pushed to a
+        // subscriber being the ordinary case. See PresenceAnnouncement.v.
+        if (this.frameVersion !== 1) announcement.v = this.frameVersion
         this.socket?.emit(PRESENCE_EVENT, announcement)
     }
 
@@ -314,11 +345,30 @@ export class SocketIoClientTransport extends GenericModule<Message, unknown, Mes
     /** Send over this link with a hop count, for a frame being passed along rather than originated. */
     forward(message: Message, source: string, target: string, hops: number) {
         try {
-            this.requireSocket().emit('message', this.frameMessage(this.buildHeader(source, target, { hops }), this.codec.encode(message)))
+            this.emitFrame(this.requireSocket(), message, source, target, hops)
         } catch (e) {
             // Relaying is done for someone else, so there is no caller here to reject.
             this.emit(TransportEvent.unroutable, { source, target, reason: `cannot forward: ${String(e)}`, error: e })
         }
+    }
+
+    /**
+     * Put one frame on the link in whichever layout this peer sends.
+     *
+     * Throws rather than returning quietly when the message has no representation. The old path
+     * could not fail this way - it encoded a `Message` whole and asked no questions - so a caller
+     * whose message cannot be framed has to hear about it here, where there is still a call to
+     * reject, rather than discover it as a timeout.
+     */
+    private emitFrame(socket: Socket, message: Message, source: string, target: string, hops = 0) {
+        if (this.frameVersion === 1) {
+            const header = this.buildHeader(source, target, hops ? { hops } : undefined)
+            socket.emit(LEGACY_FRAME_EVENT, this.frameMessage(header, this.codec.encode(message)))
+            return
+        }
+        const wire = toWireFrame(message, source, target, hops)
+        if (!wire) throw new Error(`SocketIoClientTransport '${this.name}': no frame representation for this message`)
+        socket.emit(FRAME_EVENT, this.codec.encode(wire))
     }
 
     /**
@@ -337,7 +387,7 @@ export class SocketIoClientTransport extends GenericModule<Message, unknown, Mes
         // No blind sleep while disconnected: socket.io already buffers outgoing frames and flushes
         // them on reconnect, so sleeping only delayed every send during a blip without helping.
         // If the link never comes back the call fails on its own timeout.
-        this.requireSocket().emit('message', this.frameMessage(this.buildHeader(source, target), this.codec.encode(message)))
+        this.emitFrame(this.requireSocket(), message, source, target)
     }
 
     override isTransport() {
