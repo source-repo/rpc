@@ -6,7 +6,7 @@ import { FrameCodec, msgPackCodec } from '../RPC/Codec.js'
 import { RpcAuthenticator, RpcIdentity } from '../RPC/Auth.js'
 import { refuseDelivery } from '../RPC/Undeliverable.js'
 import { isUsablePeerName, isUsableShape, MAX_CARRIED_PEERS, MAX_RELAY_HOPS, PRESENCE_EVENT, PresenceAnnouncement, PresenceUpdate, RelayContext, RelayRule } from './Presence.js'
-import { FRAME_EVENT, fromWireFrame, LEGACY_FRAME_EVENT, SOCKET_FRAME_VERSION, toWireFrame } from './SocketIoFrame.js'
+import { FRAME_EVENT, fromWireFrame, LEGACY_FRAME_EVENT, FLAT_FRAME_VERSION, toWireFrame } from './FlatFrame.js'
 
 type Servers = HttpServer | HttpsServer | SocketIo.Server
 
@@ -220,7 +220,7 @@ export class SocketIoServerTransport extends GenericModule<Message, unknown, Mes
             return
         }
         if (!this.vouchesFor(socket, read.source)) return
-        this.noteDialect(socket, SOCKET_FRAME_VERSION)
+        this.noteDialect(socket, FLAT_FRAME_VERSION)
         this.learnPeer(read.source, socket)
         await this.routeInbound(socket, read.message, read.source, read.target, read.hops)
     }
@@ -599,7 +599,7 @@ export class SocketIoServerTransport extends GenericModule<Message, unknown, Mes
      * layout is the one every peer can read.
      */
     private emitFrame(socket: SocketIo.Socket, message: Message, source: string, target: string, hops = 0) {
-        if (socket.data.frameVersion !== SOCKET_FRAME_VERSION) {
+        if (socket.data.frameVersion !== FLAT_FRAME_VERSION) {
             const header = this.buildHeader(source, target, hops ? { hops } : undefined)
             socket.emit(LEGACY_FRAME_EVENT, this.frameMessage(header, this.codec.encode(message)))
             return

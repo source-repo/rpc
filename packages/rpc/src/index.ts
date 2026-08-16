@@ -11,6 +11,16 @@ export * from './Transports/SocketIoClientTransport.js'
 export * from './Transports/SocketIoServerTransport.js'
 export * from './Transports/MqttTransport.js'
 
+// The protocol itself, exported because a transport can now live outside this package: everything a
+// connection-oriented one needs is the neutral frame and its flat form, and `@source-repo/signalr`
+// is the first built on them from outside. Deliberately narrow - the MQTT property naming stays
+// internal, because a peer that wants it speaks MQTT and reads the spec rather than importing this.
+export * from './RPC/Frame.js'
+export * from './Transports/FlatFrame.js'
+// A transport also has to be able to refuse honestly: a frame it cannot route is answered, not
+// dropped, or the caller learns about it only as a timeout.
+export * from './RPC/Undeliverable.js'
+
 export * from './RPC/Core.js'
 export * from './RPC/Rpc.js'
 export * from './RPC/Auth.js'

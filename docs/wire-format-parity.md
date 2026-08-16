@@ -4,7 +4,7 @@
 
 - The four losses in the table below are closed, and the neutral frame they were missing from lives in `packages/rpc/src/RPC/Frame.ts`, with `Transports/Mqtt5Frame.ts` holding only the `mr-` naming.
 - `mr-v` went 2 → 3 **once**, covering the fence, the deferred marker, the ticket kind and the event cursor together, since 3 had not shipped.
-- socket.io speaks the flat frame, specified in [`socketio-frame-spec.md`](socketio-frame-spec.md), negotiated by event name and serving both populations from one listener.
+- socket.io speaks the flat frame, specified in [`flat-frame-spec.md`](flat-frame-spec.md), negotiated by event name and serving both populations from one listener. `@source-repo/signalr` carries the same frame to a C# hub.
 
 The two wire formats now differ in their framing and share their vocabulary, which was the whole objective: `path`, `method`, `corr`, `ttl`, `fence`, `outcome` and the rest mean one thing and are spelled one way, whether they arrive as MQTT user properties or as fields in a map.
 

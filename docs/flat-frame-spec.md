@@ -1,8 +1,17 @@
 <!-- The wire identifiers here are the MQTT 5 property names with the `mr-` prefix removed, and that is deliberate rather than convenient: the two documents describe one protocol carried two ways, and a reader who has implemented either should recognise the other on sight. -->
 
-# msgrpc over socket.io — frame layout
+# msgrpc over a connection — the flat frame
 
-**Status: implemented.** `SocketIoClientTransport` and `SocketIoServerTransport` speak this by default. A server serves the older `$`-delimited layout at the same time, on a different socket.io event, so the two populations coexist without configuration. Verified with a vanilla `socket.io-client` and `@msgpack/msgpack` on the far side, in `src/SocketIoFrame.test.ts`.
+**Status: implemented.** The layout for any transport with one bidirectional link and a way to name a message. Two carry it:
+
+| binding | names a message with | in |
+| --- | --- | --- |
+| **socket.io** | an event, `frame` | `@source-repo/rpc` — `SocketIoClientTransport`, `SocketIoServerTransport` |
+| **SignalR** | a hub method, `Frame` | `@source-repo/signalr` — `SignalRClientTransport`, and a C# hub |
+
+A socket.io server serves the older `$`-delimited layout at the same time, on a different event, so the two populations coexist without configuration. Verified with a vanilla `socket.io-client` and `@msgpack/msgpack` on the far side, in `packages/rpc/src/FlatFrame.test.ts`.
+
+**The frame is identical in both, deliberately.** It carries its own `src` and `tgt`, so no addressing is left for a transport to supply and there is nothing for one to invent — which is what makes a second binding a page of mapping rather than a second protocol to specify, implement and document.
 
 ## Why
 
@@ -112,7 +121,26 @@ Unchanged, on its own `presence` event, and deliberately not folded into the fra
 
 The server answers an announcement with the peers it knows, which is socket.io's stand-in for the retained presence an MQTT subscriber is handed on subscribe.
 
-## Version negotiation is the event name
+## The SignalR binding
+
+Same frame, different names for the two directions. A hub method carries a frame in; `Clients.*.SendAsync` carries one out.
+
+| | client → hub | hub → client |
+| --- | --- | --- |
+| a frame | `connection.send('frame', …)` → `public Task Frame(RpcFrame frame)` | `Clients.Caller.SendAsync("frame", …)` → `connection.on('frame', …)` |
+| presence | `connection.send('presence', …)` → `public Task Presence(PresenceAnnouncement who)` | `Clients.*.SendAsync("presence", …)` → `connection.on('presence', …)` |
+
+Three things differ from the socket.io binding, and all three follow from SignalR having a serialization layer of its own:
+
+**The frame goes as an object, not as bytes.** socket.io carries whatever it is handed, so the transport encodes with its own codec. SignalR's hub methods are typed, and handing it a pre-encoded blob would mean the hub receives `byte[]` and decodes it by hand — throwing away the one thing SignalR does for a C# author. So the frame is passed as a frame and SignalR serialises it, with `codec` selecting **which hub protocol** rather than doing the encoding: MsgPack, or SignalR's JSON.
+
+**Binary inside `body` depends on that choice.** The MessagePack hub protocol carries a byte array as one; the JSON hub protocol base64s it. Nothing else in the frame is affected, since every other field is a string, a number or a boolean.
+
+**There is no version negotiation, because there is nothing to negotiate.** No SignalR peer ever spoke the `$`-delimited layout, so the hub method name is simply the name, and a `v` other than 2 is refused rather than interpreted.
+
+**Client only.** A SignalR server is ASP.NET Core, so the direction is fixed: the .NET process hosts the hub and the TypeScript peer dials in. That is the direction the problem has anyway.
+
+## On socket.io, version negotiation is the event name
 
 A peer emitting `frame` speaks v2. A peer emitting `message` speaks the `$`-delimited v1. A server registers a listener for both and serves both, without reading a byte to tell them apart — socket.io hands an event to the listener registered for it, or to nobody.
 

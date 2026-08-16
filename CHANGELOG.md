@@ -2,9 +2,25 @@
 
 ## Unreleased
 
+### `@source-repo/signalr` — a .NET process as an ordinary peer
+
+The .NET world does not run socket.io servers; it runs SignalR. So a C# process wanting to join a Source RPC network — a Visual Studio automation host, say — could not be reached directly, and the way round it was to put a broker between the two and give it a topic of its own. That works, and it is a great deal of machinery for two programs on one machine: it makes a local integration depend on infrastructure being up, and it puts a network hop between a caller and a process it could have spoken to directly.
+
+**This is the payoff from the flat frame rather than a new protocol.** A frame carries its own `src` and `tgt`, so a transport needs only "put this frame somewhere, get that one back" — and SignalR's hub methods are exactly that. The mapping is a page long, `toWireFrame`/`fromWireFrame` are reused unchanged, and a hub implements the *same specification* a socket.io peer implements rather than a SignalR-shaped variant of one. That the second binding cost so little is the argument for having done the earlier steps at all.
+
+`SocketIoFrame.ts` became `FlatFrame.ts` accordingly, since the frame was never socket.io's, and `docs/socketio-frame-spec.md` became [`docs/flat-frame-spec.md`](docs/flat-frame-spec.md) with a binding section for each. The neutral frame and its flat form are now **exported** from `@source-repo/rpc`, because a transport can live outside the package and this is what one needs.
+
+**Client only, and there will not be a server.** A SignalR server *is* ASP.NET Core; there is nothing to host one with from Node. The direction is fixed — the .NET process is the hub and this dials in — which is the direction the problem has anyway.
+
+**The frame travels as an object rather than as bytes**, the one place this binding differs in substance. SignalR has a serialization layer and typed hub methods; handing it a blob we encoded ourselves would mean the hub receives `byte[]` and decodes it by hand, throwing away the one thing SignalR does for a C# author. `codec` therefore selects the hub protocol instead of doing the encoding.
+
+A reference hub is in [`packages/signalr/csharp/`](packages/signalr/csharp/) — frame records, routing, and the `IRpcResponder` a process implements. It is written against the specification and **has not been compiled**, this repository having no .NET SDK; the note saying so is at the top of it. `Interop.test.ts` is the half that needs a real hub and skips without one, with `SOURCE_RPC_REQUIRE_SIGNALR` to turn that skip into a failure the way the broker suites do.
+
+Separate package because `@microsoft/signalr` brings 161 packages with it, and every consumer of `@source-repo/rpc` — browser bundles included — would otherwise pay for them.
+
 ### socket.io speaks the same protocol, in one flat frame
 
-The last of the three steps in `docs/wire-format-parity.md`, and the one the whole exercise was for: a peer written outside TypeScript now implements msgrpc **once**. The new layout is written down in [`docs/socketio-frame-spec.md`](docs/socketio-frame-spec.md).
+The last of the three steps in `docs/wire-format-parity.md`, and the one the whole exercise was for: a peer written outside TypeScript now implements msgrpc **once**. The new layout is written down in [`docs/flat-frame-spec.md`](docs/flat-frame-spec.md).
 
 The old frame was `JSON header` + `'$'` + `msgpack(Message)`, and its real cost was never the nesting — it was **two encodings in one frame**, which means a boundary that has to be found before either can be read. Because the header is JSON, a peer name containing a `$` puts one inside a quoted string where it is data rather than punctuation, so finding it means walking the bytes with JSON's own quoting rules: brace depth, string state, backslash escapes, and a 1024-byte limit past which frames are dropped. That is `findHeaderEnd`, and `Framing.test.ts` and `Resilience.test.ts` exist because this library got it wrong first. Asking a third-party implementer to reproduce it byte-exactly, on pain of silently losing frames, was the actual barrier.
 

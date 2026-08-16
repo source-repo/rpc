@@ -6,7 +6,7 @@ import { decode as msgPackDecode, encode as msgPackEncode } from '@msgpack/msgpa
 import { rpc, rpcNamespace, RpcClient, RpcServer } from './index.js'
 import { SocketIoClientTransport } from './Transports/SocketIoClientTransport.js'
 import type { SocketIoServerTransport } from './Transports/SocketIoServerTransport.js'
-import { FRAME_EVENT, LEGACY_FRAME_EVENT, SOCKET_FRAME_VERSION, type WireFrame } from './Transports/SocketIoFrame.js'
+import { FRAME_EVENT, LEGACY_FRAME_EVENT, FLAT_FRAME_VERSION, type WireFrame } from './Transports/FlatFrame.js'
 import { PRESENCE_EVENT } from './Transports/Presence.js'
 
 /**
@@ -45,7 +45,7 @@ const outsider = (port: number, name: string) => {
     socket.on(FRAME_EVENT, (bytes: ArrayBufferLike) => heard.push(msgPackDecode(new Uint8Array(bytes)) as WireFrame))
     socket.on(LEGACY_FRAME_EVENT, () => heard.push({ v: 0, src: '', tgt: '', kind: 'legacy-layout-was-used' }))
     const send = (frame: Partial<WireFrame>) =>
-        socket.emit(FRAME_EVENT, msgPackEncode({ v: SOCKET_FRAME_VERSION, src: name, ...frame }, { ignoreUndefined: true }))
+        socket.emit(FRAME_EVENT, msgPackEncode({ v: FLAT_FRAME_VERSION, src: name, ...frame }, { ignoreUndefined: true }))
     return { socket, heard, send }
 }
 
@@ -57,7 +57,7 @@ test('a plain socket.io client with no msgrpc code can call an msgrpc server', a
     // ---- the whole third-party caller ----
     const { socket, heard, send } = outsider(3961, peer('outsider'))
     await new Promise<void>((resolve) => socket.on('connect', () => resolve()))
-    socket.emit(PRESENCE_EVENT, { name: peer('outsider'), v: SOCKET_FRAME_VERSION })
+    socket.emit(PRESENCE_EVENT, { name: peer('outsider'), v: FLAT_FRAME_VERSION })
     send({ tgt: peer('meterHost'), kind: 'call', corr: 'c-1', path: 'meter', method: 'read', body: ['flow'] })
     // ---- end of third-party code ----
 
@@ -106,7 +106,7 @@ test('a plain socket.io client can subscribe, and events arrive as frames it can
 
     const { socket, heard, send } = outsider(3962, peer('listener'))
     await new Promise<void>((resolve) => socket.on('connect', () => resolve()))
-    socket.emit(PRESENCE_EVENT, { name: peer('listener'), v: SOCKET_FRAME_VERSION })
+    socket.emit(PRESENCE_EVENT, { name: peer('listener'), v: FLAT_FRAME_VERSION })
 
     // Subscribing is an ordinary request whose kind says what it is, so every request has one shape
     // - the same bargain the MQTT layout makes with `mr-kind: subscribe`.
@@ -136,7 +136,7 @@ test('a listen-only peer is answered in the layout it announced, having sent no 
     const listener = server.transports[0] as unknown as SocketIoServerTransport
     const { socket, heard } = outsider(3963, peer('quiet'))
     await new Promise<void>((resolve) => socket.on('connect', () => resolve()))
-    socket.emit(PRESENCE_EVENT, { name: peer('quiet'), v: SOCKET_FRAME_VERSION })
+    socket.emit(PRESENCE_EVENT, { name: peer('quiet'), v: FLAT_FRAME_VERSION })
     await until(() => listener.reachablePeers().includes(peer('quiet')))
 
     // Addressed out of the blue, the way an event push reaches a subscriber that never called.
@@ -224,8 +224,8 @@ test('a frame that is not one is refused with a reason, not dropped', async (t) 
     // A frame from a future version is refused rather than read on the assumption that the parts
     // this build recognises still mean what they used to.
     socket.emit(FRAME_EVENT, msgPackEncode({ v: 99, src: 'x', tgt: peer('strictHost'), kind: 'call' }))
-    socket.emit(FRAME_EVENT, msgPackEncode({ v: SOCKET_FRAME_VERSION, tgt: peer('strictHost'), kind: 'call' }))
-    socket.emit(FRAME_EVENT, msgPackEncode({ v: SOCKET_FRAME_VERSION, src: 'x', tgt: peer('strictHost'), kind: 'nonesuch' }))
+    socket.emit(FRAME_EVENT, msgPackEncode({ v: FLAT_FRAME_VERSION, tgt: peer('strictHost'), kind: 'call' }))
+    socket.emit(FRAME_EVENT, msgPackEncode({ v: FLAT_FRAME_VERSION, src: 'x', tgt: peer('strictHost'), kind: 'nonesuch' }))
     socket.emit(FRAME_EVENT, msgPackEncode(['not', 'a', 'frame']))
     await until(() => refused.length >= 4)
 

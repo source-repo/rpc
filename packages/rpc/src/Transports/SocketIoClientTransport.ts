@@ -3,7 +3,7 @@ import { GenericModule, IGenericModule, Message, TransportEvent } from '../RPC/C
 import { FrameCodec, msgPackCodec } from '../RPC/Codec.js'
 import { refuseDelivery } from '../RPC/Undeliverable.js'
 import { isUsablePeerName, isUsableShape, MAX_RELAY_HOPS, PRESENCE_EVENT, PresenceAnnouncement, PresenceUpdate } from './Presence.js'
-import { FRAME_EVENT, fromWireFrame, LEGACY_FRAME_EVENT, SOCKET_FRAME_VERSION, toWireFrame } from './SocketIoFrame.js'
+import { FRAME_EVENT, fromWireFrame, LEGACY_FRAME_EVENT, FLAT_FRAME_VERSION, toWireFrame } from './FlatFrame.js'
 
 export class SocketIoClientTransport extends GenericModule<Message, unknown, Message, unknown> {
     socket?: Socket
@@ -11,7 +11,7 @@ export class SocketIoClientTransport extends GenericModule<Message, unknown, Mes
     /** Owned here rather than by a converter above, so the transport decides its own wire form. */
     codec: FrameCodec = msgPackCodec
     /**
-     * Send the flat frame rather than the `$`-delimited one. See docs/socketio-frame-spec.md.
+     * Send the flat frame rather than the `$`-delimited one. See docs/flat-frame-spec.md.
      *
      * Both are read on the way in, so a server of either vintage can answer this peer. What this
      * decides is what goes *out*, and the honest limit is worth stating: a v2 frame reaches a
@@ -19,7 +19,7 @@ export class SocketIoClientTransport extends GenericModule<Message, unknown, Mes
      * call times out with nothing said. That is why this is a flag and not merely a rewrite, and
      * why `rpc` and its dependants version together.
      */
-    frameVersion: 1 | 2 = SOCKET_FRAME_VERSION
+    frameVersion: 1 | 2 = FLAT_FRAME_VERSION
     /** Peers this transport has been told are online, so a reconnect can report only what changed. */
     readonly knownPeers = new Set<string>()
     /** Peers reachable through whatever owns this transport, advertised to the far end. */
@@ -69,7 +69,7 @@ export class SocketIoClientTransport extends GenericModule<Message, unknown, Mes
          */
         public allowInsecureTls = false,
         /** Which frame layout to send. See the `frameVersion` field for what the older one costs. */
-        frameVersion: 1 | 2 = SOCKET_FRAME_VERSION
+        frameVersion: 1 | 2 = FLAT_FRAME_VERSION
     ) {
         super(name, sources)
         this.frameVersion = frameVersion

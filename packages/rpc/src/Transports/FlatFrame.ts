@@ -3,8 +3,14 @@ import { fromInboundFrame, InboundFrame, OutboundFrame, toOutboundFrame } from '
 import { RpcBatchPayload, RpcMessage, RpcMessageType } from '../RPC/Messages.js'
 
 /**
- * The socket.io half of the frame mapping: the neutral frame of RPC/Frame.ts as one flat map, and
- * back. Described in docs/socketio-frame-spec.md.
+ * The neutral frame of RPC/Frame.ts as one flat map, and back. Described in docs/flat-frame-spec.md.
+ *
+ * **Not socket.io's, though socket.io was the first to need it.** A transport with one bidirectional
+ * link and some way to name a message needs exactly this and nothing more: the frame carries its own
+ * `src` and `tgt`, so there is no addressing left for the transport to supply and no per-transport
+ * vocabulary to invent. socket.io names messages with events, SignalR names them with hub methods,
+ * and both carry this frame under the name `frame` - which is why that constant lives here rather
+ * than in either transport.
  *
  * ## Why this replaced the `$`-delimited layout
  *
@@ -31,23 +37,23 @@ import { RpcBatchPayload, RpcMessage, RpcMessageType } from '../RPC/Messages.js'
  */
 
 /**
- * The socket.io event that carries a v2 frame.
+ * What a flat frame is called: a socket.io event, and a SignalR hub method.
  *
- * Version negotiation is the event name itself, and that is why there is no version to negotiate:
- * a peer emitting `frame` speaks v2, a peer emitting `message` speaks v1, and a server listening
- * for both serves both without reading a byte to find out which. socket.io hands an event to the
- * listener registered for it or to nobody, so the two populations cannot be confused for each
- * other the way two layouts sharing one event name could be.
+ * On socket.io this doubles as the version negotiation, which is why there is no version to
+ * negotiate: a peer emitting `frame` speaks v2, a peer emitting `message` speaks v1, and a server
+ * listening for both serves both without reading a byte to find out which. socket.io hands an event
+ * to the listener registered for it or to nobody, so the two populations cannot be confused for each
+ * other the way two layouts sharing one name could be.
  *
- * MQTT could not do this cheaply - it took a whole topic prefix change, `msgrpc/v1` to `msgrpc/v2`,
- * to keep its two populations apart. Here it costs one extra listener.
+ * MQTT could not do that cheaply - it took a whole topic prefix change, `msgrpc/v1` to `msgrpc/v2`,
+ * to keep its populations apart. Here it costs one extra listener.
  */
 export const FRAME_EVENT = 'frame'
 
-/** The event the `$`-delimited layout uses. Still served, so a v1 peer keeps working. */
+/** The socket.io event the `$`-delimited layout uses. Still served, so a v1 peer keeps working. */
 export const LEGACY_FRAME_EVENT = 'message'
 
-export const SOCKET_FRAME_VERSION = 2
+export const FLAT_FRAME_VERSION = 2
 
 /**
  * A frame on the wire. Every field is optional except the ones that address it, because a frame
@@ -127,7 +133,7 @@ const fieldsFor = (frame: OutboundFrame): Omit<WireFrame, 'v' | 'src' | 'tgt'> =
  * than travel as an empty frame.
  */
 export const toWireFrame = (message: Message, source: string, target: string, hops = 0): WireFrame | undefined => {
-    const addressing = { v: SOCKET_FRAME_VERSION, src: source, tgt: target, ...(hops ? { hops } : {}) }
+    const addressing = { v: FLAT_FRAME_VERSION, src: source, tgt: target, ...(hops ? { hops } : {}) }
     const payload = message.payload as RpcMessage | undefined
     if (payload?.type === RpcMessageType.batch) {
         const carried = ((payload as RpcBatchPayload).payloads ?? [])
@@ -174,7 +180,7 @@ export type ReadFrame = { message: Message; source: string; target: string; hops
 export const fromWireFrame = (decoded: unknown): ReadFrame => {
     if (!decoded || typeof decoded !== 'object' || Array.isArray(decoded)) return { reason: 'frame is not an object' }
     const wire = decoded as WireFrame
-    if (wire.v !== SOCKET_FRAME_VERSION) return { reason: `frame version ${String(wire.v)}, which this build does not accept` }
+    if (wire.v !== FLAT_FRAME_VERSION) return { reason: `frame version ${String(wire.v)}, which this build does not accept` }
     if (typeof wire.src !== 'string' || !wire.src) return { reason: 'frame names no source' }
     if (typeof wire.tgt !== 'string' || !wire.tgt) return { reason: 'frame names no target' }
     const hops = typeof wire.hops === 'number' && Number.isSafeInteger(wire.hops) && wire.hops >= 0 ? wire.hops : 0
