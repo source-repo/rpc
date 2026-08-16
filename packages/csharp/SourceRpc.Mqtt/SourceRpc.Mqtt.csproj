@@ -20,7 +20,7 @@
   <PropertyGroup>
     <IsPackable>true</IsPackable>
     <PackageId>SourceRpc.Mqtt</PackageId>
-    <Version>4.8.0</Version>
+    <Version>5.0.0</Version>
     <Authors>anderswestberg</Authors>
     <Description>Source RPC over MQTT 5: a peer on a broker, speaking the mr- property layout that lets a plain MQTT client take part with no msgrpc code.</Description>
     <PackageTags>mqtt;rpc;msgrpc;automation;iiot</PackageTags>

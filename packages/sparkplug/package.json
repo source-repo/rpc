@@ -1,6 +1,6 @@
 {
     "name": "@source-repo/sparkplug",
-    "version": "4.6.0",
+    "version": "5.0.0",
     "description": "Sparkplug B integration for Source RPC: Edge Node session substrate, projection, ingestion and controlled commands",
     "keywords": [
         "sparkplug",
@@ -52,7 +52,7 @@
     },
     "dependencies": {
         "@bufbuild/protobuf": "^2.13.0",
-        "@source-repo/rpc": "^4.6.0",
+        "@source-repo/rpc": "^5.0.0",
         "mqtt": "^5.15.2"
     },
     "devDependencies": {

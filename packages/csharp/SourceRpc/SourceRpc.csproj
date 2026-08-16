@@ -21,7 +21,7 @@
   <PropertyGroup>
     <IsPackable>true</IsPackable>
     <PackageId>SourceRpc</PackageId>
-    <Version>4.8.0</Version>
+    <Version>5.0.0</Version>
     <Authors>anderswestberg</Authors>
     <Description>Source RPC for .NET: the flat frame, the dispatcher, the client and the error model, with no transport bound in. Carried by SourceRpc.SignalR and whatever else implements ISourceRpcTransport.</Description>
     <PackageTags>rpc;msgrpc;automation;iiot</PackageTags>

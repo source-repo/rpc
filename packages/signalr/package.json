@@ -1,6 +1,6 @@
 {
     "name": "@source-repo/signalr",
-    "version": "4.6.0",
+    "version": "5.0.0",
     "description": "Source RPC over ASP.NET Core SignalR: a client transport that dials into a C# hub, so a .NET process can be an ordinary peer",
     "keywords": [
         "signalr",
@@ -45,7 +45,7 @@
     "dependencies": {
         "@microsoft/signalr": "^10.0.11",
         "@microsoft/signalr-protocol-msgpack": "^10.0.11",
-        "@source-repo/rpc": "^4.6.0"
+        "@source-repo/rpc": "^5.0.0"
     },
     "devDependencies": {
         "@types/node": "^26.1.2",

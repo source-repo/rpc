@@ -1,6 +1,10 @@
 # Changelog
 
-## Unreleased
+## 5.0.0
+
+A major because the wire changed. MQTT peers speak frame version 3 on the `msgrpc/v2` topic prefix; connection transports - socket.io and SignalR - speak the flat frame. A peer on the old numbers does not talk to a peer on the new ones. Nothing running breaks on its own: a socket.io server serves both layouts from one listener, and the prefix change is what keeps the two MQTT populations from meeting. But there is no upgrade path that leaves half a network behind, which is what the number is for.
+
+The .NET packages carry the same version, so one number describes the release in both languages.
 
 ### A review pass, and the frames a peer gets sent by something that wishes it harm
 

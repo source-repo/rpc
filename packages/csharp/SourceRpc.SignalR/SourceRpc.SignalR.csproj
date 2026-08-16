@@ -21,7 +21,7 @@
   <PropertyGroup>
     <IsPackable>true</IsPackable>
     <PackageId>SourceRpc.SignalR</PackageId>
-    <Version>4.8.0</Version>
+    <Version>5.0.0</Version>
     <Authors>anderswestberg</Authors>
     <Description>Source RPC over ASP.NET Core SignalR: a hub that makes a .NET process reachable as a peer, and a client transport for one that dials out. Serves methods and publishes events over JSON or MessagePack.</Description>
     <PackageTags>signalr;rpc;aspnetcore;msgrpc;automation</PackageTags>

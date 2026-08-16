@@ -148,7 +148,7 @@ dotnet nuget push packages/csharp/nupkg/*.nupkg -s source-local
 
 A consumer anywhere on the machine then does `dotnet add package SourceRpc.SignalR`, and `SourceRpc` comes with it as a transitive dependency. That is worth doing before a real registry exists, because it removes the failure a cross-repository `ProjectReference` invites: a relative path out of one working tree and into another, which resolves on the machine that wrote it and ships broken from anywhere else.
 
-**Bump the version before re-pushing.** A folder feed will not replace an existing `<id>.<version>.nupkg`, and a consumer that has already restored `4.8.0` has it cached in `~/.nuget/packages` regardless — so republishing the same number is the one way to be sure everybody is looking at something different from what you built.
+**Bump the version before re-pushing.** A folder feed will not replace an existing `<id>.<version>.nupkg`, and a consumer that has already restored `5.0.0` has it cached in `~/.nuget/packages` regardless — so republishing the same number is the one way to be sure everybody is looking at something different from what you built.
 
 ## Building and testing
 
@@ -264,9 +264,11 @@ A signature says who wrote a frame, never how many times they meant to send it, 
 
 The canonical bytes are byte-identical with the TypeScript library's, and `packages/rpc/src/MqttSigningInterop.test.ts` compares them directly for the cases where JavaScript and System.Text.Json disagree — non-ASCII, `<`, `&`, `+`, control characters, surrogate pairs and lone surrogates. That test is not ceremony: it caught a matched surrogate pair being signed with its low half escaped, which would have produced frames that verify nowhere while looking like a key or clock problem.
 
-## Upgrading to 4.8.0
+## Upgrading to 5.0.0
 
-Two breaking changes, both in transport options rather than in anything an application calls:
+The version is a major because the wire changed, not only the API: MQTT peers moved to frame version 3 under the `msgrpc/v2` topic prefix, and connection transports moved to the flat frame. Neither breaks a running network — a socket.io server serves both layouts from one listener, and the prefix change keeps the two MQTT populations apart by construction — but a peer on the old numbers does not talk to a peer on the new ones, and that is what a major is for.
+
+Two breaking changes in this package, both in transport options rather than in anything an application calls:
 
 - **`MqttTransportOptions.Verify`** returns `string?` — the peer it proved the frame is from — where it returned `bool`. `MqttSigning.HmacVerifier` already does this; a hand-written verifier returns the source on success and `null` to refuse.
 - **`SocketIoTransportOptions.Path`** is now **`EnginePath`**, because it is engine.io's endpoint and never was the namespace.

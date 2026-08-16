@@ -1,6 +1,6 @@
 {
     "name": "@source-repo/relational",
-    "version": "4.6.0",
+    "version": "5.0.0",
     "description": "Source Relational: serve an existing SQL database to a Source RPC network as DataProvider resources, over Kysely",
     "keywords": [
         "rpc",
@@ -46,11 +46,11 @@
         "prepack": "npm run clean && npm run build"
     },
     "dependencies": {
-        "@source-repo/rpc": "^4.6.0",
+        "@source-repo/rpc": "^5.0.0",
         "kysely": "^0.29.5"
     },
     "devDependencies": {
-        "@source-repo/conformance": "^4.6.0",
+        "@source-repo/conformance": "^5.0.0",
         "@types/node": "^26.1.2",
         "@types/pg": "^8.21.0",
         "ava": "^8.0.1",
