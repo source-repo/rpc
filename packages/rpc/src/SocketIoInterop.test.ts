@@ -1,5 +1,7 @@
 import anyTest, { TestFn } from 'ava'
 import { randomUUID } from 'crypto'
+import { io as socketIoClient } from 'socket.io-client'
+import { encode as msgPackEncode } from '@msgpack/msgpack'
 import { rpc, rpcNamespace, RpcServer } from './index.js'
 import type { SocketIoServerTransport } from './Transports/SocketIoServerTransport.js'
 
@@ -171,4 +173,31 @@ test.serial('a deferred C# method answers twice over socket.io', async (t) => {
     const ticket = (await meter.slow('over-socketio')) as unknown as { id: string; result: Promise<string> }
     t.is(typeof ticket.id, 'string')
     t.is(await ticket.result, 'finished over-socketio')
+})
+
+test.serial('a hostile frame does not take the C# peer down', async (t) => {
+    if (skipWithoutPeer(t)) return
+
+    // The peer is reachable through the same server every other test here uses, so this connects
+    // as an ordinary socket.io client and emits a `frame` that is not one. Two shapes, both of
+    // which a peer sees from anything that can reach the bus - a hostile sender, or a truncated
+    // frame after a network glitch.
+    const socket = socketIoClient(`http://127.0.0.1:${PORT}`)
+    await new Promise<void>((resolve) => socket.on('connect', () => resolve()))
+
+    // Nested one-element arrays. Read with the standard MessagePack options - documented as
+    // omitting all protections, including any bound on depth - the primitive formatter recurses
+    // once per level and the process dies of a StackOverflowException, which cannot be caught. No
+    // try/catch in the transport helps; only refusing to read it this way does.
+    socket.emit('frame', Buffer.concat([Buffer.alloc(60_000, 0x91), Buffer.from([0xc0])]))
+    // And a well-formed map that is not a frame: no version, no source, no target.
+    socket.emit('frame', Buffer.from(msgPackEncode({ hello: 'world' })))
+    socket.emit('frame', Buffer.from([0xc1]))
+    socket.disconnect()
+    await new Promise((resolve) => setTimeout(resolve, 1500))
+
+    // Asserted from outside the peer, because a process killed by a stack overflow does not return
+    // an error - it is simply gone, and only something else can notice.
+    const meter = await t.context.server!.proxy<{ read(tag: string): Promise<string> }>('meter', CSHARP_PEER)
+    t.is(await meter.read('flow'), 'flow=42', 'the peer stopped answering - it did not survive the frames above')
 })

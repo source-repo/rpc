@@ -25,7 +25,7 @@
   <PropertyGroup>
     <IsPackable>true</IsPackable>
     <PackageId>SourceRpc.SocketIo</PackageId>
-    <Version>4.7.0</Version>
+    <Version>4.8.0</Version>
     <Authors>anderswestberg</Authors>
     <Description>Source RPC over socket.io, for a .NET peer that dials out to a TypeScript socket.io server. Client only - socket.io has no maintained .NET server.</Description>
     <PackageTags>socketio;rpc;msgrpc;automation;iiot</PackageTags>

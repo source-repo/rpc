@@ -164,13 +164,21 @@ public static class MqttSigning
     public static Func<byte[], string, string> HmacSigner(byte[] secret) =>
         (canonical, _) => Convert.ToBase64String(HMACSHA256.HashData(secret, canonical));
 
-    /// <summary>Verify HMAC-SHA256, given a way to find each peer's secret.</summary>
-    public static Func<byte[], string, string, bool> HmacVerifier(Func<string, byte[]?> secretFor) =>
+    /// <summary>
+    /// Verify HMAC-SHA256, given a way to find each peer's secret.
+    ///
+    /// Returns the peer this frame is *proven* to be from, or null to refuse it. Deliberately not a
+    /// bool: the transport re-checks the returned name against the frame's own `mr-src`, so a
+    /// verifier that resolves keys loosely - `(canonical, sig, _) => AnyKnownKeyVerifies(...)` is an
+    /// easy thing to write - cannot silently remove the binding between a signature and a name.
+    /// That binding is the entire property signing exists to provide here.
+    /// </summary>
+    public static Func<byte[], string, string, string?> HmacVerifier(Func<string, byte[]?> secretFor) =>
         (canonical, signature, source) =>
         {
             var secret = secretFor(source);
             if (secret is null)
-                return false;
+                return null;
             byte[] provided;
             try
             {
@@ -178,10 +186,10 @@ public static class MqttSigning
             }
             catch (FormatException)
             {
-                return false;
+                return null;
             }
             // Fixed-time, so a wrong signature does not leak how much of it was right.
-            return CryptographicOperations.FixedTimeEquals(HMACSHA256.HashData(secret, canonical), provided);
+            return CryptographicOperations.FixedTimeEquals(HMACSHA256.HashData(secret, canonical), provided) ? source : null;
         };
 }
 
@@ -194,7 +202,12 @@ public static class MqttSigning
 /// </summary>
 public sealed class ReplayGuard(TimeSpan? maxClockSkew = null, int maxTrackedNonces = 5000)
 {
-    private readonly ConcurrentDictionary<string, long> _seen = new();
+    private readonly object _gate = new();
+    private readonly Dictionary<string, long> _seen = new(StringComparer.Ordinal);
+
+    /// <summary>Nonces in arrival order, so the oldest can be dropped without searching for it.</summary>
+    private readonly Queue<string> _order = new();
+
     private readonly long _skewMs = (long)(maxClockSkew ?? TimeSpan.FromMinutes(1)).TotalMilliseconds;
 
     /// <summary>True when the frame is fresh and previously unseen. Records the nonce as a side effect.</summary>
@@ -203,14 +216,36 @@ public sealed class ReplayGuard(TimeSpan? maxClockSkew = null, int maxTrackedNon
         if (string.IsNullOrEmpty(nonce))
             return false;
         var at = now ?? DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-        if (Math.Abs(at - timestamp) > _skewMs)
+
+        // Bounded by comparison rather than by subtracting, and that is not fussiness: `mr-ts` is
+        // written by whoever sent the frame, arithmetic here is unchecked, and `Math.Abs` throws
+        // outright on long.MinValue - so one crafted timestamp put an OverflowException in the
+        // receive path, before any signature had been checked.
+        if (timestamp < at - _skewMs || timestamp > at + _skewMs)
             return false;
-        if (!_seen.TryAdd(nonce, at))
-            return false;
-        if (_seen.Count > maxTrackedNonces)
-            foreach (var (key, when) in _seen)
-                if (at - when > _skewMs)
-                    _seen.TryRemove(key, out _);
-        return true;
+
+        lock (_gate)
+        {
+            if (!_seen.TryAdd(nonce, at))
+                return false;
+            _order.Enqueue(nonce);
+
+            // Oldest first, until both rules are satisfied - and the count rule has to be there.
+            // Everything inside the freshness window is by definition too young to expire, so an
+            // age-only rule bounds nothing at all: under load the table grows to arrival-rate times
+            // the window, and every message walks the whole of it looking for something to drop.
+            // Unsigned garbage with a random nonce is enough to drive that, because this runs
+            // before the signature is checked.
+            while (_order.Count > 0)
+            {
+                var oldest = _order.Peek();
+                var expired = _seen.TryGetValue(oldest, out var when) && at - when > _skewMs;
+                if (!expired && _seen.Count <= maxTrackedNonces)
+                    break;
+                _order.Dequeue();
+                _seen.Remove(oldest);
+            }
+            return true;
+        }
     }
 }

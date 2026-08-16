@@ -2,6 +2,42 @@
 
 ## Unreleased
 
+### A review pass, and the frames a peer gets sent by something that wishes it harm
+
+Three reviewers were pointed at the new code. What they found was not in the protocol - it was in what happens *around* a signature, and the worst of it needed no key at all.
+
+**One unsigned frame killed the process.** The payload was MessagePack-deserialised before anything checked the signature, under options the library's own documentation describes as omitting all protections - including any bound on nesting depth. A few kilobytes of repeated `0x91` is a `StackOverflowException`, which .NET cannot catch: the `try` around the call, and the promise that one bad frame cannot take a peer down, were both simply void. Reproduced end to end - the peer exited 134 mid-suite - and now fixed in both halves: the payload is not read until the frame carrying it is verified, and it is read as untrusted data. `MqttHostileFrames.test.ts` and one case in the socket.io suite send the bomb and then assert, from *outside*, that the peer still answers, because a process killed this way returns no error to assert on. The socket.io binding had the same exposure with no signature step to sit behind at all.
+
+**The replay guard bounded nothing.** It evicted by age, and everything inside the freshness window is by definition too young to expire - so under load it grew to arrival-rate times the window and made every later message walk the whole table looking for something to drop. Since it runs before signature verification (which is the right order - the reverse lets an attacker force an HMAC per packet), unsigned garbage was enough to drive it. Now bounded by count as well as age, oldest first.
+
+**A crafted `mr-ts` threw its way out of the receive path.** `Math.Abs(long.MinValue)` throws, and that value is one the sender picks. The freshness window is now checked by comparison rather than by subtracting attacker input.
+
+**A signed frame could redirect somebody else's answer.** Any peer holding a key for its own name could publish a signed `event` carrying another exchange's correlation and a reply address of its choosing; the answer went there. `responseTopic` is inside the signature and was faithfully attested - the missing part was authorisation, not authenticity. Only a request may now name a reply address, and it must be inside this network's own prefix. Presence updates likewise act only on the exact words `online` and `offline`, so an answer misdirected onto a presence topic can no longer evict a peer everywhere.
+
+**The verifier now names who it proved a frame is from**, rather than returning a bool, and the transport re-checks that name against `mr-src`. A verifier resolving keys loosely could otherwise remove the binding between a signature and a name - which is the whole property signing provides here - with nothing in the library noticing.
+
+Also: the reply table and the nonce table are both bounded now; a verifier that throws refuses rather than escaping the refusal path; and `responseTopic` is canonicalised request-only, matching the TypeScript verifier byte for byte.
+
+### socket.io: a disposed transport that would not stop dialling, and a peer list frozen at boot
+
+**`DisposeAsync` did not stop the connect loop.** `ConnectAsync` runs socket.io's own retry internally and, with unlimited attempts against a server that is down, never returns and never throws - so a disposed transport kept dialling for the life of the process, and connected minutes later to a server nobody had asked it to reach. It takes the cancellation token now.
+
+**The peer list only ever read the first message.** A server sends the full set once and then a single `{peer, state}` for every change after that. Reading only the snapshot means an HMI shows whoever happened to be online at the instant it connected - for ever: a controller that comes up later is never listed, and one that dies is shown healthy. The SignalR client had it too.
+
+**An application handler that threw disabled the server-restart recovery.** `PeersChanged` was invoked from socket.io's own callback, ahead of the retry, outside any try - so one unrelated NullReference in a peer-list handler reintroduced exactly the orphaning the retry exists to prevent, silently. It is invoked last now, and wrapped.
+
+Also: the start guard is interlocked, so two callers cannot each build a socket and announce the same name; refusals raise a `Rejected` event rather than going only to a logger that defaults to discarding everything; frames are checked for version, source and target on arrival instead of a missing `v` defaulting to the version this build happens to speak; the msgpack encoder omits absent fields, so both codecs put the same frame on the wire; the reconnect bound is 5 s rather than the 30 s steady-state backoff, which had a .NET peer stranded half a minute after a blip every TypeScript peer rode out; and `Path` is renamed `EnginePath`, because it is engine.io's endpoint and not the namespace - a namespace put there produced a peer that never connected while the server logged nothing at all.
+
+### The tests were passing for the wrong reasons
+
+The reviewer of the tests found the replay case was not replaying: it re-sent with a different correlation, which the signature covers, so the frame was refused for its signature and the test would have passed with replay protection deleted entirely. The tamper loop re-read its baseline each iteration, so on a slow runner a late reply from one case landed inside the next case's baseline and *every* tampered frame could be answered with all assertions green. And the silence assertions leaned on a control in a different test, on a different peer, through a different code path - so with the peer not running at all, three of them reported green.
+
+Each silence test now proves the same construction is answered first, on its own peer; the tamper loop holds one baseline; and the replay sends the captured bytes unchanged. Two fields the signing revision was actually argued from - the content type and the reply address - were never tampered with and now are, along with a signed deferred answer and a signed event, which is where `mr-deferred`, `mr-outcome`, `mr-seq` and `mr-epoch` finally get verified by something.
+
+Fixing that immediately caught a fourth: the unsigned-frame test was passing `undefined` for the secret, which in JavaScript selects a parameter's default - so the frame it sent to prove unsigned frames are refused was signed.
+
+The Windows CI job had been given the require-flags for peers it never starts, which would have failed every MQTT suite there and hung the socket.io hook waiting 45 seconds for a peer nobody launched.
+
 ### `SourceRpc.SocketIo` — a C# client, and two deadlocks the other bindings were also carrying
 
 The third binding, and a client only: socket.io's server is a Node library with no maintained .NET equivalent, so a .NET process that needs to be dialled into serves SignalR instead. What is actually written here is an encoder, a decoder and two event names — everything else is the shared dispatcher and client, which is what the seam was cut for.

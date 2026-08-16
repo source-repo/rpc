@@ -133,12 +133,17 @@ public static class Mqtt5Frame
         string.IsNullOrEmpty(value) ? builder : builder.WithUserProperty(name, value);
 
     /// <summary>
-    /// Read a frame off a packet, or null when the packet is not one.
+    /// Read a frame's *addressing and control properties* off a packet, with no body.
+    ///
+    /// Split from the body deliberately, and it is a security boundary rather than tidiness: the
+    /// payload is attacker-supplied bytes handed to a deserializer, and it must not be parsed until
+    /// the frame carrying it has been shown to be authentic. Anything that can publish to a peer's
+    /// request topic can otherwise reach the MessagePack reader with no key and no signature.
     ///
     /// A repeated control property is refused rather than resolved: MQTT permits one, and taking the
     /// first or the last would let a sender show one value to a check and another to the dispatcher.
     /// </summary>
-    public static RpcFrame? FromPacket(MqttApplicationMessage packet, string addressee, out string? refusal)
+    public static RpcFrame? Headers(MqttApplicationMessage packet, string addressee, out string? refusal)
     {
         refusal = null;
         var values = new Dictionary<string, string>(StringComparer.Ordinal);
@@ -173,17 +178,6 @@ public static class Mqtt5Frame
             return null;
         }
 
-        object? body;
-        try
-        {
-            body = DecodeBody(packet.PayloadSegment, declared == "application/json");
-        }
-        catch (Exception e)
-        {
-            refusal = $"undecodable payload: {e.Message}";
-            return null;
-        }
-
         return new RpcFrame
         {
             V = 2,
@@ -204,9 +198,25 @@ public static class Mqtt5Frame
             Deferred = values.ContainsKey(Deferred) ? true : null,
             Outcome = Get(values, Outcome),
             Seq = long.TryParse(Get(values, Seq), out var seq) && seq >= 0 ? seq : null,
-            Epoch = Get(values, Epoch),
-            Body = body
+            Epoch = Get(values, Epoch)
         };
+    }
+
+    /// <summary>
+    /// The same frame with its payload read - called only once the frame has been verified.
+    /// </summary>
+    public static RpcFrame? WithBody(RpcFrame frame, MqttApplicationMessage packet, out string? refusal)
+    {
+        refusal = null;
+        try
+        {
+            return frame with { Body = DecodeBody(packet.PayloadSegment, packet.ContentType == "application/json") };
+        }
+        catch (Exception e)
+        {
+            refusal = $"undecodable payload: {e.Message}";
+            return null;
+        }
     }
 
     private static string? Get(Dictionary<string, string> values, string name) =>
@@ -227,7 +237,16 @@ public static class Mqtt5Frame
         return MessagePackSerializer.Serialize(body.GetType(), body, ContractlessStandardResolver.Options);
     }
 
-    /// <summary>Read a payload back, as whatever the encoding produced.</summary>
+    /// <summary>
+    /// Read a payload back, as whatever the encoding produced.
+    ///
+    /// Read under <see cref="MessagePackSecurity.UntrustedData"/>, because that is what it is. The
+    /// standard options are documented as omitting all protections, including any bound on nesting
+    /// depth - and `PrimitiveObjectFormatter` recurses once per nesting level, so a few kilobytes of
+    /// repeated `0x91` is a StackOverflowException, which .NET cannot catch and which no `try`
+    /// around this call can help with. The JSON reader needs no equivalent: its default MaxDepth of
+    /// 64 throws cleanly.
+    /// </summary>
     public static object? DecodeBody(ArraySegment<byte> payload, bool json)
     {
         if (payload.Count == 0)
@@ -237,6 +256,10 @@ public static class Mqtt5Frame
         // As `object`, which gives primitives, object[] and Dictionary - the same shapes the
         // MessagePack hub protocol produces, so RpcFrame.Arg<T> reads them without knowing which
         // transport delivered them.
-        return MessagePackSerializer.Deserialize<object?>(payload.ToArray(), ContractlessStandardResolver.Options);
+        return MessagePackSerializer.Deserialize<object?>(payload.ToArray(), UntrustedContractless);
     }
+
+    /// <summary>Contractless, and with the depth and hash-collision guards that Standard omits.</summary>
+    private static readonly MessagePackSerializerOptions UntrustedContractless =
+        ContractlessStandardResolver.Options.WithSecurity(MessagePackSecurity.UntrustedData);
 }

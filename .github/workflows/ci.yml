@@ -243,16 +243,11 @@ jobs:
             # where it is going to live.
             SOURCE_RPC_TEST_SIGNALR_HUB: http://127.0.0.1:5217/rpc
             SOURCE_RPC_REQUIRE_SIGNALR: '1'
-            # The same C# peer again on the other two carriers, which is the point of running them
-            # here: the dispatcher, the responder, the ownership and the idempotency store are
-            # shared, so a semantic that only holds over SignalR would pass its own suite and fail
-            # these. Each is started as a step below, for the reason the hub is.
-            SOURCE_RPC_TEST_CSHARP_MQTT: csharp-mqtt
-            SOURCE_RPC_TEST_CSHARP_MQTT_SIGNED: csharp-signed
-            SOURCE_RPC_TEST_CSHARP_MQTT_SECRET: interop-secret
-            SOURCE_RPC_TEST_CSHARP_SOCKETIO: csharp-socketio
-            SOURCE_RPC_REQUIRE_CSHARP_MQTT: '1'
-            SOURCE_RPC_REQUIRE_CSHARP_SOCKETIO: '1'
+            # Deliberately no C# transport peers here, and no SOURCE_RPC_REQUIRE_CSHARP_* to demand
+            # them: this job has no broker (see the note above the job) and starts no socket.io
+            # peer, so requiring either would fail a suite for being unable to run rather than for
+            # being wrong. What Windows covers is the SignalR pairing, which needs no server
+            # containers - the gap is the same one the broker note already accounts for.
 
         steps:
             - uses: actions/checkout@v7

@@ -25,6 +25,9 @@ public sealed class SignalRClientTransport : ISourceRpcTransport
     private readonly Func<HubConnection> _build;
     private readonly ILogger _log;
     private HubConnection? _connection;
+
+    /// <summary>Who the hub says is reachable, kept so a single change can be applied to it.</summary>
+    private readonly SortedSet<string> _peers = new(StringComparer.Ordinal);
     private CancellationTokenSource? _closing;
 
     /// <inheritdoc/>
@@ -87,8 +90,45 @@ public sealed class SignalRClientTransport : ISourceRpcTransport
         connection.On<RpcFrame>(TransportContract.FrameName, frame => _ = DispatchAsync(frame));
         connection.On<PresenceUpdate>(TransportContract.PresenceName, update =>
         {
-            if (update.Peers is { Length: > 0 } peers)
-                PeersChanged?.Invoke(peers);
+            // Two shapes, and reading only the first is a peer list that freezes: the hub sends the
+            // full set once in answer to an announcement, then a single `{peer, state}` for every
+            // change after that (see RpcHub). Handling only the snapshot shows whoever happened to
+            // be online at the instant this peer connected - for ever.
+            string[] snapshot;
+            lock (_peers)
+            {
+                if (update.Peers is { } peers)
+                {
+                    _peers.Clear();
+                    foreach (var peer in peers)
+                        if (peer != _options.Name)
+                            _peers.Add(peer);
+                }
+                else if (update.Peer is { Length: > 0 } peer && peer != _options.Name)
+                {
+                    // Both states named, so an unrecognised word is ignored rather than read as gone.
+                    if (update.State == "online")
+                        _peers.Add(peer);
+                    else if (update.State == "offline")
+                        _peers.Remove(peer);
+                    else
+                        return;
+                }
+                else
+                {
+                    return;
+                }
+                snapshot = [.. _peers];
+            }
+            try
+            {
+                PeersChanged?.Invoke(snapshot);
+            }
+            catch (Exception e)
+            {
+                // An application handler that throws must not unwind into SignalR's dispatch.
+                _log.LogError(e, "SourceRpc peer-list handler threw");
+            }
         });
 
         connection.Closed += async error =>

@@ -50,10 +50,21 @@ public sealed class MqttTransportOptions
     /// Set it and an unsigned frame is refused too - otherwise signing would be bypassed by simply
     /// omitting the signature, which is not a check but a suggestion.
     /// </summary>
-    public Func<byte[], string, string, bool>? Verify { get; set; }
+    public Func<byte[], string, string, string?>? Verify { get; set; }
 
     /// <summary>How far a frame's timestamp may differ from now, for the replay window.</summary>
     public TimeSpan MaxClockSkew { get; set; } = TimeSpan.FromMinutes(1);
+
+    /// <summary>How many recent nonces to remember for replay detection.</summary>
+    public int MaxTrackedNonces { get; set; } = 5000;
+
+    /// <summary>
+    /// How many reply addresses to hold at once.
+    ///
+    /// Bounded because a request whose exchange never ends - a peer with no handler for it, a
+    /// method that never returns - would otherwise leave its entry behind for ever.
+    /// </summary>
+    public int MaxTrackedReplies { get; set; } = 1000;
 }
 
 /// <summary>
@@ -77,6 +88,7 @@ public sealed class MqttTransport : ISourceRpcTransport
     private readonly ConcurrentDictionary<string, PendingReply> _replies = new();
     private CancellationTokenSource? _closing;
     private readonly ReplayGuard _replays;
+    private readonly Queue<string> _replyOrder = new();
 
     /// <summary>Where a caller asked to be answered, and in what.</summary>
     private readonly record struct PendingReply(string Topic, bool Json);
@@ -102,7 +114,7 @@ public sealed class MqttTransport : ISourceRpcTransport
         _mqtt = mqtt;
         _options = options;
         _log = log ?? NullLogger.Instance;
-        _replays = new ReplayGuard(mqtt.MaxClockSkew);
+        _replays = new ReplayGuard(mqtt.MaxClockSkew, mqtt.MaxTrackedNonces);
         _client = _factory.CreateMqttClient();
         _client.ApplicationMessageReceivedAsync += OnMessageAsync;
         _client.DisconnectedAsync += OnDisconnectedAsync;
@@ -199,7 +211,11 @@ public sealed class MqttTransport : ISourceRpcTransport
         }
 
         var addressee = Mqtt5Frame.AddresseeOf(_mqtt.Prefix, topic) ?? _options.Name;
-        var frame = Mqtt5Frame.FromPacket(args.ApplicationMessage, addressee, out var refusal);
+
+        // Properties first and the payload later, which is the order rather than a detail: the
+        // payload is somebody else's bytes going into a deserializer, and it must not be read until
+        // the frame carrying it has been shown to be authentic.
+        var frame = Mqtt5Frame.Headers(args.ApplicationMessage, addressee, out var refusal);
         if (frame is null)
         {
             // Reported rather than dropped in silence. Anything at all can be published to a topic,
@@ -216,9 +232,35 @@ public sealed class MqttTransport : ISourceRpcTransport
             return Task.CompletedTask;
         }
 
+        frame = Mqtt5Frame.WithBody(frame, args.ApplicationMessage, out var undecodable);
+        if (frame is null)
+        {
+            _log.LogWarning("SourceRpc refused a frame on {Topic}: {Reason}", topic, undecodable);
+            Rejected?.Invoke(undecodable ?? "undecodable payload");
+            return Task.CompletedTask;
+        }
+
         // Remembered before dispatch so a reply can go where the caller asked and in what it asked.
-        if (frame.Corr is { Length: > 0 } corr && args.ApplicationMessage.ResponseTopic is { Length: > 0 } responseTopic)
-            _replies[corr] = new PendingReply(responseTopic, args.ApplicationMessage.ContentType == "application/json");
+        //
+        // Only a *request* may name one, and the address must be one of ours. Neither guard is
+        // about forgery - `responseTopic` is inside the signature and a signed frame attests it
+        // faithfully - they are about authorisation. Without the kind check, any peer holding a key
+        // for its own name can publish a signed `event` carrying somebody else's correlation and a
+        // reply address of its choosing, and this peer will then send that exchange's answer there.
+        // Without the prefix check, the named address can be another peer's presence topic, where
+        // an answer body reads as a presence update and evicts them.
+        if (Mqtt5Frame.IsRequest(frame.Kind)
+            && frame.Corr is { Length: > 0 } corr
+            && args.ApplicationMessage.ResponseTopic is { Length: > 0 } responseTopic)
+        {
+            if (!IsOurs(responseTopic))
+            {
+                _log.LogWarning("SourceRpc refused a reply address outside {Prefix}: {Topic}", _mqtt.Prefix, responseTopic);
+                Rejected?.Invoke($"reply address '{responseTopic}' is outside this network");
+                return Task.CompletedTask;
+            }
+            Remember(corr, new PendingReply(responseTopic, args.ApplicationMessage.ContentType == "application/json"));
+        }
 
         // Started, not awaited. MQTTnet waits for this callback before delivering the next message,
         // so awaiting a responder here means nothing else arrives until it returns - and a responder
@@ -228,6 +270,34 @@ public sealed class MqttTransport : ISourceRpcTransport
         // the reply topic and its content type - was recorded above, synchronously, before this.
         _ = DispatchAsync(frame);
         return Task.CompletedTask;
+    }
+
+    /// <summary>A reply address this peer is willing to send to: inside its own prefix, and no wildcard.</summary>
+    private bool IsOurs(string topic) =>
+        topic.StartsWith(_mqtt.Prefix + "/", StringComparison.Ordinal)
+        && !topic.Contains('+', StringComparison.Ordinal)
+        && !topic.Contains('#', StringComparison.Ordinal)
+        && !topic.StartsWith("$", StringComparison.Ordinal);
+
+    /// <summary>
+    /// Hold where one exchange's answer goes, bounded.
+    ///
+    /// Entries leave on the reply that ends the exchange - but an exchange that never gets one, and
+    /// a peer that is sent requests it has no handler for, would otherwise leave an entry behind
+    /// for ever. Oldest first, because the oldest correlation is the one least likely still to be
+    /// waited on.
+    /// </summary>
+    private void Remember(string correlation, PendingReply reply)
+    {
+        lock (_replyOrder)
+        {
+            _replies[correlation] = reply;
+            _replyOrder.Enqueue(correlation);
+            while (_replyOrder.Count > _mqtt.MaxTrackedReplies)
+                // Dropped from the queue whether or not it is still in the map - a reply that
+                // already ended its exchange removed itself, and dequeuing it again is a no-op.
+                _replies.TryRemove(_replyOrder.Dequeue(), out _);
+        }
     }
 
     private async Task DispatchAsync(RpcFrame frame)
@@ -288,7 +358,9 @@ public sealed class MqttTransport : ISourceRpcTransport
         var canonical = MqttSigning.CanonicalBytes(
             announced,
             topic,
-            packet.ResponseTopic ?? "",
+            // Request-only, as the sender canonicalised it: a reply or an event has no answer to
+            // direct, so a Response Topic on one is not part of what it said.
+            Mqtt5Frame.IsRequest(frame.Kind) ? packet.ResponseTopic ?? "" : "",
             frame.Src,
             frame.Kind,
             Property(Mqtt5Frame.Path) ?? "",
@@ -308,7 +380,24 @@ public sealed class MqttTransport : ISourceRpcTransport
             nonce,
             packet.PayloadSegment);
 
-        return _mqtt.Verify!(canonical, signature, frame.Src) ? null : "bad signature";
+        string? identity;
+        try
+        {
+            identity = _mqtt.Verify!(canonical, signature, frame.Src);
+        }
+        catch (Exception e)
+        {
+            // A verifier that throws refuses, for the same reason an authorizer that throws denies.
+            // Looking a key up is I/O in any real deployment, and an unknown source is exactly the
+            // input an attacker chooses - letting that escape would skip this whole refusal path.
+            _log.LogWarning(e, "SourceRpc verifier threw on a frame from {Source}", frame.Src);
+            return "verifier error";
+        }
+        if (identity is null)
+            return "bad signature";
+        // Re-checked here rather than trusted: whoever the signature proves this is from must be
+        // who the frame says it is from, or one peer's key admits frames in another peer's name.
+        return identity == frame.Src ? null : "identity does not match source";
     }
 
     private void OnPresence(string topic, string state)
@@ -316,6 +405,15 @@ public sealed class MqttTransport : ISourceRpcTransport
         var peer = topic[(topic.LastIndexOf('/') + 1)..];
         if (peer == _options.Name || peer.Length == 0)
             return;
+        // Both states named, and anything else ignored. An `else` branch here means *any* payload
+        // that is not the word "online" evicts a peer - and a peer's presence topic is a place a
+        // stray retained message, or an answer misdirected by a forged reply address, can land.
+        // The TypeScript transport reads it the same way, for the same reason.
+        if (state != "online" && state != "offline")
+        {
+            _log.LogWarning("SourceRpc ignored a presence payload for {Peer} that is neither online nor offline", peer);
+            return;
+        }
         lock (_peers)
         {
             if (state == "online")
