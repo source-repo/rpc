@@ -7,7 +7,8 @@ npm install @source-repo/document
 ```
 
 - **One contract, a second backend.** The verb is `$data`, the same one a component's own record and [`@source-repo/relational`](./relational.md) answer. A console that can browse a SQL table can browse a Mongo collection with no code written for the difference.
-- **Reads only** — `getList`, `getMany` and `getManyReference`. No `create`, `update` or `delete`, for the same reason as everywhere else here: a value is never written over this bus, a method is called.
+- **`$data` reads only** — `getList`, `getMany` and `getManyReference`, with no `create`, `update` or `delete` on that verb, for the same reason as everywhere else here: a value is never written over this bus, a method is called.
+- **Writes are a separate node, in a separate namespace, closed by default.** `exposeDocumentWrites` publishes `create`, `update` and `delete` as ordinary `@rpc` methods, so `authorize()`, the owner fence, the deadline and idempotency rule on each one — and two namespaces are two authorization surfaces. Which collections and which fields is a permission document a reviewer can diff, absent means closed, and every change carries the stamp the document was read under. The precondition needs no transaction here: the guard travels in the update's own filter, so the compare and the set are one operation on the server, and it works on a standalone `mongod`. See [the security model](../security-model.md#changing-somebody-elses-store).
 - **It owns nothing.** Delete the node and nothing is lost but the ability to ask.
 
 ## Not only MongoDB

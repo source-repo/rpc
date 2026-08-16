@@ -1,10 +1,11 @@
-import { DATA_QUESTIONS, rowsAgainstDeclaration } from '@source-repo/conformance'
-import type { RpcGetListParams, RpcGetListResult, RpcGetManyResult } from '@source-repo/rpc'
+import { DATA_QUESTIONS, rowsAgainstDeclaration, stampedFields, WRITE_PERMISSIONS, WRITE_QUESTIONS, type ConformanceCollection, type WriteEnds } from '@source-repo/conformance'
+import { rowStamp, type RpcGetListParams, type RpcGetListResult, type RpcGetManyResult, type RpcWritePermissions } from '@source-repo/rpc'
 import anyTest, { type TestFn } from 'ava'
 import { randomUUID } from 'node:crypto'
 import { DocumentRefusal } from './Filter.js'
 import { fixture, MONGO_URL, type MongoFixture } from './Fixture.js'
 import { DocumentService } from './Service.js'
+import { DocumentWriteService } from './WriteService.js'
 
 /**
  * The document node, asked the same questions the SQL node is asked - and then the ones only a
@@ -18,6 +19,9 @@ import { DocumentService } from './Service.js'
  */
 
 const run = randomUUID().replace(/-/g, '').slice(0, 10)
+
+/** A document of the same collection the question is not about, for the "somebody else's stamp" step. */
+const OTHER: { readonly [collection in ConformanceCollection]: string } = { customers: '3', orders: '11', sites: 'south' }
 
 interface Context {
     held?: MongoFixture
@@ -256,4 +260,118 @@ test('a table that cannot afford a count pages on hasMore alone', async (t) => {
     t.is(past.data.length, 0)
     t.is(past.total, undefined)
     t.false(past.hasMore)
+})
+
+/**
+ * The shared write questions, asked of a document store.
+ *
+ * The other half of the claim `packages/conformance` exists to turn from an assertion into a fact.
+ * Reading the same rows the same way was the first half; refusing the same changes for the same
+ * reasons is the second, and it is the half where a divergence is destructive rather than merely
+ * confusing - a stamp that meant one thing over SQL and another here would be a compare-and-set that
+ * holds on one backend and not the other, and the symptom is a lost update, which leaves nothing
+ * behind for anybody to find.
+ *
+ * A database of its own, because these change documents and the read questions above are counting
+ * the same rows. `Fixture` already builds one per run, so this is one more of them rather than a new
+ * mechanism.
+ */
+test.serial('it refuses the same changes the SQL node refuses, for the same reasons', async (t) => {
+    if (without(t)) return
+
+    for (const question of WRITE_QUESTIONS) {
+        const excepted = question.except?.mongo
+        if (excepted) {
+            t.log(`mongo declines "${question.asks}": ${excepted}`)
+            continue
+        }
+        // Rebuilt per question: each is independent by design, and one that depended on the one
+        // before it would fail in a way that named the wrong question.
+        const held = await fixture(`${run}w${WRITE_QUESTIONS.indexOf(question)}`)
+        try {
+            const writer = new DocumentWriteService({
+                db: held.db,
+                writes: {
+                    [held.name.customers]: WRITE_PERMISSIONS.customers,
+                    [held.name.sites]: WRITE_PERMISSIONS.sites
+                } as unknown as RpcWritePermissions
+            })
+            await writer.refresh()
+
+            const collection = held.name[question.collection]
+            const where = `${question.asks}${question.because ? ` - ${question.because}` : ''}`
+
+            // Taken before the first step, which is what makes `held` mean anything: it is the stamp
+            // a caller was holding while somebody else changed the document underneath it.
+            const opening = await writer.getOne(collection, question.id)
+            const started = opening.status === 'ok' ? opening.stamp : ''
+            const elsewhere = await writer.getOne(collection, OTHER[question.collection])
+
+            for (const step of question.steps) {
+                if (step.act === 'expect') {
+                    const document = await writer.getOne(collection, question.id)
+                    t.is(document.status, 'ok', `${where}: the document is still there`)
+                    if (document.status === 'ok') for (const [field, value] of Object.entries(step.row)) t.is((document.row as Record<string, unknown>)[field], value, `${where}: ${field}`)
+                    continue
+                }
+                if (step.act === 'gone') {
+                    t.is((await writer.getOne(collection, question.id)).status, 'missing', `${where}: the document is gone`)
+                    continue
+                }
+                const current = await writer.getOne(collection, question.id)
+                const stamp =
+                    step.using === 'held'
+                        ? started
+                        : step.using === 'other'
+                          ? elsewhere.status === 'ok'
+                              ? elsewhere.stamp
+                              : ''
+                          : // `fresh` reads one immediately before acting, which is the ordinary
+                            // path - and against a document that is not there it has nothing to
+                            // read, so the step is made with the held one and the node answers
+                            // `missing` rather than being asked a question about a stamp.
+                            current.status === 'ok'
+                            ? current.stamp
+                            : started
+                const act = step.act === 'delete' ? writer.delete(collection, question.id, stamp) : writer.update(collection, question.id, step.patch, stamp)
+                const ends: WriteEnds = step
+                if (ends.refuses !== undefined) {
+                    const refusal = await t.throwsAsync(act, undefined, `${where}: refused`)
+                    t.regex(refusal!.message, new RegExp(ends.refuses), where)
+                    continue
+                }
+                t.is((await act).status, ends.answers, where)
+            }
+        } finally {
+            await held.close()
+        }
+    }
+})
+
+test.serial('it stamps the fields its rule permits, over the document it published', async (t) => {
+    if (without(t)) return
+    // The one cross-backend claim about the stamp itself, and it is a relationship rather than a
+    // constant: the node must digest exactly the permitted fields, taken from the document as it
+    // publishes it. Stamp what the driver returned instead and this diverges from every SQL node,
+    // since BSON is not what goes on the wire - and the symptom in production is a precondition that
+    // never holds, with nothing anywhere to say why.
+    const held = await fixture(`${run}stamp`)
+    try {
+        const service = new DocumentService({ db: held.db })
+        await service.refresh()
+        const writer = new DocumentWriteService({
+            db: held.db,
+            writes: { [held.name.customers]: WRITE_PERMISSIONS.customers } as unknown as RpcWritePermissions
+        })
+        await writer.refresh()
+
+        const page = (await service.dataRequest('getMany', [held.name.customers], { ids: ['1'] })) as RpcGetManyResult
+        const published = page.data[0] as Record<string, unknown>
+        const read = await writer.getOne(held.name.customers, '1')
+        t.is(read.status, 'ok')
+        if (read.status !== 'ok') return
+        t.is(read.stamp, await rowStamp(held.name.customers, '1', stampedFields('customers', published)), 'the stamp is a digest of the published document')
+    } finally {
+        await held.close()
+    }
 })

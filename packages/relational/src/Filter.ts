@@ -41,6 +41,25 @@ const refuse = (message: string): never => {
 }
 
 /**
+ * An id from the wire, as the key column will actually match it.
+ *
+ * The wire carries ids as strings today, so an integer key arrives as `"42"` and has to become `42`
+ * or match nothing - silently, since `where id in ('42')` is a perfectly valid query that finds no
+ * rows. Once DEV-437 widens an id to `string | number` this becomes a check rather than a
+ * conversion, which is the point of doing it in one place.
+ *
+ * It lives here rather than in either service because both of them need it and they must not
+ * disagree: a `getMany` that finds a row and an `update` that does not would be the two halves of
+ * this package answering different questions about the same id.
+ */
+export const idValueFor = (id: ColumnInfo, given: string): string | number => {
+    if (id.kind !== 'number') return given
+    const value = Number(given)
+    if (!Number.isFinite(value)) return refuse(`${given} is not an id of ${id.name}, which holds ${id.dataType}`)
+    return value
+}
+
+/**
  * The column a filter or sort field names.
  *
  * `id` names the key column whatever it is actually called, which is the rule `fieldOf` already

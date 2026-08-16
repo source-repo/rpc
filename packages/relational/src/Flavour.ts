@@ -1,5 +1,5 @@
 import { sql, type Expression, type Kysely, type SqlBool } from 'kysely'
-import type { ColumnInfo } from './Catalogue.js'
+import type { ColumnInfo, TableInfo } from './Catalogue.js'
 
 /**
  * What actually differs between one SQL database and the next, reduced to the two things that
@@ -68,6 +68,32 @@ export interface SqlFlavour {
      * key, none for a table that has no key at all.
      */
     primaryKey(db: Kysely<RelationalDatabase>, table: string, schema?: string): Promise<readonly string[]>
+    /**
+     * Whether a row can be held against other writers for the length of a transaction, and how.
+     *
+     * The third thing that changes an answer, and it only appears once something writes. A
+     * compare-and-set is a read, a comparison and a write, and under `READ COMMITTED` - which is
+     * Postgres' and MySQL's default - two callers can read the same row, both find the stamp they
+     * expected, and both apply. That is the precondition failing to be a precondition, silently, in
+     * exactly the case it exists for.
+     *
+     * `for update` fixes it on Postgres and MySQL. SQLite has no such clause and needs none here:
+     * `NodeSqliteDialect` serialises every statement onto one connection, so a transaction on it
+     * has no concurrent writer to lose a race to. That is a property of *this package's* dialect
+     * rather than of SQLite, which is why it is recorded as a flavour's answer rather than assumed.
+     */
+    readonly rowLock: 'for-update' | 'serialised-connection'
+    /**
+     * The id of a row just inserted, which is the one write-side question the three genuinely
+     * disagree about.
+     *
+     * Postgres answers it in the insert with `returning`; MySQL and SQLite answer it afterwards
+     * with the generated key, and only for an integer key they generated - a natural key like
+     * `site_id` was supplied by the caller and comes back unchanged. Getting this wrong is not a
+     * cosmetic failure: a `create` that cannot name what it made hands back an id that addresses a
+     * different row, and every reference taken from it is wrong.
+     */
+    insert(db: Kysely<RelationalDatabase>, table: TableInfo, values: Record<string, unknown>): Promise<string>
 }
 
 /**
@@ -135,7 +161,9 @@ export const sqliteFlavour: SqlFlavour = {
             name: string
         }>`select "name" from pragma_table_info(${table}) where "pk" > 0 order by "pk"`.execute(db)
         return found.rows.map((row) => row.name)
-    }
+    },
+    rowLock: 'serialised-connection',
+    insert: (db, table, values) => insertThenRead(db, table, values)
 }
 
 export const postgresFlavour: SqlFlavour = {
@@ -151,7 +179,19 @@ export const postgresFlavour: SqlFlavour = {
     // `C` collation is the byte-order one, which is what makes ordering agree with the other two
     // rather than with whatever locale this database happened to be created under.
     orderTerms: (column, order) => [collated(column, order, '"C"')],
-    primaryKey: (db, table, schema) => informationSchemaKey(db, table, schema, sql`current_schema()`)
+    primaryKey: (db, table, schema) => informationSchemaKey(db, table, schema, sql`current_schema()`),
+    rowLock: 'for-update',
+    // `returning` names the row in the insert itself, so there is no second statement and no window
+    // in which something else could have inserted between the two. A caller-supplied id comes back
+    // through the same clause, which is why there is no separate path for one.
+    insert: async (db, table, values) => {
+        const made = await db
+            .insertInto(table.name)
+            .values(values)
+            .returning(`${table.id!.name} as id`)
+            .executeTakeFirstOrThrow()
+        return String((made as { id: unknown }).id)
+    }
 }
 
 export const mysqlFlavour: SqlFlavour = {
@@ -175,7 +215,35 @@ export const mysqlFlavour: SqlFlavour = {
         const term = sql`${name} ${direction(order)}`
         return column.nullable ? [sql`(${id(column.name)} is null) ${direction(order)}`, term] : [term]
     },
-    primaryKey: (db, table, schema) => informationSchemaKey(db, table, schema, sql`database()`)
+    primaryKey: (db, table, schema) => informationSchemaKey(db, table, schema, sql`database()`),
+    rowLock: 'for-update',
+    insert: (db, table, values) => insertThenRead(db, table, values)
+}
+
+/**
+ * Insert, then find out what the row is called - for the two engines with no `returning`.
+ *
+ * The id the caller supplied wins outright, and that is not merely an optimisation: MySQL reports
+ * `insertId` as 0 for a table whose key it did not generate, and SQLite reports the rowid, which for
+ * a `text primary key` table is a different number from the key. Reading the generated key is
+ * therefore done **only** where the catalogue says the database generates one, and anywhere else
+ * this returns what it was given.
+ *
+ * Both are called inside the same transaction as everything else the write does, so `insertId` is
+ * this connection's own last insert rather than whatever another caller did in between.
+ */
+const insertThenRead = async (db: Kysely<RelationalDatabase>, table: TableInfo, values: Record<string, unknown>): Promise<string> => {
+    const key = table.id!
+    const supplied = values[key.name]
+    const outcome = await db.insertInto(table.name).values(values).executeTakeFirst()
+    if (supplied !== undefined && supplied !== null) return String(supplied)
+    const generated = outcome.insertId
+    if (generated === undefined)
+        // Not a condition any of the three should reach: a key that was neither supplied nor
+        // generated leaves the row unaddressable, and answering an id that names nothing would be
+        // worse than saying so.
+        throw new Error(`${table.name} accepted the row and reported no id for it, so the row cannot be named - supply ${key.name} explicitly`)
+    return String(generated)
 }
 
 /**

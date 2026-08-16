@@ -230,6 +230,12 @@ That is the claim the DataProvider shape was taken for, arriving as almost no co
 
 Writes are ordinary declared methods that happen to have standard names, so `authorize()`, the owner fence and idempotency all apply per call and none of it is special-cased. `getOne` is not served — a caller that wants one row asks `getMany` for one id, and a verb that exists only to be a worse version of another is not worth the wire.
 
+That first sentence is now built rather than promised. `@source-repo/relational/writes` and `@source-repo/document/writes` publish `create`, `update` and `delete` as exactly those methods, in a namespace beside the read one and closed until a permission document names a resource — so two namespaces are two `authorize()` surfaces, and reading can be granted to everyone while writing is granted to nobody. Every change carries the stamp the row was read under, which is the same mandatory compare-and-set the topology layer's `expectedVersion` is. See [the security model](../security-model.md#changing-somebody-elses-store).
+
+They do serve a `getOne`, and it is a different verb wearing the same name: it answers the row **and its stamp**, which `getMany` does not carry at all, and since the only way to hold a stamp is to have read the row, it is what makes the precondition possible rather than a parameter callers invent. The argument above still holds exactly where it was made — on the read side, where there is no stamp and `getOne` would be nothing but a narrower `getMany`.
+
+**Row actions and a write namespace are not the same mechanism, and neither replaces the other.** An action names a method the component *already has* — `retryDeadLetter`, `acknowledge`, `startBatch` — which is where the interlock, the clamping and the refusal-while-the-door-is-open live, and the declaration adds nothing but which row it is about. A write verb changes a field, and it exists for the store whose rows are data rather than a machine's state, where there is no method to name because there was never a decision to encode. A plant's answer stays the action; a work-order table's answer is the write.
+
 ## Publishing bounds
 
 Expose options bound what the network hears — local state always changes immediately:

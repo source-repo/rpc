@@ -34,6 +34,19 @@ export interface ColumnInfo {
     readonly nullable: boolean
     /** What the database called it, kept for the row type and for anyone debugging a refusal. */
     readonly dataType: string
+    /**
+     * Whether the column has a default, and whether the database fills it in itself.
+     *
+     * Read by nothing on the read side and load-bearing on the write one: together with
+     * `nullable` they are what says a column **must** be given to `create`. Refusing a row that
+     * omits a required column here rather than letting the insert fail is the difference between
+     * a message naming the column and whatever the driver's constraint error happens to say -
+     * which on three engines is three different sentences, none of them written for an operator.
+     *
+     * `generated` is also how `create` knows whether to expect the store to mint an id.
+     */
+    readonly hasDefault: boolean
+    readonly generated: boolean
 }
 
 export interface TableInfo {
@@ -115,7 +128,9 @@ export const readCatalogue = async (
                 name: column.name,
                 kind: classify(column.dataType),
                 nullable: column.isNullable,
-                dataType: column.dataType
+                dataType: column.dataType,
+                hasDefault: column.hasDefaultValue,
+                generated: column.isAutoIncrementing
             })
         )
         const byName = new Map(columns.map((column) => [column.name, column]))
@@ -235,6 +250,39 @@ export const typeOfColumn = (column: ColumnInfo): TypeNode => {
                     ? { kind: 'bytes' }
                     : { kind: 'any' }
     return column.nullable ? { kind: 'union', options: [base, { kind: 'null' }] } : base
+}
+
+/**
+ * A row as it goes on the wire.
+ *
+ * Two conversions, both there so that two backends answering the same question answer the same way.
+ * A boolean column comes back as 1 or 0 from SQLite, which has no boolean type, and as a boolean
+ * from Postgres - and the row type this node publishes says boolean, so SQLite's answer is corrected
+ * rather than the declaration weakened. A bigint is exact and JSON is not, so one that fits in a
+ * double becomes a number and one that does not becomes a string rather than silently losing its
+ * low digits.
+ *
+ * Columns the catalogue does not list are dropped, which is what makes this the row's *published*
+ * shape rather than whatever the driver handed back.
+ *
+ * Shared with the write half rather than kept private to the reader, and that sharing is
+ * load-bearing: a row's stamp is a digest over these values, so a read that normalised differently
+ * from the read behind a compare-and-set would produce a precondition that never holds.
+ */
+export const wireRow = (table: TableInfo, row: Record<string, unknown>): Record<string, unknown> => {
+    const mapped: Record<string, unknown> = {}
+    for (const column of table.columns) {
+        const value = row[column.name]
+        mapped[column.name] =
+            column.kind === 'boolean' && typeof value === 'number'
+                ? value !== 0
+                : typeof value === 'bigint'
+                  ? Number.isSafeInteger(Number(value))
+                      ? Number(value)
+                      : value.toString()
+                  : value
+    }
+    return mapped
 }
 
 /** Which verbs a table answers. All three of the served ones, since every table here has an id. */

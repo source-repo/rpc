@@ -1,5 +1,51 @@
 # Changelog
 
+## Unreleased
+
+### A store-backed node can accept writes, and the rule about writes is intact
+
+`@source-repo/relational/writes` and `@source-repo/document/writes` create, change and remove rows. The design question was never whether that was useful — a database you can only read is half a tool, and prototyping against one over MCP is exactly where the other half is missed — it was how to add it without contradicting the sentence this repository states in four places: **a value is never written over this bus, a method is called.**
+
+So there is no `$write` verb beside `$data`, and there is not going to be one. `$data` is answered by the dispatcher on every component's behalf, which is what makes it cheap; a write answered there would sit outside the deadline, the execution queue, the owner fence, the idempotency store and the post-queue re-checks unless each were re-invoked by hand, and that is a gate list somebody has to keep complete. Every verb here is instead an ordinary `@rpc` method with declared `semantics` and `effect`, so all of it applies by construction and none of it is special-cased. `authorize()` sees the resource and the patch in `params` and can rule per table.
+
+**A separate class in a separate namespace, from a separate import** — the split `DockerService`/`DockerControl`/`DockerCreate` already makes, and for its reasons rather than for symmetry. Two namespaces are two `authorize()` surfaces, so reading is granted to everyone and writing to nobody; a subclass would have made "may call the database" one permission and would have made the read-only class's promise a lie by inheritance, since code holding a `RelationalService` could then have been holding a writable one; and the subpath export makes turning it on a visible line in a diff.
+
+**Closed until a permission document says otherwise**, per table and per column, and absent means closed:
+
+```typescript
+writes: {
+    work_orders: { verbs: ['create', 'update'], columns: ['status', 'note'] },
+    recipes: { verbs: ['update'], columns: ['setpoint'] }
+}
+```
+
+Data rather than a predicate, which is the argument the AI grants document already made: a console can render data and cannot render a callback, and a reviewer can diff a file and cannot diff a decision made inside somebody's closure. A malformed document refuses the node rather than being read as granting nothing. `columns` is **required** wherever `create` or `update` is offered, because an absent list would read as "every field" to whoever wrote it and to whoever reads it next, and those are the two people who must not disagree.
+
+A rule naming a table or a column the store does not have is dropped **whole** — never narrowed to the parts that resolved, because the person who wrote it believed something false about that table and the next line may be wrong in a way nothing here can see — and the reason lands in `props.refused`. That is the same tripwire `props.unserved` is on the read side and it matters more: a misspelled table otherwise produces a node that refuses every edit to it, which reads exactly like deliberate policy, with nothing on any screen to say the policy was never loaded. Composing the node in with a usable document announces itself through `elevation()`.
+
+**Every change carries a precondition, and it is required rather than available.** `update` and `delete` take the stamp the row was read under, and the only way to hold one is to have read the row:
+
+```typescript
+const read = await writer.getOne('work_orders', '4711')
+await writer.update('work_orders', '4711', { status: 'done' }, read.stamp)
+```
+
+An optional precondition is one that gets omitted the first time somebody is in a hurry, and the failure it prevents — two edits where the second silently discards the first — leaves no trace anywhere for anybody to find later. `msgrpc.updateTopology` made the same call with `expectedVersion` and gave the same reason. A stale stamp answers `conflict` and writes nothing, and **the conflict carries no stamp**: returning the current one would put a blind overwrite one call away, which is a compare-and-set comparing against itself.
+
+What the stamp covers falls out of the permission document rather than being a second decision — the fields the rule permits — so a trigger touching `updated_at` is not a conflict, while two callers writing different permitted fields of the same row are. A precondition that fails for a reason nobody can act on is one that gets switched off within a week.
+
+The comparison happens under whatever hold the engine offers, and that turned out to be the third thing the three SQL flavours genuinely disagree about, after case-sensitive matching and where a missing value sorts. Postgres and MySQL take `for update`, because under their default isolation two callers can otherwise both read, both find the stamp they expected, and both write — the precondition failing to be a precondition, silently, in exactly the case it exists for. SQLite needs nothing, since this package's dialect serialises every statement onto one connection; that is a property of the dialect rather than of SQLite, so the flavour states it rather than the service assuming it. MongoDB needs no transaction either: the guard travels in the update's own filter, so the compare and the set are one operation on the server — which also means it works on a standalone `mongod`.
+
+**`getOne` is served here and stays unserved on the read side**, which only looks like a contradiction. There the argument holds exactly — a caller wanting one row asks `getMany` for one id, and a verb existing only to be a worse version of another is not worth the wire. Here it answers something `getMany` does not carry at all.
+
+The refusals are the feature, as they are on the read side. A field outside the rule is refused **and the whole patch with it**, because a patch half-applied and then rejected leaves a row in a state nobody asked for and the error names none of it. A value is checked rather than converted: `'80'` into a numeric setpoint is what JavaScript and MySQL will both happily make 80, and the one time the string is `'8O'` the column holds 0 with nothing reporting it. A date arrives as an ISO string and never as a number, since epoch seconds and epoch milliseconds are both ordinary conventions. An update naming the id is refused, because a row that renames itself leaves every reference dangling — while the same column stays creatable, which is what a natural key needs. A required column a `create` omitted is named here rather than by three engines in three sentences none of which was written for whoever is holding the console. And a view is refused outright: whether a write through one reaches a table is the engine's business rather than this node's.
+
+**No `updateMany` or `deleteMany`.** react-admin has both and a grid's multi-select wants them, but a bulk delete over a filter is the single most dangerous call this surface could offer and the one where a mistaken predicate is indistinguishable from a correct one until the rows are gone. Fifty changes are fifty calls, each with its own precondition and its own audit line.
+
+**The questions are in `packages/conformance`**, which is where the claim gets tested rather than asserted: nine write questions asked of SQLite, Postgres and MySQL, and of MongoDB beside them. A stamp that meant one thing over SQL and another over a document store would be a compare-and-set that holds on one backend and not the other, and the symptom is a lost update, which leaves nothing behind. The stamp's own encoding is pinned separately, with literal digests, in the library's `DataWrites.test.ts`.
+
+**Over MCP** there are now `list_writable`, `read_row` and `write_row`. They add no capability — `call_method` could already invoke `sql.write.update` on any peer the server can reach, and this is the same relationship `set_state` has to `call_method` — so there is no new flag and no new warning. `write_row` will not fetch the stamp it insists on, deliberately: a tool that read the row and immediately wrote it back would satisfy the precondition by construction, and the lost update would go through every time.
+
 ## 5.0.1
 
 `@source-repo/rpc` only, and documentation only: the README named three of the eight packages in this repository, and npm serves a README from the tarball rather than from the repository - so the list nobody could see was the one on the package page.

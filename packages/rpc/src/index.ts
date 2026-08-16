@@ -38,6 +38,9 @@ export * from './RPC/Idempotency.js'
 export * from './RPC/Component.js'
 export * from './RPC/ComponentClient.js'
 export * from './RPC/DataProvider.js'
+// The words a store-backed node accepts writes with, and no verb that performs one: there is no
+// `$write` beside `$data`, because a write is a method call. See RPC/DataWrites.ts.
+export * from './RPC/DataWrites.js'
 // Types only so far: the shapes a deferred reply needs, which `extract` already recognises by
 // name so a contract can describe one. See RPC/Ticket.ts.
 export * from './RPC/Ticket.js'

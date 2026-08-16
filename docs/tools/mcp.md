@@ -14,6 +14,9 @@ Serves the network to an [MCP](https://modelcontextprotocol.io) client over stdi
 | `call_method` | call a method, with positional arguments, and return what it returns |
 | `read_state` | what a component is publishing — its props and state, as values |
 | `set_state` | change one value, by naming the path rather than working out the method |
+| `list_writable` | what a store-backed node will let you change, asked before you are refused |
+| `read_row` | one row, and the stamp that names the state it was read in |
+| `write_row` | create, update or delete one row, under the stamp you read it with |
 | `read_context` | what a node inherits along its physical or logical chain |
 | `start_fake` | stand a peer up from a contract and put it on this network |
 | `stop_fake` / `list_fakes` | take one off again; what is being served here |
@@ -67,6 +70,52 @@ set_state { …, path: "temperature", value: 300 }
 **What happens is the method's call, not a write.** The component may clamp it, refuse it while the door is open, or fail an interlock, and that refusal comes back as the component's own words. Nothing is written locally either, so the answer says so: the value moves when the peer publishes its next snapshot, and `read_state` is how to see what the plant actually agreed to. A model that assumes its write took effect is a model that has stopped reading the plant.
 
 A component declaring `sets: '*'` claims every path by construction, so on one of those the refusal for an unwritable path comes from the method's body rather than from here — which is where that decision belongs.
+
+### Changing rows in a store
+
+A [store-backed node](../packages/relational.md) — a database, a document store — is the other thing a model gets asked to edit while prototyping, and the three tools that do it are shaped around one decision: **every change carries a precondition, and the precondition has to come from a read the model actually did.**
+
+`list_writable` is the first call, and it exists so that finding out what may be changed does not mean generating a refusal for somebody to explain later:
+
+```
+list_writable { peer: "records", namespace: "sql.write" }
+→ { "node": "records.sql.write",
+    "resources": [ { "resource": "pupils", "verbs": ["create", "update", "delete"],
+                     "columns": ["name", "grade"],
+                     "row": { "kind": "object", "fields": { … } } } ] }
+```
+
+**A resource absent from that list is one nobody allow-listed, not one that does not exist** — worth saying in those words, because "why can I not edit `orders`" has two answers and only one of them is a spelling mistake. An empty list is a node that accepts no writes at all, which is what a node stood up without a decision behind it should be. The `columns` are what `create` and `update` accept rather than what the row holds, so a form drawn from them offers nothing the next call refuses.
+
+`read_row` answers a row **and its stamp**:
+
+```
+read_row { peer: "records", namespace: "sql.write", resource: "pupils", id: "1" }
+→ { "resource": "pupils", "id": "1", "status": "ok",
+    "row": { "id": "1", "name": "Ada", "grade": 3 },
+    "stamp": "kQ7hV…",
+    "note": "The stamp names the state this row was read in. Pass it back to write_row…" }
+```
+
+The stamp names the state that row was read in, and the only way to hold one is to have read the row. It belongs to that row in that resource and to no other — it cannot be carried across from a sibling, lifted out of a listing, or invented.
+
+**`write_row` requires the stamp for `update` and `delete`, and never fetches one itself.** That is the centre of the design rather than a rough edge on it. A tool that read the row and immediately wrote it back would satisfy the precondition *by construction*: the compare would be against the state it had just fetched, a microsecond earlier, which is a compare-and-set comparing against itself — and the lost update the precondition exists to prevent would pass every single time, silently, leaving nothing anywhere for anyone to find. So the loop is read, decide, write, and the deciding is the part that has to happen between the two calls, because it is the only part that can notice the row is no longer the one the change was designed for.
+
+Which is why a `conflict` is a result rather than an error, and why the answer says what to do with it:
+
+```
+write_row { …, verb: "update", id: "1", row: { "grade": 4 }, stamp: "kQ7hV…" }
+→ { "resource": "pupils", "id": "1", "verb": "update", "status": "conflict",
+    "note": "Nothing was written. The row changed between the read that produced this stamp and
+             this call… Do not retry — read_row again, see what somebody else did, and decide
+             again." }
+```
+
+**The correct response to a conflict is not a retry.** A retry with the same stamp fails again; a retry with a stamp taken *now* is the blind overwrite the whole mechanism exists to prevent, performed in two calls instead of one. The conflict carries no new stamp for exactly that reason — handing one back would put that overwrite a single call away, and a model in a hurry would find it. `missing` is answered the same way and for the same reason: the row is gone, so resending will not find it, and re-reading is what tells you whether it was removed or never there.
+
+On `ok` the row's new stamp comes back, so a second edit needs no read between it and the first. And, the way `set_state`'s answer already says for a component, **nothing is written locally**: what the store agreed to is what the next `read_row` reports, since a default, a trigger or a type conversion may have had an opinion on what was sent.
+
+The argument shapes are refused rather than half-applied, each with what was expected: `create` takes a row and neither an id nor a stamp — the row has no prior state to make a precondition of, and the store names what it inserts; `update` takes a patch of the fields being changed, where a field the resource does not permit is refused rather than quietly dropped; `delete` takes an id and a stamp and no row at all. There is no bulk verb and there is not going to be one — fifty rows are fifty calls, each with its own precondition, each individually refusable, each individually visible in an audit line.
 
 ### What a node inherits
 
@@ -221,5 +270,7 @@ To wire it into a client, give it the command and its flags:
 **Reading is reading, and it is still governed.** `read_state` and `read_context` change nothing — but they do carry plant values back to a model, which `describe_peer` alone never did. They are ordinary subscriptions and ordinary `$context` calls underneath, so `authorize()` sees them with the namespace, the node and the token ids in view, and a server that refuses this peer refuses these too. There is no read that bypasses it, and no way to enumerate what a peer holds without already knowing what to ask for.
 
 **`set_state` is `call_method` with the method worked out**, and no more permitted than it. It calls a method the peer declared, through the same dispatch, with the same `authorize()` and the same effect classification — so a grant that refuses `oven.setSetpoint` refuses this too, and one that permits it permitted this already. It adds convenience, not authority. What it does add is a reason to be deliberate about which network this server points at: naming a path is a much easier thing for a model to do than working out a method, which is the point, and also the risk.
+
+**`list_writable`, `read_row` and `write_row` are `call_method` with the method worked out**, and no more permitted than it. `call_method` can already invoke `sql.write.update` on any peer this server can reach; these call the same methods, through the same dispatch, with the same `authorize()`, the same effect classification, and the same allow-list on the node deciding which resources and fields exist at all. So there is no flag that turns them on: a flag would advertise a restriction that does not exist here, while the restriction that does exist lives on the node being written, in a permission document a reviewer can diff. What they add is that a model can find out what it may change before it tries, and cannot change a row it has not read.
 
 **And it can put peers on that network.** `start_fake` adds one — it calls nothing and changes no device, and it refuses a name already in use, but it is a peer other things can find and call. The same `authorize` and `--sign` machinery governs what it may do once it is there. Writing files is the one capability that stays off unless asked for: no `--contracts`, no tools that write.

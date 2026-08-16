@@ -212,3 +212,214 @@ export const rowsAgainstDeclaration = (rows: readonly unknown[], declared: TypeN
     }
     return undefined
 }
+
+/**
+ * The write side of the same claim, and the reason it belongs here rather than in either node.
+ *
+ * Reading the same rows the same way was the first half; **changing them under the same
+ * precondition is the second**, and it is the half where a divergence is destructive rather than
+ * merely confusing. A stamp that means one thing over SQL and another over Mongo would be a
+ * compare-and-set that holds on one backend and does not on the other, and the symptom is a lost
+ * update - which leaves no trace anywhere for anybody to find afterwards. So the questions are asked
+ * once, of every backend, and the answers are compared.
+ *
+ * **`create` is deliberately not among them, and that is worth saying rather than discovering.**
+ * What a store does about a key it was not given is genuinely its own business - Postgres names the
+ * row in the insert, MySQL and SQLite report the key they generated, Mongo mints an ObjectId - and
+ * a shared question about it would either pin down three different mechanisms or assert nothing.
+ * Each package tests its own. What is shared is everything downstream of a row existing, which is
+ * where the semantics live.
+ */
+
+/**
+ * The permission document every write-side suite uses.
+ *
+ * Shared because it is what makes a stamp comparable at all: a stamp covers the fields a rule
+ * permits, so two suites with different rules would produce different digests of the same row and
+ * neither would be wrong. The columns are named identically on both backends and the key is
+ * deliberately absent from all of them - `id` over SQL and `_id` over Mongo are the one field the
+ * two genuinely spell differently, and a question that included it would be asking them different
+ * things while looking like one question.
+ */
+export const WRITE_PERMISSIONS = {
+    customers: { verbs: ['update', 'delete'] as const, columns: ['name', 'city', 'active', 'balance'] },
+    sites: { verbs: ['update'] as const, columns: ['label'] }
+}
+
+/**
+ * What a row's stamp must be a digest of: the fields the rule permits, taken from the row **as the
+ * node published it**.
+ *
+ * A rule rather than a table of expected values, and the difference is the whole of it. The obvious
+ * shape - a constant per fixture row - would have asserted something subtly wrong, because two
+ * backends already publish one of these columns differently and are right to: MySQL's `boolean` is
+ * an alias for `tinyint(1)` with the width gone by the time an introspector sees it, so that node
+ * honestly declares a number where the others declare a boolean. A shared constant would have made
+ * this fixture a second, contradictory opinion about that declaration.
+ *
+ * And cross-node stamp equality is not the claim anybody needs. A stamp is only ever compared with
+ * one taken from the same node, so what has to hold everywhere is the *relationship*: a node stamps
+ * exactly the permitted fields, over the values it publishes, in the shared encoding. Stamp the
+ * driver's answer instead of the published one and this fails on SQLite, where a boolean column
+ * comes back as 1 and the resource says boolean - which is the mistake worth catching, because its
+ * only symptom in production is a precondition that never holds.
+ *
+ * A suite therefore reads a row through `$data`, hands it here, and checks the node's stamp against
+ * `rowStamp(itsOwnPhysicalName, id, …)` - which also survives the run-suffixed table names each SQL
+ * suite creates.
+ *
+ * Whether the *encoding* itself is stable is a different question, pinned with literal digests in
+ * the library's own `DataWrites.test.ts`, where the scope is fixed and a change shows up as a
+ * changed constant in a diff.
+ */
+export const stampedFields = (collection: ConformanceCollection, published: { readonly [field: string]: unknown }): readonly (readonly [string, unknown])[] => {
+    const rule = (WRITE_PERMISSIONS as { readonly [name: string]: { readonly columns: readonly string[] } })[collection]
+    if (!rule) throw new Error(`${collection} has no write rule in the shared permission document, so nothing is stamped over it`)
+    // Read out of the published row rather than out of the fixture, so an absent field arrives as
+    // `undefined` - which the stamp treats as null, because a field a store did not return and a
+    // field it returned as null are the same state and every backend spells that differently.
+    return rule.columns.map((field) => [field, published[field]] as const)
+}
+
+/**
+ * Which stamp a step is made under.
+ *
+ * `held` is the one the whole design exists for: the stamp read before the question began, used
+ * after something else has already changed the row. `fresh` reads one immediately before acting,
+ * which is the ordinary path. `other` is a perfectly valid stamp belonging to a different row, which
+ * must not satisfy a precondition on this one.
+ */
+export type WriteStamp = 'fresh' | 'held' | 'other'
+
+/**
+ * How a step ends: with an outcome, or with a refusal whose message must match.
+ *
+ * A union rather than two optional fields, so a question cannot be written that expects both or
+ * neither - which is a fixture that asserts nothing while looking like it asserts something, and is
+ * the failure mode a shared specification can least afford.
+ */
+export type WriteEnds = { readonly answers: 'ok' | 'conflict' | 'missing'; readonly refuses?: undefined } | { readonly refuses: string; readonly answers?: undefined }
+
+export type WriteStep =
+    | ({ readonly act: 'update'; readonly patch: { readonly [field: string]: unknown }; readonly using: WriteStamp } & WriteEnds)
+    | ({ readonly act: 'delete'; readonly using: WriteStamp } & WriteEnds)
+    /**
+     * What the row must look like at this point - the assertion that a refusal changed nothing.
+     *
+     * Names the fields the question is about and the ones beside them that must not have moved, and
+     * deliberately **not** every field. `active` is absent from all of these: MySQL's `boolean` is an
+     * alias for `tinyint(1)` and that node honestly publishes a number where the others publish a
+     * boolean, so asserting it here would be a second opinion about a type declaration the read
+     * questions already cover - and it would fail on MySQL for a reason that has nothing to do with
+     * what any write did.
+     */
+    | { readonly act: 'expect'; readonly row: { readonly [field: string]: unknown } }
+    /** That the row is not there at all. */
+    | { readonly act: 'gone' }
+
+export interface WriteQuestion {
+    readonly asks: string
+    readonly collection: ConformanceCollection
+    /** The row every step acts on. `other` stamps are taken from whichever other row the suite picks. */
+    readonly id: string
+    readonly steps: readonly WriteStep[]
+    /** Why this is worth asking every backend, where that is not obvious from the question. */
+    readonly because?: string
+    readonly except?: { readonly [backend: string]: string }
+}
+
+/**
+ * The questions, in the order a suite runs them. Each is independent: a suite rebuilds the fixture
+ * between them, because a question that depended on the one before it would fail in a way that named
+ * the wrong question.
+ */
+export const WRITE_QUESTIONS: readonly WriteQuestion[] = [
+    {
+        asks: 'a change under a stamp just read is applied',
+        collection: 'customers',
+        id: '1',
+        steps: [
+            { act: 'update', patch: { city: 'Hamburg' }, using: 'fresh', answers: 'ok' },
+            { act: 'expect', row: { name: 'Acme Ltd', city: 'Hamburg', balance: 12.5 } }
+        ]
+    },
+    {
+        asks: 'the same stamp twice is a conflict, and the second change is not applied',
+        collection: 'customers',
+        id: '1',
+        steps: [
+            { act: 'update', patch: { city: 'Hamburg' }, using: 'held', answers: 'ok' },
+            { act: 'update', patch: { city: 'Bremen' }, using: 'held', answers: 'conflict' },
+            { act: 'expect', row: { name: 'Acme Ltd', city: 'Hamburg', balance: 12.5 } }
+        ],
+        because: 'this is the whole of compare-and-set: a retry after an uncertain outcome must fail the check rather than apply twice'
+    },
+    {
+        asks: 'a stamp belonging to another row satisfies nothing',
+        collection: 'customers',
+        id: '2',
+        steps: [
+            { act: 'update', patch: { city: 'Lund' }, using: 'other', answers: 'conflict' },
+            { act: 'expect', row: { name: 'borg', city: null, balance: 3.0 } }
+        ],
+        because: 'the scope and the id are inside the digest, so a stamp names one row of one collection and cannot be carried'
+    },
+    {
+        asks: 'a null is a value a change can set and clear',
+        collection: 'customers',
+        id: '4',
+        steps: [
+            { act: 'update', patch: { city: null, balance: 7.5 }, using: 'fresh', answers: 'ok' },
+            { act: 'expect', row: { name: 'Cyberdyne', city: null, balance: 7.5 } }
+        ],
+        because: 'SQL and a document store disagree about what an absent field is, so the fixture says null explicitly and both must store one'
+    },
+    {
+        asks: 'a field outside the rule is refused, and the rest of the patch is not applied either',
+        collection: 'customers',
+        id: '1',
+        steps: [
+            { act: 'update', patch: { city: 'Lund', nickname: 'ACME' }, using: 'fresh', refuses: 'nickname' },
+            { act: 'expect', row: { name: 'Acme Ltd', city: 'Berlin', balance: 12.5 } }
+        ],
+        because: 'a patch half-applied and then refused leaves a row in a state nobody asked for, and the error names none of it'
+    },
+    {
+        asks: 'a removal under a fresh stamp takes the row, and a second removal finds nothing',
+        collection: 'customers',
+        id: '2',
+        steps: [
+            { act: 'delete', using: 'fresh', answers: 'ok' },
+            { act: 'gone' },
+            { act: 'delete', using: 'held', answers: 'missing' }
+        ],
+        because: 'a row that is not there is a fact about the store rather than a fault, so it is an outcome and not an exception'
+    },
+    {
+        asks: 'a change to a row that was removed is missing rather than a conflict',
+        collection: 'customers',
+        id: '2',
+        steps: [
+            { act: 'delete', using: 'fresh', answers: 'ok' },
+            { act: 'update', patch: { city: 'Anywhere' }, using: 'held', answers: 'missing' }
+        ],
+        because: 'the two are different facts - one says somebody else edited it and one says there is nothing to edit - and a caller acts differently on each'
+    },
+    {
+        asks: 'a collection keyed on something not called id is changed the same way',
+        collection: 'sites',
+        id: 'north',
+        steps: [
+            { act: 'update', patch: { label: 'North works' }, using: 'fresh', answers: 'ok' },
+            { act: 'expect', row: { label: 'North works' } }
+        ],
+        because: 'nothing proves an id is the row’s identity rather than a column of that name on a table where the two coincide'
+    },
+    {
+        asks: 'a verb the rule does not offer is refused whatever the stamp says',
+        collection: 'sites',
+        id: 'north',
+        steps: [{ act: 'delete', using: 'fresh', refuses: 'delete' }],
+        because: 'the permission document is consulted before the precondition, so a valid stamp never talks a node into a verb it was not given'
+    }
+]

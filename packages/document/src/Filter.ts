@@ -1,5 +1,5 @@
 import type { RpcFilter, RpcFilterCondition, RpcSort } from '@source-repo/rpc'
-import type { Filter, Document } from 'mongodb'
+import type { CollationOptions, Filter, Document } from 'mongodb'
 
 /**
  * The wire's filter language, turned into a MongoDB query.
@@ -29,6 +29,24 @@ import type { Filter, Document } from 'mongodb'
 export class DocumentRefusal extends Error {
     override readonly name = 'DocumentRefusal'
 }
+
+/**
+ * Binary comparison, asked for rather than assumed.
+ *
+ * The in-memory comparator is `String(a) < String(b)`, so ordering and equality are by code unit -
+ * case-sensitive, capitals first. MongoDB's default is exactly that, and a collection created with
+ * a locale collation is not: its `$eq` on strings and its sort both change, silently, for every
+ * query against it. Naming the simple collation on every call makes this node answer the same way
+ * whatever the collection was created with, which is the same reason the SQL node names `C` on
+ * Postgres.
+ *
+ * It sits here rather than in either service because the write half needs it more than the read one
+ * does. A read under a case-folding collation finds a few rows too many, which somebody notices. A
+ * **compare-and-set** under one compares its precondition case-insensitively: a guard pinning a
+ * field to `borg` matches a document somebody has since changed to `Borg`, the write lands, and the
+ * edit it was supposed to protect is gone with nothing anywhere recording that it was.
+ */
+export const BINARY: CollationOptions = { locale: 'simple' }
 
 const refuse = (message: string): never => {
     throw new DocumentRefusal(message)

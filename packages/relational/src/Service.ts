@@ -15,9 +15,9 @@ import {
     type RpcGetManyResult
 } from '@source-repo/rpc'
 import { sql, type Kysely, type SqlBool } from 'kysely'
-import { readCatalogue, resourceOf, type Catalogue, type CatalogueOptions, type ColumnInfo, type TableInfo, type UnservedTable } from './Catalogue.js'
+import { readCatalogue, resourceOf, wireRow, type Catalogue, type CatalogueOptions, type TableInfo, type UnservedTable } from './Catalogue.js'
 import { flavours, type RelationalDatabase, type SqlFlavour } from './Flavour.js'
-import { orderFor, RelationalRefusal, whereFor } from './Filter.js'
+import { idValueFor, orderFor, RelationalRefusal, whereFor } from './Filter.js'
 
 /**
  * Source Relational: an existing SQL database, served to a Source RPC network as DataProvider
@@ -223,7 +223,7 @@ export class RelationalService extends RpcComponent<RelationalProps, RelationalS
         const rows = hasMore ? fetched.slice(0, pageSize) : fetched
 
         return {
-            data: rows.map((row) => this.rowOf(table, row)),
+            data: rows.map((row) => wireRow(table, row)),
             ids: rows.map((row) => String(row[table.id!.name])),
             // Both where both are known, because a caller that understands only one of them is then
             // right either way - and `total` simply absent where it was not asked for, never zero.
@@ -245,7 +245,7 @@ export class RelationalService extends RpcComponent<RelationalProps, RelationalS
      */
     private async getMany(table: TableInfo, params: RpcGetManyParams): Promise<RpcGetManyResult> {
         const id = table.id!
-        const wanted = params.ids.map((given) => this.idValue(id, given))
+        const wanted = params.ids.map((given) => idValueFor(id, given))
         const rows = await this.db
             .selectFrom(table.name)
             .selectAll()
@@ -256,50 +256,9 @@ export class RelationalService extends RpcComponent<RelationalProps, RelationalS
         const ids = params.ids.filter((given) => found.has(given))
         return {
             ids,
-            data: ids.map((given) => this.rowOf(table, found.get(given)!)),
+            data: ids.map((given) => wireRow(table, found.get(given)!)),
             ...this.stamp()
         }
-    }
-
-    /**
-     * An id from the wire, as the key column will actually match it.
-     *
-     * The wire carries ids as strings today, so an integer key arrives as `"42"` and has to become
-     * `42` or match nothing - silently, since `where id in ('42')` is a perfectly valid query that
-     * finds no rows. Once DEV-437 widens an id to `string | number` this becomes a check rather than
-     * a conversion, which is the point of doing it in one place.
-     */
-    private idValue(id: ColumnInfo, given: string): string | number {
-        if (id.kind !== 'number') return given
-        const value = Number(given)
-        if (!Number.isFinite(value)) throw new RelationalRefusal(`${given} is not an id of ${id.name}, which holds ${id.dataType}`)
-        return value
-    }
-
-    /**
-     * A row as it goes on the wire.
-     *
-     * Two conversions, both there so that two backends answering the same question answer the same
-     * way. A boolean column comes back as 1 or 0 from SQLite, which has no boolean type, and as a
-     * boolean from Postgres - and the row type this node publishes says boolean, so SQLite's answer
-     * is corrected rather than the declaration weakened. A bigint is exact and JSON is not, so one
-     * that fits in a double becomes a number and one that does not becomes a string rather than
-     * silently losing its low digits.
-     */
-    private rowOf(table: TableInfo, row: Record<string, unknown>): Record<string, unknown> {
-        const mapped: Record<string, unknown> = {}
-        for (const column of table.columns) {
-            const value = row[column.name]
-            mapped[column.name] =
-                column.kind === 'boolean' && typeof value === 'number'
-                    ? value !== 0
-                    : typeof value === 'bigint'
-                      ? Number.isSafeInteger(Number(value))
-                          ? Number(value)
-                          : value.toString()
-                      : value
-        }
-        return mapped
     }
 
     /**

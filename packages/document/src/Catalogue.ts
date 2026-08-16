@@ -1,5 +1,6 @@
 import type { FieldNode, RpcDataMethod, RpcDataResource, TypeNode } from '@source-repo/rpc'
 import { ObjectId, type Db, type Document } from 'mongodb'
+import { DocumentRefusal } from './Filter.js'
 
 /**
  * What the database says it holds - and the honest admission that it mostly does not know.
@@ -112,6 +113,41 @@ const idKindOf = (sample: readonly Document[]): IdKind => {
     if (!kinds.size) return 'objectId'
     return kinds.size === 1 ? ([...kinds][0] as IdKind) : 'mixed'
 }
+
+/**
+ * An id from the wire, as `_id` will actually match it.
+ *
+ * An ObjectId is its twenty-four hex characters and has to be rebuilt, or `{ _id: { $in: ['65…'] } }`
+ * is a perfectly valid query that finds nothing - silently, which is the failure this exists to
+ * prevent. A collection whose ids are mixed is compared as text, which is honest about what it can
+ * do rather than guessing which kind was meant.
+ *
+ * Here rather than in `Filter.ts` beside `DocumentRefusal`, which is where the SQL package keeps its
+ * equivalent, for two reasons. It needs fewer imports: `idKind` and `ObjectId` are both already in
+ * this file, so the only thing that has to be reached for is the refusal, where the other placement
+ * would have had to reach for both the collection type and `ObjectId`. And the conversion is a
+ * consequence of the inference - `idKindOf` decides what a collection keys on from what was in it,
+ * and the code that acts on that decision is easier to keep honest sitting next to it.
+ *
+ * Shared by both halves of the package rather than private to either, and that sharing is
+ * load-bearing: a `getMany` that finds a document and an `update` that does not would be the two
+ * halves answering different questions about the same id.
+ */
+export const idValue = (collection: CollectionInfo, given: string): ObjectId | string | number => {
+    if (collection.idKind === 'objectId') {
+        if (!ObjectId.isValid(given)) throw new DocumentRefusal(`${given} is not an ObjectId, which is what ${collection.name} keys on`)
+        return new ObjectId(given)
+    }
+    if (collection.idKind === 'number') {
+        const value = Number(given)
+        if (!Number.isFinite(value)) throw new DocumentRefusal(`${given} is not a number, which is what ${collection.name} keys on`)
+        return value
+    }
+    return given
+}
+
+/** An id as text. An ObjectId is its hex string, which is its own canonical form. */
+export const idText = (id: unknown): string => (id instanceof ObjectId ? id.toHexString() : String(id))
 
 /**
  * A row shape inferred from documents, and labelled as inferred.
@@ -247,3 +283,48 @@ export const resourceOf = (collection: CollectionInfo): RpcDataResource => ({
     shape: 'list',
     ...(collection.row ? { row: collection.row } : {})
 })
+
+/**
+ * How deep a document is walked on its way to the wire.
+ *
+ * Bounded because a document is user data and the walk is recursive: a cycle cannot occur in BSON
+ * but a pathologically deep document can, and the recursion should stop before the stack does.
+ * Exported so the write half can refuse a value deeper than this rather than store one - a value
+ * below the bound would be stamped over a `null`, so a precondition taken over it would say nothing
+ * about what is actually there.
+ */
+export const MAX_DOCUMENT_DEPTH = 24
+
+/**
+ * A document as it goes on the wire.
+ *
+ * BSON has types the codec does not: an ObjectId, a Long, a Decimal128. Left alone they would reach
+ * MsgPack as objects with internal fields, which is neither what the row type says nor anything a
+ * viewer can render - so each becomes the nearest thing that survives the trip, and an ObjectId
+ * becomes the same hex string the `ids` beside it carry.
+ *
+ * Shared with the write half rather than kept private to the reader, and that sharing is
+ * load-bearing: a row's stamp is a digest over these values, so a read that normalised differently
+ * from the read behind a compare-and-set would produce a precondition that never holds. The two
+ * would not disagree loudly either - the stamps would simply never match, every update would answer
+ * `conflict`, and the first person to see that would reasonably conclude something else was writing
+ * to the collection.
+ */
+export const wireDocument = (value: unknown, depth = 0): unknown => {
+    if (depth > MAX_DOCUMENT_DEPTH) return null
+    if (value === null || value === undefined) return null
+    if (value instanceof ObjectId) return value.toHexString()
+    if (value instanceof Date || value instanceof Uint8Array) return value
+    if (typeof value === 'bigint') return Number.isSafeInteger(Number(value)) ? Number(value) : value.toString()
+    if (Array.isArray(value)) return value.map((item) => wireDocument(item, depth + 1))
+    if (typeof value === 'object') {
+        // Decimal128, Long, Binary and the rest all carry a toString that says what they are; a
+        // plain object has Object.prototype's, which says nothing and is the giveaway.
+        const held = value as { _bsontype?: string; toString(): string }
+        if (typeof held._bsontype === 'string') return held.toString()
+        const mapped: Record<string, unknown> = {}
+        for (const [name, held] of Object.entries(value)) mapped[name] = wireDocument(held, depth + 1)
+        return mapped
+    }
+    return value
+}

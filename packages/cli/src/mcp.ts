@@ -13,7 +13,10 @@ import {
     type RpcComponentStore,
     type RpcContextSnapshot,
     type RpcContextStore,
+    type RpcRowRead,
     type RpcSchema,
+    type RpcWritableResource,
+    type RpcWriteOutcome,
     type ServerDescription,
     type TypeNode
 } from '@source-repo/rpc'
@@ -458,6 +461,76 @@ const toolsFor = (contracts: string | undefined, allowExec = false, scripts?: st
                 seconds: { type: 'number', description: `How long to wait for the chain to resolve. 1 to ${MAX_WATCH_SECONDS}, default 10.` }
             },
             required: ['peer', 'node', 'token', 'axis'],
+            additionalProperties: false
+        }
+    },
+    {
+        name: 'list_writable',
+        description:
+            'What a store-backed node will let you change, asked before anything is refused: the resources it accepts writes to, which of create, ' +
+            'update and delete each one takes, which fields may be written, and the shape of a row where the store publishes one. ' +
+            'Read this first - discovering permissions by trying things generates refusals somebody then has to explain. ' +
+            'A resource absent from this list is one nobody allow-listed, not one that does not exist: a missing table is a decision somebody made in a ' +
+            'deployment, not a spelling mistake in your call. An empty list means this node accepts no writes at all, which is what a node with no ' +
+            'decision behind it should be.',
+        inputSchema: {
+            type: 'object',
+            properties: {
+                peer: { type: 'string', description: 'The peer holding the store.' },
+                namespace: { type: 'string', description: 'The namespace its write half is exposed under - conventionally "<read name>.write", e.g. "sql.write".' }
+            },
+            required: ['peer', 'namespace'],
+            additionalProperties: false
+        }
+    },
+    {
+        name: 'read_row',
+        description:
+            'One row from a writable resource, and the stamp that names the state it was read in. ' +
+            'The stamp is the precondition every change is made under: write_row refuses an update or a delete without one, and it has to be **this** ' +
+            "row's - a stamp names one state of one row in one resource and cannot be carried over from another, invented, or taken from a listing. " +
+            'The only way to hold one is to have read the row, which is what makes a change compare against what you actually looked at. ' +
+            'So the loop is read, decide, write - with the stamp that came back here. ' +
+            'A row that is not there answers `missing`, which is a fact about the store rather than a failed call.',
+        inputSchema: {
+            type: 'object',
+            properties: {
+                peer: { type: 'string', description: 'The peer holding the store.' },
+                namespace: { type: 'string', description: 'The write namespace, e.g. "sql.write".' },
+                resource: { type: 'string', description: 'The resource - a table or a collection - as list_writable names it.' },
+                id: { type: 'string', description: "The row's id." }
+            },
+            required: ['peer', 'namespace', 'resource', 'id'],
+            additionalProperties: false
+        }
+    },
+    {
+        name: 'write_row',
+        description:
+            'Create, update or delete one row on a store-backed node. `create` takes `row` and neither an id nor a stamp - the row has no prior state to ' +
+            'make a precondition of, and the store answers what it is called. `update` takes `id`, `row` - only the fields being changed - and `stamp`. ' +
+            '`delete` takes `id` and `stamp`, and no row. ' +
+            '**The stamp is required for update and delete, and this tool will never fetch one for you.** That is the design rather than an omission: a tool ' +
+            'that read the row and immediately wrote it back would satisfy the precondition by construction, which is a compare-and-set comparing against ' +
+            'itself, and the lost update the precondition exists to prevent would go through every time. Read with read_row, decide, then write. ' +
+            '`conflict` means the row moved between that read and this call and **nothing was written**. It comes back as a result, not an error, and the ' +
+            'correct response is not to retry: read_row again, see what somebody else did, and decide again - the change you were about to make may no ' +
+            'longer be the one you want. No new stamp comes back with it, deliberately, because one would put a blind overwrite a single call away. ' +
+            '`missing` is answered the same way: the row is gone, so resending will not find it. ' +
+            'On `ok` the row\'s new stamp comes back, so a second edit needs no read between. Nothing is written locally - what the store agreed to is what ' +
+            'a subsequent read_row reports, and a default, a trigger or a type conversion may have had an opinion on what was sent.',
+        inputSchema: {
+            type: 'object',
+            properties: {
+                peer: { type: 'string', description: 'The peer holding the store.' },
+                namespace: { type: 'string', description: 'The write namespace, e.g. "sql.write".' },
+                resource: { type: 'string', description: 'The resource - a table or a collection - as list_writable names it.' },
+                verb: { type: 'string', enum: ['create', 'update', 'delete'], description: 'What to do. There is no bulk form: fifty rows are fifty calls, each individually refusable.' },
+                row: { type: 'object', description: 'For create, the row. For update, only the fields being changed - a field the resource does not permit is refused rather than dropped.' },
+                id: { type: 'string', description: 'For update and delete, the row to act on. Never for create: the store names the row it made.' },
+                stamp: { type: 'string', description: 'For update and delete, the stamp read_row answered with for this row. Required, and not obtainable any other way.' }
+            },
+            required: ['peer', 'namespace', 'resource', 'verb'],
             additionalProperties: false
         }
     },
@@ -1311,6 +1384,185 @@ export const startMcp = async (options: McpOptions) => {
                 return { text: `cannot resolve ${tokenId} at ${peer}/${node}: ${failureText(e)}`, isError: true }
             } finally {
                 store.close()
+            }
+        }
+
+        if (name === 'list_writable') {
+            const peer = String(args.peer ?? '')
+            const namespace = String(args.namespace ?? '')
+            if (!peer || !namespace) return { text: 'list_writable needs peer and namespace - the peer holding the store, and the namespace its write half answers on.', isError: true }
+            try {
+                const proxy = await network.proxy<{ writable(): Promise<readonly RpcWritableResource[]> }>(namespace, peer)
+                const resources = await proxy.writable()
+                return {
+                    text: JSON.stringify(
+                        {
+                            node: `${peer}.${namespace}`,
+                            resources,
+                            // Said out loud rather than left as an empty array, because "nothing here
+                            // is writable" and "I asked the wrong namespace" look identical otherwise,
+                            // and only one of the two is worth another turn.
+                            ...(resources.length
+                                ? {}
+                                : { note: 'Nothing is writable here. That is a deployment decision - this node was given no allow-list, or nothing it names exists in the store.' })
+                        },
+                        null,
+                        2
+                    )
+                }
+            } catch (e) {
+                // The common one is a namespace that serves reads only, and it is an answer about the
+                // peer rather than a broken call: the write half is a separate namespace with a
+                // separate authorize(), which is exactly why it is not on the one that was asked.
+                return {
+                    text: `${peer}.${namespace} could not say what it may write: ${failureText(e)}. A namespace that only reads has no writable() - the write half is exposed beside it, conventionally as <read name>.write. describe_peer lists what this peer has.`,
+                    isError: true
+                }
+            }
+        }
+        if (name === 'read_row') {
+            const peer = String(args.peer ?? '')
+            const namespace = String(args.namespace ?? '')
+            const resource = String(args.resource ?? '')
+            const id = args.id === undefined || args.id === null ? '' : String(args.id)
+            if (!peer || !namespace || !resource || !id) return { text: 'read_row needs peer, namespace, resource and id. list_writable is where the resource names come from.', isError: true }
+            try {
+                const proxy = await network.proxy<{ getOne(resource: string, id: string): Promise<RpcRowRead> }>(namespace, peer)
+                const read = await proxy.getOne(resource, id)
+                if (read.status !== 'ok')
+                    return {
+                        // Not an error: a row that is not there is a fact about the store, the same
+                        // judgement read_context makes about a token nobody provides.
+                        text: JSON.stringify({ resource, id, status: 'missing', note: 'No such row. There is nothing to change and no stamp to hold.' }, null, 2)
+                    }
+                return {
+                    text: JSON.stringify(
+                        {
+                            resource,
+                            id,
+                            status: 'ok',
+                            row: read.row,
+                            stamp: read.stamp,
+                            // The sentence that makes the stamp usable. A model that treats it as
+                            // decoration writes without a precondition and is refused; one that keeps
+                            // it can change this row and nothing else.
+                            note: 'The stamp names the state this row was read in. Pass it back to write_row as `stamp` to change or remove this row; it is the precondition the write is made under, and it belongs to this row alone.'
+                        },
+                        null,
+                        2
+                    )
+                }
+            } catch (e) {
+                return { text: `cannot read ${resource} ${id} on ${peer}.${namespace}: ${failureText(e)}`, isError: true }
+            }
+        }
+        if (name === 'write_row') {
+            const peer = String(args.peer ?? '')
+            const namespace = String(args.namespace ?? '')
+            const resource = String(args.resource ?? '')
+            const verb = String(args.verb ?? '')
+            if (!peer || !namespace || !resource) return { text: 'write_row needs peer, namespace and resource.', isError: true }
+            if (verb !== 'create' && verb !== 'update' && verb !== 'delete')
+                return {
+                    text: "write_row needs verb: 'create', 'update' or 'delete'. There is no bulk verb here and there is not going to be one - fifty rows are fifty calls, each with its own precondition and each individually refusable.",
+                    isError: true
+                }
+            const id = args.id === undefined || args.id === null ? '' : String(args.id)
+            const stamp = args.stamp === undefined || args.stamp === null ? '' : String(args.stamp)
+            const row = args.row
+            const isRow = typeof row === 'object' && row !== null && !Array.isArray(row)
+            if (row !== undefined && !isRow) return { text: '`row` is an object of field names to values, e.g. {"name":"Ada","grade":3}.', isError: true }
+            if (verb === 'create') {
+                if (!isRow) return { text: 'create needs `row`: the fields to insert. list_writable says which fields this resource accepts.', isError: true }
+                // Refused rather than ignored, because an id or a stamp on a create is a caller with
+                // the wrong model of what is about to happen, and letting it through would teach that
+                // model that its idea worked.
+                if (id || stamp)
+                    return {
+                        text: 'create takes neither `id` nor `stamp`. The row does not exist yet, so there is no state to make a precondition of, and the store names what it inserts - the id comes back in the answer.',
+                        isError: true
+                    }
+            }
+            if (verb !== 'create' && !id) return { text: `${verb} needs \`id\` - which row to act on, as read_row reports it.`, isError: true }
+            if (verb === 'update' && !isRow) return { text: 'update needs `row`: only the fields being changed. It is a patch, not the whole row - a field the resource does not permit is refused rather than quietly dropped.', isError: true }
+            if (verb === 'delete' && row !== undefined) return { text: 'delete takes no `row` - there is nothing to write. Give it the `id` and the `stamp` read_row answered with.', isError: true }
+            // The refusal this tool exists to make. It carries the reason rather than the rule,
+            // because a model told only "stamp is required" solves it the obvious wrong way: read the
+            // row here, in this call, and hand its stamp straight back to the store.
+            if (verb !== 'create' && !stamp)
+                return {
+                    text:
+                        `${verb} needs \`stamp\` - the one read_row answered with for this row. It is required, and this tool will not fetch it for you: reading the row here and ` +
+                        'writing it back in the same breath would satisfy the precondition by construction, which is a compare-and-set that compares against itself, and the lost ' +
+                        'update it exists to prevent would go through every time. Call read_row, decide against what it says, then send that stamp.',
+                    isError: true
+                }
+
+            try {
+                const proxy = await network.proxy<{
+                    create(resource: string, row: unknown): Promise<RpcWriteOutcome>
+                    update(resource: string, id: string, patch: unknown, expect: string): Promise<RpcWriteOutcome>
+                    delete(resource: string, id: string, expect: string): Promise<RpcWriteOutcome>
+                }>(namespace, peer)
+                const outcome =
+                    verb === 'create' ? await proxy.create(resource, row) : verb === 'update' ? await proxy.update(resource, id, row, stamp) : await proxy.delete(resource, id, stamp)
+                // conflict and missing are answers rather than failures, which is the store's own
+                // judgement carried up unchanged: an exception here would put "somebody else got
+                // there first" and "the connection broke" through the same catch, and they are the
+                // two cases a caller most needs to tell apart.
+                if (outcome.status === 'conflict')
+                    return {
+                        text: JSON.stringify(
+                            {
+                                resource,
+                                id,
+                                verb,
+                                status: 'conflict',
+                                note:
+                                    'Nothing was written. The row changed between the read that produced this stamp and this call, so the state you decided against is not the state that is there. ' +
+                                    'Do not retry - read_row again, see what somebody else did, and decide again. No new stamp comes back with a conflict, deliberately: one would put a blind overwrite a single call away.'
+                            },
+                            null,
+                            2
+                        )
+                    }
+                if (outcome.status === 'missing')
+                    return {
+                        text: JSON.stringify(
+                            {
+                                resource,
+                                id,
+                                verb,
+                                status: 'missing',
+                                note: 'Nothing was written, and there is no such row - it was removed, or that id was never there. Resending will not find it; read_row, or list what is there, and decide again.'
+                            },
+                            null,
+                            2
+                        )
+                    }
+                return {
+                    text: JSON.stringify(
+                        {
+                            resource,
+                            id: outcome.id,
+                            verb,
+                            status: 'ok',
+                            ...(outcome.stamp !== undefined ? { stamp: outcome.stamp } : {}),
+                            // set_state's sentence, one layer down and for the same reason: the call
+                            // ran, and what is in the store is whatever the store made of it.
+                            note:
+                                (outcome.stamp !== undefined ? 'The stamp is of the row as it now stands, so a second edit needs no read between. ' : '') +
+                                'Nothing was written locally - what the store agreed to is what read_row reports next, and a default, a trigger or a type conversion may have had an opinion on what was sent.'
+                        },
+                        null,
+                        2
+                    )
+                }
+            } catch (e) {
+                // A refusal is the node doing its job: a resource nobody allow-listed, a field that is
+                // not writable, a value the column cannot hold. list_writable is the answer to all
+                // three, and saying so beats making a model guess which it was.
+                return { text: `${peer}.${namespace}.${verb} on ${resource} refused: ${failureText(e)}. list_writable says which resources and fields this node accepts.`, isError: true }
             }
         }
 

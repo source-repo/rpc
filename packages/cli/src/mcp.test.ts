@@ -89,6 +89,80 @@ class Vent extends RpcComponent<{ label: string }, { open: boolean; pressure: nu
     }
 }
 
+/**
+ * A store-backed node's write surface, kept in a Map rather than in a database.
+ *
+ * What the row tools need from it is not a store but a **precondition that can fail**: a stamp that
+ * moves when the row does, so `conflict` here is produced by the same rule Source Relational
+ * produces it by. `meddle` is the other caller - somebody else's edit landing between the model's
+ * read and its write, which is the whole case these tools are shaped around.
+ */
+@rpcNamespace('sql.write')
+class Ledger {
+    private rows = new Map<string, { name: string; grade: number }>([['1', { name: 'Ada', grade: 3 }]])
+    private stamps = new Map<string, number>([['1', 1]])
+    private next = 2
+
+    @rpc({ semantics: 'query' })
+    async writable() {
+        return [
+            {
+                resource: 'pupils',
+                verbs: ['create', 'update', 'delete'],
+                columns: ['name', 'grade'],
+                row: { kind: 'object', fields: { name: { type: { kind: 'string' } }, grade: { type: { kind: 'number' } } } }
+            }
+        ]
+    }
+
+    @rpc({ semantics: 'query' })
+    async getOne(resource: string, id: string) {
+        this.only(resource)
+        const row = this.rows.get(id)
+        return row ? ({ status: 'ok', row: { id, ...row }, stamp: `v${this.stamps.get(id)}` } as const) : ({ status: 'missing' } as const)
+    }
+
+    @rpc({ semantics: 'non-repeatable-command' })
+    async create(resource: string, row: { name: string; grade: number }) {
+        this.only(resource)
+        const id = String(this.next++)
+        this.rows.set(id, row)
+        this.stamps.set(id, 1)
+        return { status: 'ok', id, stamp: 'v1' } as const
+    }
+
+    @rpc({ semantics: 'non-repeatable-command' })
+    async update(resource: string, id: string, patch: { name?: string; grade?: number }, expect: string) {
+        this.only(resource)
+        const row = this.rows.get(id)
+        if (!row) return { status: 'missing' } as const
+        if (expect !== `v${this.stamps.get(id)}`) return { status: 'conflict' } as const
+        this.rows.set(id, { ...row, ...patch })
+        this.stamps.set(id, this.stamps.get(id)! + 1)
+        return { status: 'ok', id, stamp: `v${this.stamps.get(id)}` } as const
+    }
+
+    @rpc({ semantics: 'non-repeatable-command' })
+    async delete(resource: string, id: string, expect: string) {
+        this.only(resource)
+        if (!this.rows.has(id)) return { status: 'missing' } as const
+        if (expect !== `v${this.stamps.get(id)}`) return { status: 'conflict' } as const
+        this.rows.delete(id)
+        this.stamps.delete(id)
+        return { status: 'ok', id } as const
+    }
+
+    /** The other caller: an edit nobody told the model about. */
+    meddle(id: string) {
+        this.rows.set(id, { ...this.rows.get(id)!, name: 'Grace' })
+        this.stamps.set(id, this.stamps.get(id)! + 1)
+    }
+
+    private only(resource: string) {
+        if (resource !== 'pupils') throw new Error(`${resource} is not writable on this node - it accepts writes to pupils`)
+    }
+}
+
 const SiteToken = defineRpcContext<{ site: string; timezone: string }>({ id: 'acme.site', schemaVersion: '1', axis: 'physical' })
 
 /**
@@ -223,15 +297,21 @@ test('an MCP client can list, describe and call the peers on a Source RPC networ
             'find_capability',
             'list_fakes',
             'list_peers',
+            'list_writable',
             'read_context',
+            'read_row',
             'read_state',
             'set_state',
             'start_fake',
             'stop_fake',
             'watch_events',
-            'watch_traffic'
+            'watch_traffic',
+            'write_row'
         ]
     )
+    // The row tools carry no flag and gate nothing: call_method could already invoke a node's write
+    // methods, so hiding these behind an option would advertise a restriction that does not exist.
+    t.true(tools.some((tool) => tool.name === 'write_row'), 'the row tools are always here - they add no capability to gate')
     // The contract tools are absent without a directory to write to: a server that cannot write
     // files must not advertise tools claiming it can.
     t.false(tools.some((tool) => tool.name === 'save_contract'), 'save_contract should need --contracts')
@@ -747,6 +827,108 @@ test('set_state finds the method that claims a path, and refuses one nothing cla
 
     client.close()
     await plant.close()
+    await hub.close()
+})
+
+test('write_row will not fetch the stamp it insists on, and a conflict comes back as an answer', async (t) => {
+    const hub = new RpcServer({ name: peer('hub-rows'), transports: [{ port: 3988, host: '127.0.0.1' }] })
+    await hub.ready()
+
+    const storeName = peer('rowStore')
+    const ledger = new Ledger()
+    const store = new RpcServer({ name: storeName, transports: [{ connect: 'http://localhost:3988' }], exposeIntrospection: true })
+    store.exposeClassInstance(ledger, 'sql.write')
+    await store.ready()
+
+    const client = mcpClient(3988)
+    await client.ready
+    await client.send('initialize', { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'test', version: '1' } })
+    client.notify('notifications/initialized')
+
+    const deadline = Date.now() + 10000
+    let peers: string[] = []
+    while (!peers.includes(storeName) && Date.now() < deadline) {
+        peers = (JSON.parse(toolText(await client.send('tools/call', { name: 'list_peers', arguments: {} })).text) as { peers: string[] }).peers
+    }
+    t.true(peers.includes(storeName), `expected the store among ${JSON.stringify(peers)}`)
+
+    const at = { peer: storeName, namespace: 'sql.write', resource: 'pupils' }
+    const write = (extra: Record<string, unknown>) => client.send('tools/call', { name: 'write_row', arguments: { ...at, ...extra } })
+    const readRow = async (id: string) => {
+        const answer = await client.send('tools/call', { name: 'read_row', arguments: { ...at, id } })
+        return { ...toolText(answer), read: JSON.parse(toolText(answer).text) as { status: string; row?: { name: string }; stamp?: string } }
+    }
+
+    // What may be changed, asked before anything is refused.
+    const listed = await client.send('tools/call', { name: 'list_writable', arguments: { peer: storeName, namespace: 'sql.write' } })
+    t.false(toolText(listed).isError, toolText(listed).text)
+    const writable = JSON.parse(toolText(listed).text) as { resources: { resource: string; verbs: string[]; columns: string[] }[] }
+    t.deepEqual(writable.resources[0].verbs, ['create', 'update', 'delete'])
+    t.deepEqual(writable.resources[0].columns, ['name', 'grade'])
+
+    // A row and the stamp that names the state it was read in.
+    const first = await readRow('1')
+    t.is(first.read.status, 'ok')
+    t.truthy(first.read.stamp, 'a read without a stamp is a read nothing can be written against')
+
+    // The refusal the whole design turns on: no stamp, no write - and the reason travels with it,
+    // because a model told only "it is required" solves it by reading the row in the same breath.
+    const noStamp = await write({ verb: 'update', id: '1', row: { grade: 4 } })
+    t.true(toolText(noStamp).isError)
+    t.regex(toolText(noStamp).text, /compares against itself/)
+    t.regex(toolText(noStamp).text, /read_row/)
+
+    // The other two argument shapes, refused with what was expected rather than half-applied.
+    const createWithId = await write({ verb: 'create', id: '7', row: { name: 'Alan', grade: 1 } })
+    t.true(toolText(createWithId).isError)
+    t.regex(toolText(createWithId).text, /create takes neither/)
+    const deleteWithRow = await write({ verb: 'delete', id: '1', stamp: first.read.stamp!, row: { grade: 4 } })
+    t.true(toolText(deleteWithRow).isError)
+    t.regex(toolText(deleteWithRow).text, /delete takes no `row`/)
+
+    // Somebody else edits the row between the model's read and its write.
+    ledger.meddle('1')
+    const conflict = await write({ verb: 'update', id: '1', row: { grade: 4 }, stamp: first.read.stamp! })
+    t.false(toolText(conflict).isError, 'a conflict is a fact about the store, not a failed tool call')
+    const conflicted = JSON.parse(toolText(conflict).text) as { status: string; stamp?: string; note: string }
+    t.is(conflicted.status, 'conflict')
+    t.falsy(conflicted.stamp, 'a conflict handing back a stamp would put a blind overwrite one call away')
+    t.regex(conflicted.note, /read_row again/)
+
+    // Nothing was written, and the meddler's edit is what is there.
+    const again = await readRow('1')
+    t.is(again.read.row?.name, 'Grace')
+    t.not(again.read.stamp, first.read.stamp, 'the stamp moved because the row did')
+
+    // Read, decide, write - and the new stamp comes back, so a second edit needs no read between.
+    const ok = await write({ verb: 'update', id: '1', row: { grade: 4 }, stamp: again.read.stamp! })
+    const wrote = JSON.parse(toolText(ok).text) as { status: string; stamp: string; note: string }
+    t.is(wrote.status, 'ok')
+    t.truthy(wrote.stamp)
+    t.regex(wrote.note, /Nothing was written locally/)
+    const second = await write({ verb: 'update', id: '1', row: { grade: 5 }, stamp: wrote.stamp })
+    t.is((JSON.parse(toolText(second).text) as { status: string }).status, 'ok')
+
+    // create names the row the store made; a row that is not there is `missing` either way.
+    const made = JSON.parse(toolText(await write({ verb: 'create', row: { name: 'Alan', grade: 1 } })).text) as { status: string; id: string }
+    t.is(made.status, 'ok')
+    t.is((await readRow(made.id)).read.status, 'ok')
+    const absent = await readRow('404')
+    t.false(absent.isError, 'no such row is an answer about the store')
+    t.is(absent.read.status, 'missing')
+    const writeAbsent = await write({ verb: 'delete', id: '404', stamp: 'v1' })
+    t.false(toolText(writeAbsent).isError)
+    t.is((JSON.parse(toolText(writeAbsent).text) as { status: string }).status, 'missing')
+
+    // A resource nobody allow-listed is the node's refusal, and the answer says where to look.
+    const forbidden = await write({ verb: 'create', resource: 'salaries', row: { name: 'Ada', grade: 3 } })
+    t.true(toolText(forbidden).isError)
+    t.regex(toolText(forbidden).text, /list_writable/)
+
+    t.deepEqual(client.stray, [], 'stdout must carry protocol and nothing else')
+
+    client.close()
+    await store.close()
     await hub.close()
 })
 

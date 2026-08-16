@@ -8,7 +8,9 @@ This is a tool node in the sense `@source-repo/queue` established — its own pa
 
 ## The one paragraph to read before trusting it
 
-**This node owns nothing.** It holds a connection to a database somebody else owns and answers questions about it; delete the node and nothing is lost but the ability to ask. It serves **reads only** — `getList`, `getMany` and `getManyReference`. There is no `create`, `update` or `delete`, and that is a rule rather than an omission: a value is never written over this bus, a method is called. A node that should accept writes declares ordinary `@rpc` methods for them, which `authorize()`, the owner fence and idempotency already rule on.
+**This node owns nothing.** It holds a connection to a database somebody else owns and answers questions about it; delete the node and nothing is lost but the ability to ask. `exposeRelational` serves **reads only** — `getList`, `getMany` and `getManyReference`. There is no `create`, `update` or `delete` on `$data`, and that is a rule rather than an omission: a value is never written over this bus, a method is called.
+
+**Writes are a second node, and importing one is a visible line in a diff.** `@source-repo/relational/writes` publishes `create`, `update` and `delete` as ordinary `@rpc` methods in a namespace of their own, which is what keeps the rule intact rather than bending it: `authorize()`, the deadline, the execution queue, the owner fence, the AI grants ladder and the idempotency store rule on each of them exactly as they do on any other command. It writes nothing without a permission document, every change carries the stamp the row was read under, and something holding a `RelationalService` can never turn out to have been holding a writable one. See [the write half](#the-write-half).
 
 ## Serving a database
 
@@ -61,6 +63,8 @@ A flavour carries exactly three things, because they are the only ones that chan
 
 `Servers.sql.test.ts` asks all three backends the same thirteen questions and compares the answers against what the library's in-memory implementation would have said. That comparison is the only thing that makes "one contract, many backends" more than a claim, and it earns itself: three of the thirteen fail on at least one engine's defaults.
 
+**The write half is asked nine more**, and they are the ones where a divergence costs something irreversible: a change under a fresh stamp, the same stamp twice, a stamp belonging to another row, a field outside the rule, a removal and then a second one, and a change to a row that has gone. A stamp meaning one thing on one engine and another elsewhere would be a compare-and-set that holds on one and not the other, and its only symptom is a lost update. Alongside them one question about the stamp itself: that a node digests exactly the fields its rule permits, over the row **as it published it** — stamp what the driver returned instead and this fails on SQLite, where a boolean comes back as 1 and the resource says boolean. All ten are asked of MongoDB too.
+
 SQLite always runs — `node:sqlite`, no server, no native module — so the suite is never entirely skipped. Postgres and MySQL run when they are up:
 
 ```
@@ -89,6 +93,72 @@ A refusal crosses the wire as an error naming what would have been right, and is
 **Offset paging renumbers rows underneath a pager.** `page * pageSize` becomes `OFFSET`, and a table being written to while somebody pages it will show a row twice or not at all. Every order is made total by appending the key, which removes the far more common version of this failure — a sort on a column half the rows share — but nothing here can make a moving table hold still. The `epoch` and `revision` on every answer say *this peer restarted*, not *the data changed*; do not read them as covering this.
 
 **A mistyped table name is an error, not an empty table.** `$data` otherwise falls back to serving a path out of a component's own props and state, which is right for a record that may not have been populated yet and wrong for a database, whose tables are a closed published list — `total: 0` for `custmers` would render as a table that exists and holds nothing. The refusal names what is served.
+
+## The write half
+
+Rows can be created, changed and removed — by a second node, from a second import, under a permission document, with a precondition on every change.
+
+```typescript
+import { exposeRelationalWrites } from '@source-repo/relational/writes'
+
+await exposeRelationalWrites(server, 'sql.write', {
+    db,
+    flavour: 'postgres',
+    // Absent means nothing is writable. This is the whole of the permission model, and it is data
+    // rather than a callback for the reason the AI grants document is: a console can render data,
+    // and a reviewer can diff it.
+    writes: {
+        work_orders: { verbs: ['create', 'update'], columns: ['status', 'note', 'assigned_to'] },
+        recipes: { verbs: ['update'], columns: ['setpoint'] }
+    }
+})
+```
+
+**It is a separate class in a separate namespace, and that is the design rather than tidiness.** Two namespaces are two `authorize()` surfaces, so an operator can grant reading to everyone and writing to nobody. A subclass would have made "may call the database" one permission and would have made the read-only class's promise a lie by inheritance — code holding a `RelationalService` could have been holding a writable one. And the subpath export means importing it shows up in a diff instead of being an option somebody set. It is the split [`@source-repo/docker`](./../docker/README.md) already makes between reading containers, controlling them and creating them.
+
+**The rule about writes is intact rather than bent.** Every method here is an ordinary `@rpc` method with declared `semantics` and `effect`, so the deadline, the execution queue, the owner fence, `authorize()` with the table and the patch visible in `params`, the [AI grants](../../docs/ai-in-the-plant.md) ladder and the idempotency store all apply as they do to any other command. There is no `$write` verb beside `$data` and there is not going to be: a dispatch-level write would sit outside every one of those gates unless each were re-invoked by hand, which is a list somebody has to keep complete.
+
+**Nothing is writable by default**, and composing the node in with a usable document is what says otherwise: it announces itself through [`elevation()`](../../docs/security-model.md#changing-somebody-elses-store), so a console watching a plant can say "this node can write `work_orders`" without calling anything.
+
+### The precondition
+
+`update` and `delete` take a **stamp**, and it is required rather than optional:
+
+```typescript
+const read = await writer.getOne('work_orders', '4711')          // { status: 'ok', row, stamp }
+await writer.update('work_orders', '4711', { status: 'done' }, read.stamp)
+```
+
+A stamp is a digest of the row's writable fields, its id and its resource. The only way to hold one is to have read the row, which is what makes a change compare against what was actually looked at — and an optional precondition is one that gets omitted the first time somebody is in a hurry, while the failure it prevents leaves no trace anywhere for anyone to find. It is the same mandatory compare-and-set `msgrpc.updateTopology`'s `expectedVersion` is, for the same reason.
+
+A stale stamp answers `{ status: 'conflict' }` and writes nothing. **The conflict carries no stamp**, deliberately: handing back the current one would put a blind overwrite a single call away, which is a compare-and-set comparing against itself. A caller that means to proceed reads the row again and decides again.
+
+What the stamp covers falls out of the permission document rather than being a second decision: it is the fields the rule permits, so a trigger touching `updated_at` is not a conflict — a precondition that fails for a reason nobody can act on is one that gets switched off within a week — while two callers writing different permitted fields of the same row do conflict, and the second re-reads before deciding.
+
+The comparison is made under whatever hold the engine offers. Postgres and MySQL take `for update`, because under their default isolation two callers can otherwise both read the row, both find the stamp they expected, and both write — the precondition failing to be a precondition, silently, in exactly the case it exists for. SQLite needs nothing, because this package's dialect serialises every statement onto one connection; that is a property of the dialect rather than of SQLite, so the flavour states it rather than the service assuming it.
+
+### What it refuses
+
+- **A table nobody listed**, naming what is writable — which is the answer to "can I change this", and is often no.
+- **A rule that names something the database does not have.** A rule is honoured whole or dropped whole and the reason lands in `props.refused`, because a misspelled table otherwise produces a node that refuses every edit to it, which reads exactly like a deliberate policy with nothing anywhere to say the policy was never loaded.
+- **A view**, whose writability is the engine's business rather than this node's.
+- **A field outside the rule** — refused rather than ignored, and the whole patch is refused with it. A patch half-applied and then rejected leaves a row in a state nobody asked for, and the error names none of it.
+- **A value the column cannot hold.** Checked rather than converted: `'80'` into a numeric setpoint is what JavaScript and MySQL will both happily make 80, and the one time the string is `'8O'` the column ends up holding 0 with nothing reporting it. A date arrives as an ISO string and never as a number, since epoch seconds and epoch milliseconds are both ordinary conventions and a number does not say which.
+- **A `bytes` column**, because a JSON row has no declared encoding for one and both candidates are defensible.
+- **An update that names the id.** A row that renames itself leaves every reference to it dangling. The same column stays creatable, which is what a natural key needs.
+- **A required column a `create` omitted**, named here rather than by three engines in three different sentences none of which was written for whoever is holding the console.
+
+### `getOne`, and why this one is worth the wire
+
+The read side declines to serve `getOne` and is right to: a caller wanting one row asks `getMany` for one id, and a verb existing only to be a worse version of another is not worth the wire. The one here is a different verb wearing the same name — it answers the **precondition**, which `getMany` does not carry at all, and since the only way to hold a stamp is to have read the row, it is what makes compare-and-set possible rather than a parameter callers invent.
+
+### What is not here
+
+**No `updateMany` or `deleteMany`.** react-admin has both and a grid's multi-select wants them, but a bulk delete over a filter is the single most dangerous call this surface could offer and the one where a mistaken predicate is indistinguishable from a correct one until the rows are gone. Fifty changes are fifty calls, each with its own precondition, each individually refusable and individually visible in an audit line.
+
+**No per-table effect.** The three verbs all declare `effect: 'operate'`, so an AI principal granted `ai.tool.write` may write any allow-listed table. The allow-list is the granularity, and a table whose writes should need a programming grant belongs on a node of its own with a credential of its own. `authorize()` still sees the table name in `params` and can rule per table. The one method that is *not* `operate` is `refresh`, which declares `program` — it decides what the node is able to write for every call after it, so its blast radius is not one row, and a principal permitted to edit rows all day is still not permitted to re-resolve the permission document.
+
+**Execution stays at least once without an idempotency store.** All three verbs declare `non-repeatable-command`, so a host with a store answers a redelivered frame from the record; a host without one has the same honest limit every command on this bus has. The precondition makes a repeated `update` or `delete` answer `conflict` rather than apply twice, which is safe but is not the same as correct — a repeated `create` is the one that inserts a second row.
 
 ## Counting, and when not to
 

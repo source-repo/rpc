@@ -6,7 +6,9 @@ The verb is `$data`, the same one a component's own record and [`@source-repo/re
 
 ## The one paragraph to read before trusting it
 
-**This node owns nothing** and serves **reads only** — `getList`, `getMany` and `getManyReference`. There is no `create`, `update` or `delete`, and that is a rule rather than an omission: a value is never written over this bus, a method is called. Delete the node and nothing is lost but the ability to ask.
+**This node owns nothing**, and `exposeDocument` serves **reads only** — `getList`, `getMany` and `getManyReference`. There is no `create`, `update` or `delete` on `$data`, and that is a rule rather than an omission: a value is never written over this bus, a method is called. Delete the node and nothing is lost but the ability to ask.
+
+**Writes are a second node, and importing one is a visible line in a diff.** `@source-repo/document/writes` publishes `create`, `update` and `delete` as ordinary `@rpc` methods in a namespace of their own, which is what keeps the rule intact rather than bending it: `authorize()`, the deadline, the execution queue, the owner fence, the AI grants ladder and the idempotency store rule on each of them exactly as they do on any other command. It writes nothing without a permission document, and every change carries the stamp the document was read under. See [the write half](#the-write-half).
 
 ## Serving a database
 
@@ -43,7 +45,7 @@ This is the whole of what differs from the SQL node, and every difference is dec
 
 ## What it agrees with, and what that cost
 
-The library's in-memory implementation is normative — its rules are written down and argued for in `DataProvider.ts` — and the same fifteen conformance questions are asked of this node and of SQLite, Postgres and MySQL. Two of the agreements are free here and two are not:
+The library's in-memory implementation is normative — its rules are written down and argued for in `DataProvider.ts` — and the same fifteen conformance questions are asked of this node and of SQLite, Postgres and MySQL, along with the nine that ask what a change does and one that asks what a stamp is a digest of. Two of the agreements are free here and two are not:
 
 - **Free: `ne` matches a document that lacks the field.** The in-memory rule's deliberate exception — "not bad" means to see the documents that never reported a quality — and `$ne` already does it, where SQL has to spend a clause.
 - **Free: ordered comparisons do not compare across kinds.** `{ age: { $gt: 20 } }` does not match `"abc"`, which is the same refusal to invent an order that the in-memory implementation makes and SQL would coerce its way through.
@@ -51,6 +53,47 @@ The library's in-memory implementation is normative — its rules are written do
 - **Paid: escaping.** `contains` and `startsWith` become `$regex`, and an unescaped operand is a user-supplied regular expression evaluated per document — exactly the stall `DataProvider.ts` warns about, where the provider this design came from compiled an operator's search box straight into `new RegExp`. Every metacharacter is disarmed, and matching stays case-sensitive under the `simple` collation, named explicitly so a collection created with a locale collation cannot quietly answer differently.
 
 **Ordering treats a missing field and a null one as the same**, because that is the only reading that agrees with SQL, where NULL is the only way to have no value. **Filtering keeps them apart**: `eq null` is about a value that is null, and a document that never had the field has no value to be equal to.
+
+## The write half
+
+Documents can be created, changed and removed — by a second node, from a second import, under a permission document, with a precondition on every change.
+
+```typescript
+import { exposeDocumentWrites } from '@source-repo/document/writes'
+
+await exposeDocumentWrites(server, 'docs.write', {
+    db,
+    // Absent means nothing is writable. Data rather than a callback, for the reason the AI grants
+    // document is data: a console can render it and a reviewer can diff it.
+    writes: {
+        workOrders: { verbs: ['create', 'update'], columns: ['status', 'note'] },
+        recipes: { verbs: ['update'], columns: ['setpoint', 'limits.high'] }
+    }
+})
+```
+
+**A separate class in a separate namespace, from a separate import** — the same three-way split `@source-repo/relational` and `@source-repo/docker` make, and for the same reasons: two namespaces are two `authorize()` surfaces, a subclass would have made the read-only class's promise a lie by inheritance, and a subpath export makes turning it on visible in a diff. Everything is an ordinary `@rpc` method with declared `semantics` and `effect`, so there is no `$write` verb and nothing is special-cased.
+
+### The precondition, and why it needs no transaction here
+
+`update` and `delete` take the stamp the document was read under, and the only way to hold one is to have read the document:
+
+```typescript
+const read = await writer.getOne('workOrders', '4711')
+await writer.update('workOrders', '4711', { status: 'done' }, read.stamp)
+```
+
+The values that stamp was taken over then travel **in the update's own filter**, so the compare and the set are one operation on the server and there is nothing to interleave between them. That is worth more here than the equivalent is over SQL, where the same guarantee costs a transaction and a `for update`: a multi-document transaction needs a replica set, and this node runs against a standalone `mongod` without one.
+
+A stale stamp answers `{ status: 'conflict' }` and writes nothing, and the conflict carries **no** stamp — handing back the current one would put a blind overwrite a single call away, which is a compare-and-set comparing against itself. What the stamp covers is the fields the rule permits, so a field nobody may write moving underneath a caller is not a conflict.
+
+### What is different from the SQL node
+
+**There is nothing to check a value's *type* against.** The asymmetry the read half already declares runs one level deeper on this side: a SQL column has a type the database will enforce on every row, so `'80'` into a numeric setpoint can be refused at the boundary; a collection has a sampled shape or a validator, and a sample is a guess while a validator is enforced by the server in its own words. So there is no type check here, and a `$jsonSchema` validator is what refuses a wrong value where one exists — which is a real capability difference rather than a weaker version of the same thing.
+
+**What *is* checked is representability**, and structurally rather than by lookup — the same defence the read half uses, applied one level down. A field path with a `$`-prefixed or empty segment, a NUL or more than eight segments is refused; every key of a patch must match an allow-listed field exactly, so a well-formed path nobody listed is refused rather than written; and inside a value, a key beginning with `$` or holding a dot is refused too, because MongoDB will happily store one and this node could then never filter on it or reach it by dot path — it would have written a field it cannot read back. A `bigint` is refused for the same reason it is coerced on the way out, and a value nested deeper than the walk that produces the wire shape is refused because what lies below it would be stamped as nothing, which would leave a precondition that does not describe what is stored.
+
+**A dot path is a field here**, so `limits.high` is a legitimate thing to allow-list and to write, which the SQL node refuses because it would mean something different there.
 
 ## Counting, and when not to
 

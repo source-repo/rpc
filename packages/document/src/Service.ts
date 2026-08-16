@@ -14,9 +14,9 @@ import {
     type RpcGetManyReferenceParams,
     type RpcGetManyResult
 } from '@source-repo/rpc'
-import { ObjectId, type CollationOptions, type Db, type Document, type Filter } from 'mongodb'
-import { readCatalogue, resourceOf, type CollectionInfo, type DocumentCatalogue, type DocumentCatalogueOptions } from './Catalogue.js'
-import { ABSENT_FIELD, DocumentRefusal, queryFor, sortFor } from './Filter.js'
+import type { Db, Document, Filter } from 'mongodb'
+import { idText, idValue, readCatalogue, resourceOf, wireDocument, type CollectionInfo, type DocumentCatalogue, type DocumentCatalogueOptions } from './Catalogue.js'
+import { ABSENT_FIELD, BINARY, DocumentRefusal, queryFor, sortFor } from './Filter.js'
 
 /**
  * Source Document: an existing MongoDB database, served to a Source RPC network as DataProvider
@@ -29,18 +29,6 @@ import { ABSENT_FIELD, DocumentRefusal, queryFor, sortFor } from './Filter.js'
  * schema to whitelist a field against, a row shape may be a sample rather than a statement, and
  * where an order puts a missing value has to be computed rather than asked for.
  */
-
-/**
- * Binary comparison, asked for rather than assumed.
- *
- * The in-memory comparator is `String(a) < String(b)`, so ordering and equality are by code unit -
- * case-sensitive, capitals first. MongoDB's default is exactly that, and a collection created with
- * a locale collation is not: its `$eq` on strings and its sort both change, silently, for every
- * query against it. Naming the simple collation on every call makes this node answer the same way
- * whatever the collection was created with, which is the same reason the SQL node names `C` on
- * Postgres.
- */
-const BINARY: CollationOptions = { locale: 'simple' }
 
 export interface DocumentOptions {
     readonly db: Db
@@ -207,7 +195,7 @@ export class DocumentService extends RpcComponent<DocumentProps, DocumentState> 
         const documents = hasMore ? fetched.slice(0, pageSize) : fetched
 
         return {
-            data: documents.map((document) => normalise(document) as Record<string, unknown>),
+            data: documents.map((document) => wireDocument(document) as Record<string, unknown>),
             ids: documents.map((document) => idText(document._id)),
             ...(total !== undefined ? { total } : {}),
             hasMore,
@@ -218,7 +206,7 @@ export class DocumentService extends RpcComponent<DocumentProps, DocumentState> 
     }
 
     private async getMany(collection: CollectionInfo, params: RpcGetManyParams): Promise<RpcGetManyResult> {
-        const wanted = params.ids.map((given) => this.idValue(collection, given))
+        const wanted = params.ids.map((given) => idValue(collection, given))
         const documents = await this.db
             .collection(collection.name)
             .find({ _id: { $in: wanted } } as Filter<Document>, { collation: BINARY })
@@ -228,71 +216,15 @@ export class DocumentService extends RpcComponent<DocumentProps, DocumentState> 
         const ids = params.ids.filter((given) => found.has(given))
         return {
             ids,
-            data: ids.map((given) => normalise(found.get(given)!) as Record<string, unknown>),
+            data: ids.map((given) => wireDocument(found.get(given)!) as Record<string, unknown>),
             ...this.stamp()
         }
-    }
-
-    /**
-     * An id from the wire, as `_id` will actually match it.
-     *
-     * An ObjectId is its twenty-four hex characters and has to be rebuilt, or `{ _id: { $in: ['65…'] } }`
-     * is a perfectly valid query that finds nothing - silently, which is the failure this exists to
-     * prevent. A collection whose ids are mixed is compared as text, which is honest about what it
-     * can do rather than guessing which kind was meant.
-     */
-    private idValue(collection: CollectionInfo, given: string): ObjectId | string | number {
-        if (collection.idKind === 'objectId') {
-            if (!ObjectId.isValid(given)) throw new DocumentRefusal(`${given} is not an ObjectId, which is what ${collection.name} keys on`)
-            return new ObjectId(given)
-        }
-        if (collection.idKind === 'number') {
-            const value = Number(given)
-            if (!Number.isFinite(value)) throw new DocumentRefusal(`${given} is not a number, which is what ${collection.name} keys on`)
-            return value
-        }
-        return given
     }
 
     private stamp(): { epoch: string; revision: number } {
         const snapshot = componentSnapshot(this)
         return { epoch: snapshot.epoch, revision: snapshot.revision }
     }
-}
-
-/** An id as text. An ObjectId is its hex string, which is its own canonical form. */
-const idText = (id: unknown): string => (id instanceof ObjectId ? id.toHexString() : String(id))
-
-/**
- * A document as it goes on the wire.
- *
- * BSON has types the codec does not: an ObjectId, a Long, a Decimal128. Left alone they would reach
- * MsgPack as objects with internal fields, which is neither what the row type says nor anything a
- * viewer can render - so each becomes the nearest thing that survives the trip, and an ObjectId
- * becomes the same hex string the `ids` beside it carry.
- *
- * Bounded, because a document is user data and this walks it: a cycle cannot occur in BSON but a
- * pathologically deep document can, and the recursion should stop before the stack does.
- */
-const MAX_DEPTH = 24
-
-const normalise = (value: unknown, depth = 0): unknown => {
-    if (depth > MAX_DEPTH) return null
-    if (value === null || value === undefined) return null
-    if (value instanceof ObjectId) return value.toHexString()
-    if (value instanceof Date || value instanceof Uint8Array) return value
-    if (typeof value === 'bigint') return Number.isSafeInteger(Number(value)) ? Number(value) : value.toString()
-    if (Array.isArray(value)) return value.map((item) => normalise(item, depth + 1))
-    if (typeof value === 'object') {
-        // Decimal128, Long, Binary and the rest all carry a toString that says what they are; a
-        // plain object has Object.prototype's, which says nothing and is the giveaway.
-        const held = value as { _bsontype?: string; toString(): string }
-        if (typeof held._bsontype === 'string') return held.toString()
-        const mapped: Record<string, unknown> = {}
-        for (const [name, held] of Object.entries(value)) mapped[name] = normalise(held, depth + 1)
-        return mapped
-    }
-    return value
 }
 
 /**

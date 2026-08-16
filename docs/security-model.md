@@ -60,6 +60,18 @@ A broker with no `--auth` **relays for anyone that can reach the port**, and say
 
 An upstream broker joined with `--upstream` is a *peer* of this one, not an operator of it. Frames relay across the join, but a call to this broker's own `bus` namespace from across it is refused, because a connection this broker dialled is not one it authenticated.
 
+## Changing somebody else's store
+
+`$data` is a read, is classified as one, and there is deliberately no `$write` beside it. A store-backed node that accepts changes publishes them as ordinary `@rpc` methods in a **namespace of its own** — `@source-repo/relational/writes` and `@source-repo/document/writes` are the two that ship — which is what puts every gate in front of them: the deadline, the execution queue, the owner fence, `authorize()` with the resource and the patch visible in `params`, the AI grants ladder, and the idempotency store where the host has one. A dispatch-level write verb would have sat outside all of those unless each were re-invoked by hand, and that is a list somebody has to keep complete.
+
+Two namespaces are also two authorization surfaces, so reading can be granted to everyone and writing to nobody — and code holding a read-only service can never turn out to have been holding a writable one. The write half is a separate import for the same reason `docker.create` is: it should be a visible line in a diff rather than an option somebody set.
+
+**Nothing is writable until a permission document says so**, per resource and per field, and a resource that is absent is closed. It is data rather than a predicate, so a console can render it and a reviewer can diff it — the argument the AI grants document already makes. A malformed document refuses the node rather than being read as granting nothing, and a rule naming a table or a column the store does not have is dropped *whole* and reported in `props.refused`, because a misspelled table otherwise produces a node that refuses every edit to it in a way that reads exactly like deliberate policy. Composing the node in with a usable document announces itself as an `elevation()`, so "what on this network can currently write" has an answer nobody has to call anything to get.
+
+**Every change carries a precondition.** `update` and `delete` take the stamp the row was read under and refuse when it no longer matches — the same mandatory compare-and-set `msgrpc.updateTopology` requires, and for the same reason: there is no blind write, and a retry after an uncertain outcome fails the check instead of applying twice. A conflict comes back carrying **no** stamp, because handing back the current one would put a blind overwrite a single call away.
+
+What none of this does is bound the *consequence*. A permitted write to a permitted column is still a write to somebody else's system of record, and the node has no opinion about whether it was wise. `authorize()` is where a deployment rules on which caller may change which table; the allow-list is where it rules on which tables exist to be changed at all.
+
 ## Running code you supplied
 
 Two features run code that did not come from your repository. They are separate flags because they are different sizes of grant.

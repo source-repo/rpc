@@ -17,6 +17,9 @@ export * from './RPC/ComponentClient.js'
 // typed leaves it subscribes to - and filters those itself while the collection beside them is
 // filtered on the peer, so it needs the same matcher rather than a second version of it.
 export * from './RPC/DataProvider.js'
+// Its write-side vocabulary, for the same reason: a page that offers an editor has to speak the
+// outcome and hold the stamp. WebCrypto rather than node:crypto is what keeps it here.
+export * from './RPC/DataWrites.js'
 export * from './RPC/Ticket.js'
 export * from './RPC/Elevation.js'
 // Topology, but not the file store: a page is a host too, volatile by nature - node:fs is not.
