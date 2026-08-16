@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+### The Windows job runs the interop tests too, which is where the hub will live
+
+The C# hub's reason for existing is a .NET process driving Visual Studio, which is a Windows process — so testing it only on Linux was exercising it everywhere except where it is going to run.
+
+On Windows the hub and `npm test` share **one step**, which is the one place the two jobs differ in shape. A step's shell exiting is not documented to leave a child running, and measured on a real Windows machine a process started with `Start-Process` dies when the session that launched it ends — with and without `-NoNewWindow`, so it is the session teardown rather than the switch. That teardown belongs to OpenSSH rather than to a runner, so it does not prove Actions would do the same; what it proves is that "the hub survives the step" was an assumption nothing available could check. Keeping the hub inside the step that uses it removes the assumption rather than betting on it.
+
+The wait is now `tools/wait-for-port.mjs`, shared by three places that were about to hold three copies of it — and node rather than a shell loop because it is the one interpreter both runners have and it behaves the same on each.
+
+Worth recording, because it is expensive to rediscover: **`Microsoft.NETCore.App` 8 and `Microsoft.AspNetCore.App` 8 install separately.** A machine can run a `net8.0` console application and still fail a hub at launch with `Framework: 'Microsoft.AspNetCore.App', version '8.0.0' not found`, which is exactly what a real Windows box in this project does. A hosted runner's SDK brings both; anything hand-provisioned may not.
+
 ### CI runs the SignalR interop tests, and its broker accepts connections again
 
 The interop suite has been skipping on every run since it was written, because a GitHub runner has no .NET SDK and therefore no hub to talk to. `actions/setup-dotnet` and a step that builds the hub, backgrounds it and waits for its port fix that, with `SOURCE_RPC_REQUIRE_SIGNALR=1` so the skip is a failure rather than a quiet ✔ — the same bargain `SOURCE_RPC_REQUIRE_BROKER` already makes.

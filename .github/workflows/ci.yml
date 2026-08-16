@@ -117,22 +117,12 @@ jobs:
             # takes a few seconds to open 1883. Waiting here rather than lengthening every test's
             # connect timeout keeps the wait in one place, and fails with a clear message if the
             # broker never arrives - rather than as a dozen puzzling test failures.
+            # A service container is started before the job, not necessarily *ready* before it: EMQX
+            # takes a few seconds to open 1883. Waiting here rather than lengthening every test's
+            # connect timeout keeps the wait in one place, and fails with a clear message if the
+            # broker never arrives - rather than as a dozen puzzling test failures.
             - name: Wait for the broker
-              run: |
-                  node -e '
-                    const net = require("net")
-                    const deadline = Date.now() + 60000
-                    const attempt = () => {
-                      const socket = net.connect(1883, "127.0.0.1")
-                      socket.once("connect", () => { socket.end(); console.log("broker is up"); process.exit(0) })
-                      socket.once("error", () => {
-                        socket.destroy()
-                        if (Date.now() > deadline) { console.error("no MQTT broker on 1883 after 60s"); process.exit(1) }
-                        setTimeout(attempt, 500)
-                      })
-                    }
-                    attempt()
-                  '
+              run: node tools/wait-for-port.mjs 1883 "MQTT broker"
 
             # Before lint and typecheck: the CLI reads the library's types from its build output, so
             # neither can say anything useful until the library has been built once.
@@ -156,6 +146,13 @@ jobs:
             # inotify instance, and a runner that has spent its allowance throws at startup with an
             # IOException naming inotify and nothing about this repository - which is a long way to
             # travel from the symptom. A test host reads no configuration it could usefully reload.
+            # Started here rather than as a service container: it is built from this repository, so
+            # it cannot exist until the checkout has happened.
+            #
+            # The polling watcher is not about speed. The default configuration watcher takes an
+            # inotify instance, and a runner that has spent its allowance throws at startup with an
+            # IOException naming inotify and nothing about this repository - which is a long way to
+            # travel from the symptom. A test host reads no configuration it could usefully reload.
             - name: Start the SignalR hub
               env:
                   DOTNET_USE_POLLING_FILE_WATCHER: '1'
@@ -163,20 +160,7 @@ jobs:
                   dotnet build packages/signalr/csharp/testhost/TestHost.csproj -c Release
                   nohup dotnet run --project packages/signalr/csharp/testhost/TestHost.csproj \
                       -c Release --no-build -- --urls http://127.0.0.1:5217 > /tmp/signalr-hub.log 2>&1 &
-                  node -e '
-                    const net = require("net")
-                    const deadline = Date.now() + 60000
-                    const attempt = () => {
-                      const socket = net.connect(5217, "127.0.0.1")
-                      socket.once("connect", () => { socket.end(); console.log("hub is up"); process.exit(0) })
-                      socket.once("error", () => {
-                        socket.destroy()
-                        if (Date.now() > deadline) { console.error("no SignalR hub on 5217 after 60s"); process.exit(1) }
-                        setTimeout(attempt, 500)
-                      })
-                    }
-                    attempt()
-                  '
+                  node tools/wait-for-port.mjs 5217 "SignalR hub"
 
             - run: npm test
 
@@ -212,6 +196,15 @@ jobs:
     # any broker will do - it is the installing that is awkward, not the compatibility.
     windows:
         runs-on: windows-latest
+
+        env:
+            # The SignalR interop tests do run here, and this is the job where they matter most: the
+            # hub's reason for existing is a .NET process driving Visual Studio, which is a Windows
+            # process. Testing the C# half only on Linux would be exercising it everywhere except
+            # where it is going to live.
+            SOURCE_RPC_TEST_SIGNALR_HUB: http://127.0.0.1:5217/rpc
+            SOURCE_RPC_REQUIRE_SIGNALR: '1'
+
         steps:
             - uses: actions/checkout@v7
 
@@ -219,6 +212,16 @@ jobs:
               with:
                   node-version: 22
                   cache: npm
+
+            # 8.0 because the hub targets net8.0 - and specifically because a runner needs the
+            # ASP.NET Core 8 *shared framework*, not merely the .NET 8 runtime. They install
+            # separately: a machine can run a net8.0 console application and still fail a hub at
+            # launch with "Framework: 'Microsoft.AspNetCore.App', version '8.0.0' not found", which
+            # is what a real Windows box in this project does. A hosted runner's SDK brings both;
+            # anything hand-provisioned may not.
+            - uses: actions/setup-dotnet@v6
+              with:
+                  dotnet-version: '8.0.x'
 
             # The npm that wrote the lock file, not the one Node 22 bundles - see the test job above.
             - run: npm i -g npm@12
@@ -229,4 +232,29 @@ jobs:
 
             - run: npm run typecheck
 
-            - run: npm test
+            # The hub and the tests share one step, deliberately, and it is the one place this job
+            # differs in shape from the Linux one.
+            #
+            # A step's shell exiting is not documented to leave a child running, and the question is
+            # not answerable from a workstation: measured over SSH on a real Windows machine, a
+            # process started with Start-Process dies when the session that launched it ends -
+            # with and without -NoNewWindow, so it is the session teardown rather than the switch.
+            # That teardown is OpenSSH's rather than a runner's, so it does not prove the runner
+            # would do the same; what it proves is that "it survives the shell" is an assumption
+            # nothing available here can check. Keeping the hub inside the step that uses it removes
+            # the assumption instead of betting on it - the child is alive for the whole step by
+            # construction, which is all these tests need.
+            - name: Run the suite against a SignalR hub
+              run: |
+                  dotnet build packages/signalr/csharp/testhost/TestHost.csproj -c Release
+                  Start-Process -FilePath dotnet `
+                      -ArgumentList 'run','--project','packages/signalr/csharp/testhost/TestHost.csproj','-c','Release','--no-build','--','--urls','http://127.0.0.1:5217' `
+                      -RedirectStandardOutput signalr-hub.log -RedirectStandardError signalr-hub.err -NoNewWindow
+                  node tools/wait-for-port.mjs 5217 "SignalR hub"
+                  npm test
+
+            - name: The hub's log, if anything failed
+              if: failure()
+              run: |
+                  Get-Content signalr-hub.log -ErrorAction SilentlyContinue
+                  Get-Content signalr-hub.err -ErrorAction SilentlyContinue
