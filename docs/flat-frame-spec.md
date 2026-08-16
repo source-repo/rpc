@@ -134,7 +134,9 @@ Three things differ from the socket.io binding, and all three follow from Signal
 
 **The frame goes as an object, not as bytes.** socket.io carries whatever it is handed, so the transport encodes with its own codec. SignalR's hub methods are typed, and handing it a pre-encoded blob would mean the hub receives `byte[]` and decodes it by hand — throwing away the one thing SignalR does for a C# author. So the frame is passed as a frame and SignalR serialises it, with `codec` selecting **which hub protocol** rather than doing the encoding: MsgPack, or SignalR's JSON.
 
-**Binary inside `body` depends on that choice.** The MessagePack hub protocol carries a byte array as one; the JSON hub protocol base64s it. Nothing else in the frame is affected, since every other field is a string, a number or a boolean.
+**Binary inside `body` depends on that choice.** The MessagePack hub protocol carries a byte array as one; the JSON hub protocol base64s it into a string. Nothing else in the frame is affected, since every other field is a string, a number or a boolean — and `packages/signalr` asserts that by running its whole interop suite over both protocols.
+
+**A C# frame type has to be annotated for both serializers.** `[JsonPropertyName]` and MessagePack's `[Key]` do not see each other, so a type annotated for one sends PascalCase under the other; and MessagePack additionally refuses to build a formatter at all unless every remaining public member carries `[IgnoreMember]`. Both failures arrive at the first frame rather than at build time. See `packages/signalr/csharp/RpcFrame.cs`, which carries both.
 
 **There is no version negotiation, because there is nothing to negotiate.** No SignalR peer ever spoke the `$`-delimited layout, so the hub method name is simply the name, and a `v` other than 2 is refused rather than interpreted.
 

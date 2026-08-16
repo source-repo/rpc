@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+### The SignalR binding speaks MessagePack as well as JSON
+
+Both protocols are registered on the reference hub and the client picks at negotiation, so one process serves either kind of peer and `useMsgPack` is the only thing that differs. The interop suite runs **every test twice, once per protocol**, because the serializer is the half of this binding most likely to be subtly wrong and a JSON-only pass would leave the MessagePack path unexercised until somebody's first day using it.
+
+Two things had to change in `RpcFrame`, and both fail at the first frame rather than at build:
+
+- **Every property needs `[Key("…")]` beside its `[JsonPropertyName("…")]`.** The two attribute families do not see each other, so annotating for one leaves the other sending PascalCase at a client that will refuse it.
+- **Every other public member needs `[IgnoreMember]`.** MessagePack refuses to build a formatter at all when one lacks it — `all public members must mark KeyAttribute or IgnoreMemberAttribute` — and it throws from a type initializer on the first frame, so the hub simply answers nothing. `ArgCount` was that member. It also wanted `[JsonIgnore]`: as a public getter, System.Text.Json had been serializing it into every JSON frame as a field the specification does not have, which the TypeScript side ignored and nobody noticed.
+
+`Body` is now `object` rather than `JsonElement`, since `JsonElement` is a System.Text.Json type and means nothing to MessagePack — a frame declaring one can be carried by exactly one of the two protocols. `frame.Arg<T>(index)` reads an argument under either, including MessagePack's habit of choosing the narrowest integer that fits, so a JavaScript `7` arriving as a `byte` and `70000` as an `int` is invisible to the method.
+
+**What MessagePack buys is bytes.** A `byte[]` returned from C# reaches a TypeScript caller as a `Uint8Array`; over JSON the same method answers with base64 text. Nothing is lost either way, and the tax MessagePack removes is the caller having to know which. That is now asserted rather than claimed.
+
 ### `@source-repo/signalr` — a .NET process as an ordinary peer
 
 The .NET world does not run socket.io servers; it runs SignalR. So a C# process wanting to join a Source RPC network — a Visual Studio automation host, say — could not be reached directly, and the way round it was to put a broker between the two and give it a topic of its own. That works, and it is a great deal of machinery for two programs on one machine: it makes a local integration depend on infrastructure being up, and it puts a network hop between a caller and a process it could have spoken to directly.

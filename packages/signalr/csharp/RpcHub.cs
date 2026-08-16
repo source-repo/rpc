@@ -1,5 +1,4 @@
 using System.Collections.Concurrent;
-using System.Text.Json;
 using Microsoft.AspNetCore.SignalR;
 
 namespace SourceRpc.SignalR;
@@ -28,8 +27,13 @@ public interface IRpcResponder
     /// <summary>
     /// Run a method. Throw to have the caller receive an error frame; the exception message
     /// travels, so make it one an operator can read.
+    ///
+    /// Arguments come off the frame with <c>frame.Arg&lt;T&gt;(0)</c>, which reads the same under
+    /// either hub protocol. The raw <c>frame.Body</c> is deliberately not passed separately: its
+    /// CLR type depends on which serializer is configured, and a method written against one of them
+    /// stops working the day somebody switches.
     /// </summary>
-    Task<object?> Invoke(string path, string method, JsonElement? args, RpcFrame frame);
+    Task<object?> Invoke(string path, string method, RpcFrame frame);
 }
 
 /// <summary>
@@ -149,7 +153,7 @@ public class RpcHub : Hub
 
         try
         {
-            var result = await _responder.Invoke(frame.Path ?? "", frame.Method ?? "", frame.Body, frame);
+            var result = await _responder.Invoke(frame.Path ?? "", frame.Method ?? "", frame);
             await Answer(frame.Reply("result", result));
         }
         catch (Exception e)
@@ -168,7 +172,7 @@ public class RpcHub : Hub
     /// </summary>
     private async Task Watch(RpcFrame frame)
     {
-        var ev = EventNameIn(frame.Body);
+        var ev = frame.Arg<string>(0);
         if (string.IsNullOrEmpty(ev))
         {
             await Answer(frame.Reply("error", new { name = "RpcError", message = "a subscribe names its event in the argument array" }, "InvalidParams"));
@@ -195,15 +199,6 @@ public class RpcHub : Hub
         // "already exists" rather than an error, because a client replaying its subscriptions after
         // a reconnect is doing the right thing and must not end up receiving everything twice.
         await Answer(frame.Reply("result", added ? "ok" : "ok - already exists"));
-    }
-
-    /// <summary>The event name a subscribe carried, or null if it carried nothing usable.</summary>
-    private static string? EventNameIn(JsonElement? body)
-    {
-        if (body is not { ValueKind: JsonValueKind.Array } array || array.GetArrayLength() == 0)
-            return null;
-        var first = array[0];
-        return first.ValueKind == JsonValueKind.String ? first.GetString() : null;
     }
 
     private Task Answer(RpcFrame reply) => Clients.Caller.SendAsync("frame", reply);

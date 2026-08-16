@@ -76,7 +76,24 @@ new RpcClient(undefined, {
 })
 ```
 
-MessagePack works too and is smaller, and it is the only one that carries binary inside `body` as binary rather than base64 — but it needs `AddMessagePackProtocol()` on the hub and a resolver that keys by property name, so it is the second thing to get working rather than the first.
+## MessagePack
+
+Both protocols are registered on one hub and the client picks at negotiation, so the same process serves a JSON peer and a MessagePack one without knowing which is which:
+
+```csharp
+builder.Services.AddSignalR().AddMessagePackProtocol();
+```
+
+On the client that is `useMsgPack: true`, and nothing else changes.
+
+Two things had to be true in `RpcFrame.cs` for it to work, and both are the kind that fail at the first frame rather than at build:
+
+- **Every property carries `[Key("…")]` as well as `[JsonPropertyName("…")]`.** The two attribute families do not see each other, so annotating for one leaves the other sending PascalCase at a client that will refuse it.
+- **Every *other* public member carries `[IgnoreMember]`.** MessagePack refuses to build a formatter at all when a public member of a `[MessagePackObject]` has neither — the type initializer throws on the first frame, the hub answers nothing, and with the log silenced it looks exactly like a hub that is ignoring you. `ArgCount` is the one here, and it wants `[JsonIgnore]` too, or it rides along in every JSON frame as a field the specification does not have.
+
+`Body` is `object` for the same reason: `JsonElement` is a System.Text.Json type and means nothing to MessagePack, so a frame declaring one can be carried by exactly one of the two. Read arguments with `frame.Arg<T>(0)`, which handles both — under JSON the body arrives as a `JsonElement`, under MessagePack as boxed primitives in an `object[]`, and MessagePack picks the narrowest integer that fits, so a JavaScript `7` arrives as a `byte` and `70000` as an `int`.
+
+**What it buys is bytes.** A `byte[]` returned from a method arrives at a TypeScript caller as a `Uint8Array` over MessagePack, and as a base64 string over JSON. Nothing is lost either way; the difference is whether the caller has to know to decode it. Everything else is identical, which the interop suite asserts by running every test twice, once per protocol.
 
 ## Events
 

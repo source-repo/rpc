@@ -1,4 +1,3 @@
-using System.Text.Json;
 using SourceRpc.SignalR;
 
 /*
@@ -15,9 +14,21 @@ using SourceRpc.SignalR;
  * that throws so a failure has a path to travel.
  */
 
-var builder = WebApplication.CreateBuilder(args);
-builder.Logging.ClearProviders();
-builder.Services.AddSignalR();
+// Slim rather than the full builder, and not for weight: the default one watches appsettings for
+// changes, and on a machine that has spent its inotify instances - a workstation running a k8s
+// cluster and a handful of containers will - that throws at startup before a single line of this
+// hub runs. A test host has no configuration to reload.
+var builder = WebApplication.CreateSlimBuilder(args);
+// Warnings and above, on the console. Deliberately not ClearProviders(): with the log silenced, a
+// hub that fails to deserialize a frame answers nothing and looks exactly like a hub that is
+// ignoring you, which is how an afternoon goes. SignalR reports a binding failure at Debug and the
+// exception behind it at Warning, so this is the level at which a broken frame says so.
+builder.Logging.AddSimpleConsole();
+builder.Logging.SetMinimumLevel(LogLevel.Warning);
+// Both protocols on one hub, which is how SignalR is meant to be used: the client picks at
+// negotiation with withHubProtocol, so the same process serves a JSON peer and a MessagePack one
+// without knowing which is which. It is also what lets the interop suite exercise both.
+builder.Services.AddSignalR().AddMessagePackProtocol();
 builder.Services.AddSingleton(new RpcPeer(Environment.GetEnvironmentVariable("RPC_PEER_NAME") ?? "vs-automation"));
 builder.Services.AddSingleton<PeerTable>();
 builder.Services.AddSingleton<SubscriptionTable>();
@@ -37,7 +48,7 @@ internal sealed class Meter : IRpcResponder
 
     public Meter(RpcEvents events) => _events = events;
 
-    public async Task<object?> Invoke(string path, string method, JsonElement? args, RpcFrame frame)
+    public async Task<object?> Invoke(string path, string method, RpcFrame frame)
     {
         if (path != "meter")
             throw new InvalidOperationException($"no instance named '{path}' here");
@@ -45,21 +56,27 @@ internal sealed class Meter : IRpcResponder
         switch (method)
         {
             case "read":
-            {
-                var tag = args is { ValueKind: JsonValueKind.Array } list && list.GetArrayLength() > 0 ? list[0].GetString() : null;
-                return $"{tag}=42";
-            }
+                return $"{frame.Arg<string>(0)}=42";
             case "pulse":
             {
                 // Emitted from a method only because a test needs something to trigger it. In a real
                 // host this is a build finishing or a file changing - something that happens on its
                 // own, which is the case that made events worth carrying at all.
-                var reading = args is { ValueKind: JsonValueKind.Array } list && list.GetArrayLength() > 0 ? list[0].GetInt32() : 0;
+                var reading = frame.Arg<int>(0);
                 await _events.Emit("meter", "tick", reading, "bar");
                 return _events.SequenceOf("meter", "tick");
             }
             case "blow":
                 throw new InvalidOperationException("the sensor is on fire");
+            case "trace":
+                // The one thing MessagePack carries that JSON cannot: bytes as bytes. Over the JSON
+                // hub protocol this same array comes back base64-encoded in a string, which is the
+                // difference the two protocols actually make to a caller.
+                return new byte[] { 0xDE, 0xAD, 0xBE, 0xEF, 0x00, 0x7F };
+            case "echo":
+                // Round-trips whatever it was given, so a test can assert that an argument survived
+                // the journey out as well as the answer coming back.
+                return frame.Arg<string>(0);
             default:
                 throw new MissingMethodException($"meter has no method '{method}'");
         }

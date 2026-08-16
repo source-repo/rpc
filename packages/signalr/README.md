@@ -44,7 +44,9 @@ The transport speaks exactly what `SocketIoClientTransport` speaks, so the hub i
 
 Every other transport in this library encodes the frame itself, because MQTT carries a byte payload and socket.io carries whatever you hand it. SignalR is different: it *has* a serialization layer, and hub methods are typed. Encoding to bytes and passing the blob would mean the hub receives `byte[]` and decodes it by hand — throwing away the one thing SignalR does for a C# author.
 
-So the frame goes as a frame, and `codec` picks the **hub protocol** rather than doing the encoding: MsgPack for `msgPackCodec`, SignalR's JSON otherwise. The difference that matters is binary inside `body` — MsgPack carries a byte array as one, JSON base64s it.
+So the frame goes as a frame, and `codec` picks the **hub protocol** rather than doing the encoding: MsgPack for `msgPackCodec`, SignalR's JSON otherwise. Both are registered on the reference hub and the client chooses at negotiation, so one process serves either kind of peer.
+
+The difference that matters is binary inside `body`: MsgPack carries a byte array as a `Uint8Array`, JSON base64s it into a string. Everything else is identical — which the interop suite asserts rather than assumes, by running every test twice, once per protocol.
 
 ## Reconnection
 
@@ -54,7 +56,7 @@ SignalR does not reconnect unless asked, and its own default gives up after four
 
 `SignalRClientTransport.test.ts` runs anywhere: it drives the transport against a stubbed connection and asserts the frames it produces and accepts.
 
-`Interop.test.ts` drives a real `RpcClient` against the real C# hub — a call, a thrown exception, a subscription, an unsubscribe, and the event cursor. It needs a .NET SDK, and skips without one:
+`Interop.test.ts` drives a real `RpcClient` against the real C# hub — a call, a thrown exception, a subscription, an unsubscribe, the event cursor and a UTF-8 round trip, **each of them over both hub protocols** — plus one test for the single thing the protocols do differently. It needs a .NET SDK, and skips without one:
 
 ```
 npm run hub --workspace=@source-repo/signalr          # in one terminal

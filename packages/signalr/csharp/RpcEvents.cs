@@ -1,5 +1,4 @@
 using System.Collections.Concurrent;
-using System.Text.Json;
 using Microsoft.AspNetCore.SignalR;
 
 namespace SourceRpc.SignalR;
@@ -116,7 +115,6 @@ public sealed class RpcEvents
         // sniffs content, and the first thing that costs is grep, which then matches and silently
         // prints nothing. See the top of CLAUDE.md - it has happened twice in this repository.
         var seq = _sequences.AddOrUpdate(path + "\0" + ev, 1, (_, previous) => previous + 1);
-        var body = JsonSerializer.SerializeToElement(args);
 
         foreach (var peer in _subscriptions.SubscribersOf(path, ev))
         {
@@ -140,8 +138,9 @@ public sealed class RpcEvents
                     Seq = seq,
                     Epoch = Epoch,
                     // The emit arguments, and nothing else - an event has no correlation because
-                    // nobody asked for this one in particular.
-                    Body = body
+                    // nobody asked for this one in particular. Handed over unserialized, so
+                    // whichever hub protocol is configured encodes it.
+                    Body = args
                 }
             );
         }

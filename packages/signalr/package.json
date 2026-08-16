@@ -42,7 +42,7 @@
         "typecheck": "tsc --noEmit -p tsconfig.json",
         "test": "npm run clean && npm run build && ava",
         "prepack": "npm run clean && npm run build",
-        "hub": "dotnet run --project csharp/testhost/TestHost.csproj -- --urls http://127.0.0.1:5217",
+        "hub": "DOTNET_USE_POLLING_FILE_WATCHER=1 dotnet run --project csharp/testhost/TestHost.csproj -- --urls http://127.0.0.1:5217",
         "build:csharp": "dotnet build csharp/testhost/TestHost.csproj"
     },
     "dependencies": {
