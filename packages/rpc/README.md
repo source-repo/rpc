@@ -70,14 +70,38 @@ console.log(await calculator.add(5))         // 15 - one instance, holding its o
 - **[Observable components.](https://source-repo.github.io/rpc/guide/components)** Cached `props` and `state` snapshots with epoch/revision ordering, a per-channel status of `initializing | live | stale | closed` that keeps last-known data readable, and a store that plugs straight into `useSyncExternalStore`.
 - **[Command authority.](https://source-repo.github.io/rpc/guide/authority)** `$acquire`/`$release` — the plant's arbitration concept: granted, visible in every snapshot, always expiring, with only declared methods ever gated, so an E-stop is never behind a held lease.
 - **[Topology and context.](https://source-repo.github.io/rpc/guide/topology)** Every host answers for where its components sit — physically and logically — with durable epochs, an owner fence on calls, and [inherited context](https://source-repo.github.io/rpc/guide/context) resolved across hosts with atomic remounts.
-- **[Two transports, one model.](https://source-repo.github.io/rpc/guide/connecting)** socket.io for browsers and anything that dials out; MQTT 5 for the plant, with a [documented wire format](https://source-repo.github.io/rpc/mqtt5-frame-spec) a plain MQTT.js peer can speak. Any peer can be a bus, and a browser tab can host a server.
+- **[Three transports, one model.](https://source-repo.github.io/rpc/guide/connecting)** socket.io for browsers and anything that dials out; MQTT 5 for the plant, with a [documented wire format](https://source-repo.github.io/rpc/mqtt5-frame-spec) a plain MQTT.js peer can speak; SignalR for reaching a .NET host. Two wire formats carry one [neutral frame](https://source-repo.github.io/rpc/flat-frame-spec), so a call means the same thing on all three and only the spelling differs. Any peer can be a bus, and a browser tab can host a server.
 - **[Contracts checked at runtime](https://source-repo.github.io/rpc/guide/contracts)**, compared between versions so a change that would break a deployed caller fails a build rather than a plant — and `describe()`, so a server reports what it exposes.
 - **[Authentication both ways.](https://source-repo.github.io/rpc/guide/security)** Per-connection tokens where there is a connection, per-frame signing (HMAC or Ed25519) where there is not, `authorize()` on every call and subscription, TLS with a plant's own CA.
 
 ## Related packages
 
-- [`@source-repo/rpc-cli`](https://www.npmjs.com/package/@source-repo/rpc-cli) is the tooling: contract extraction, the browser console, taps, record/replay, fakes, an MCP server and find-by-capability.
-- [`@source-repo/queue`](https://www.npmjs.com/package/@source-repo/queue) is a lease-based work queue for Source RPC networks: every-value work with leases, retries, dead letters and capacity that refuses rather than drops.
-- `@source-repo/sparkplug` is planned as the Sparkplug B integration package: selected Source RPC components projected as Sparkplug Edge Nodes, Devices and metrics, with ingestion and commands added in later milestones.
+Everything here speaks the same protocol as this package, so a peer written against any of them is an ordinary peer to all the others.
+
+**Tooling**
+
+- [`@source-repo/rpc-cli`](https://www.npmjs.com/package/@source-repo/rpc-cli) — contract extraction, the browser console, taps, record/replay, fakes, an MCP server and find-by-capability.
+
+**Serving something that already exists**
+
+Each of these puts an existing system on the network as `DataProvider` resources, so a console or another peer browses it without knowing what is behind it.
+
+- [`@source-repo/document`](https://www.npmjs.com/package/@source-repo/document) — an existing MongoDB database.
+- [`@source-repo/relational`](https://www.npmjs.com/package/@source-repo/relational) — an existing SQL database, over Kysely.
+- [`@source-repo/docker`](https://www.npmjs.com/package/@source-repo/docker) — containers, read-only, over the Engine API and nothing else.
+
+**Beyond request and reply**
+
+- [`@source-repo/queue`](https://www.npmjs.com/package/@source-repo/queue) — a lease-based work queue: every-value work with leases, retries, dead letters, and capacity that refuses rather than drops.
+- [`@source-repo/sparkplug`](https://www.npmjs.com/package/@source-repo/sparkplug) — Sparkplug B. The session substrate is here: the vendored protobuf definition, topic helpers, birth/death payloads and the Edge Node sequence discipline. Projecting components as Edge Nodes, ingestion and controlled commands come after it.
+
+**Reaching .NET**
+
+A .NET process is a peer rather than a special case. Which package depends only on which way the connection is opened.
+
+- [`@source-repo/signalr`](https://www.npmjs.com/package/@source-repo/signalr) — the TypeScript side: a client transport that dials into a C# hub.
+- `SourceRpc` on NuGet is the .NET side — the frame, dispatcher, client, error model and telemetry, depending on nothing but the BCL — with `SourceRpc.SignalR` (a hub for a process others dial into, and a client for one that dials out), `SourceRpc.Mqtt` (a peer on a broker, speaking the `mr-` property layout so a plain MQTT client can take part) and `SourceRpc.SocketIo` (a client for a .NET process joining a TypeScript socket.io server). See [the .NET README](https://github.com/source-repo/rpc/blob/main/packages/csharp/README.md).
+
+`@source-repo/conformance` is in the repository but deliberately unpublished: it is the normative `DataProvider` fixture and question set that the store-backed packages above test themselves against, and it is a development dependency rather than something to install.
 
 Upgrading? [`CHANGELOG.md`](https://github.com/source-repo/rpc/blob/main/CHANGELOG.md) lists what changed, release by release, with the reasoning.
