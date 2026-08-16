@@ -210,18 +210,37 @@ public sealed class ReplayGuard(TimeSpan? maxClockSkew = null, int maxTrackedNon
 
     private readonly long _skewMs = (long)(maxClockSkew ?? TimeSpan.FromMinutes(1)).TotalMilliseconds;
 
-    /// <summary>True when the frame is fresh and previously unseen. Records the nonce as a side effect.</summary>
-    public bool Accept(string nonce, long timestamp, long? now = null)
+    /// <summary>
+    /// Whether the frame's clock is close enough to this one's to be worth checking further.
+    ///
+    /// Separate from remembering the nonce, and the split is the point: this is cheap and can run
+    /// before the signature, while <see cref="Remember"/> mutates state and must not.
+    /// </summary>
+    public bool IsFresh(long timestamp, long? now = null)
     {
-        if (string.IsNullOrEmpty(nonce))
-            return false;
         var at = now ?? DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-
         // Bounded by comparison rather than by subtracting, and that is not fussiness: `mr-ts` is
         // written by whoever sent the frame, arithmetic here is unchecked, and `Math.Abs` throws
         // outright on long.MinValue - so one crafted timestamp put an OverflowException in the
         // receive path, before any signature had been checked.
-        if (timestamp < at - _skewMs || timestamp > at + _skewMs)
+        return timestamp >= at - _skewMs && timestamp <= at + _skewMs;
+    }
+
+    /// <summary>
+    /// Record a nonce, and say whether it had already been seen.
+    ///
+    /// Called **after** the signature has been checked, which matters more than it looks. A nonce
+    /// committed before verification can be burned by anyone who can observe one: send a frame
+    /// carrying somebody else's nonce and a wrong signature, and the genuine frame that follows is
+    /// refused as a replay. The guard would then be a way to suppress traffic rather than a way to
+    /// protect it.
+    /// </summary>
+    public bool Remember(string nonce, long timestamp, long? now = null)
+    {
+        if (string.IsNullOrEmpty(nonce))
+            return false;
+        var at = now ?? DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        if (!IsFresh(timestamp, at))
             return false;
 
         lock (_gate)
@@ -234,8 +253,6 @@ public sealed class ReplayGuard(TimeSpan? maxClockSkew = null, int maxTrackedNon
             // Everything inside the freshness window is by definition too young to expire, so an
             // age-only rule bounds nothing at all: under load the table grows to arrival-rate times
             // the window, and every message walks the whole of it looking for something to drop.
-            // Unsigned garbage with a random nonce is enough to drive that, because this runs
-            // before the signature is checked.
             while (_order.Count > 0)
             {
                 var oldest = _order.Peek();

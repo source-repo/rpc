@@ -174,7 +174,26 @@ public enum RpcErrorCode
     /// The call carried an owner fence and this process's record of the owner is a different
     /// generation. It certainly did not run, and it must not be blindly retried.
     /// </summary>
-    OwnershipChanged
+    OwnershipChanged,
+
+    /// <summary>
+    /// The command may have run, and nothing here can tell whether it did.
+    ///
+    /// Deliberately not <see cref="TransportError"/>, which is the honest answer when a request
+    /// never left. The difference is the whole point: "it failed" invites a retry, "I do not know"
+    /// says go and look - and for a non-repeatable command that is the difference between one pump
+    /// start and two. Answered when the idempotency store cannot be reached, and when a command ran
+    /// but its outcome could not be written down.
+    /// </summary>
+    UnknownOutcome,
+
+    /// <summary>
+    /// The call carried an idempotency key and this process has no store to enforce it with.
+    ///
+    /// Refused rather than run: accepting the key would tell the caller a guard was applied when
+    /// none was, and the caller chose to send a key precisely because running twice matters.
+    /// </summary>
+    IdempotencyUnavailable
 }
 
 /// <summary>

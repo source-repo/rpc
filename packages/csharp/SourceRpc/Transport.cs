@@ -38,6 +38,17 @@ public interface ISourceRpcTransport : IAsyncDisposable
 
     /// <summary>Who else is on the network, as the far end reports it. Absent on carriers with no presence.</summary>
     event Action<IReadOnlyCollection<string>>? PeersChanged;
+
+    /// <summary>
+    /// The link came up - the first time, and after every drop.
+    ///
+    /// A binding cannot keep this to itself, because what is lost when a link drops is not only the
+    /// link: a peer's subscriptions live on its connection at the far end, and a reconnect is a
+    /// peer that end has never met. Without this signal a reconnected client looks healthy and
+    /// silently never receives another event, which is the hardest failure to notice in a running
+    /// plant. <see cref="SourceRpcClient"/> uses it to take its subscriptions out again.
+    /// </summary>
+    event Func<Task>? LinkEstablished;
 }
 
 /// <summary>

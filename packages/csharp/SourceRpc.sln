@@ -13,6 +13,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SourceRpc.Mqtt", "SourceRpc
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SourceRpc.SocketIo", "SourceRpc.SocketIo\SourceRpc.SocketIo.csproj", "{70595350-4F4D-4A99-B96F-1813B92C5479}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SourceRpc.Tests", "SourceRpc.Tests\SourceRpc.Tests.csproj", "{F8A954F2-FE61-4255-BCBB-BFA7F9B78EEE}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -42,5 +44,9 @@ Global
 		{70595350-4F4D-4A99-B96F-1813B92C5479}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{70595350-4F4D-4A99-B96F-1813B92C5479}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{70595350-4F4D-4A99-B96F-1813B92C5479}.Release|Any CPU.Build.0 = Release|Any CPU
+		{F8A954F2-FE61-4255-BCBB-BFA7F9B78EEE}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{F8A954F2-FE61-4255-BCBB-BFA7F9B78EEE}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{F8A954F2-FE61-4255-BCBB-BFA7F9B78EEE}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{F8A954F2-FE61-4255-BCBB-BFA7F9B78EEE}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 EndGlobal

@@ -57,4 +57,13 @@ public sealed class SourceRpcOptions
 
     /// <summary>Delays before each attempt to (re)connect, in milliseconds. The last is repeated for ever.</summary>
     public int[] ReconnectDelaysMs { get; set; } = [0, 2000, 5000, 10000, 30000];
+
+    /// <summary>
+    /// Carry an idempotency key without a store to enforce it, instead of refusing the call.
+    ///
+    /// Off, because a caller sends a key precisely when running twice matters: accepting one and
+    /// enforcing nothing tells that caller a guard was applied when none was. On for a network in
+    /// the middle of being migrated, where refusing every keyed call at once is worse.
+    /// </summary>
+    public bool AllowUnenforcedIdempotencyKeys { get; set; }
 }

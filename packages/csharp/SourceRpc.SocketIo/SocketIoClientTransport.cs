@@ -118,6 +118,9 @@ public sealed class SocketIoClientTransport : ISourceRpcTransport
     /// <inheritdoc/>
     public event Action<IReadOnlyCollection<string>>? PeersChanged;
 
+    /// <inheritdoc/>
+    public event Func<Task>? LinkEstablished;
+
     /// <summary>
     /// A frame arrived that this peer would not act on, and why.
     ///
@@ -178,7 +181,7 @@ public sealed class SocketIoClientTransport : ISourceRpcTransport
         // EventHandler, so the announcement cannot be awaited here and is fired instead. Failing to
         // announce is logged rather than thrown: the link is up either way, and a peer that cannot
         // be found is a better state to be in than one that took the process down.
-        socket.OnConnected += (_, _) => _ = AnnounceAsync();
+        socket.OnConnected += (_, _) => _ = OnConnectedAsync();
         socket.OnDisconnected += (_, reason) =>
         {
             // Nothing is reachable through a link that is down, and the server sends a fresh
@@ -319,6 +322,22 @@ public sealed class SocketIoClientTransport : ISourceRpcTransport
     /// reconnected peer that stayed silent is one nobody can address - and the failure looks like a
     /// working link, because frames still leave.
     /// </summary>
+    /// <summary>Announce this peer, then let whoever is above restore what the server forgot.</summary>
+    private async Task OnConnectedAsync()
+    {
+        await AnnounceAsync();
+        if (LinkEstablished is not { } handler)
+            return;
+        try
+        {
+            await handler();
+        }
+        catch (Exception e)
+        {
+            _log.LogError(e, "SourceRpc failed to restore state after the link came up");
+        }
+    }
+
     private async Task AnnounceAsync()
     {
         if (!_socketIo.AnnouncePresence)

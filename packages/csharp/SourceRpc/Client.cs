@@ -29,8 +29,8 @@ public sealed class SourceRpcClient : IAsyncDisposable
     private readonly SourceRpcTelemetry _telemetry;
     private readonly ILogger _log;
 
-    private readonly ConcurrentDictionary<string, TaskCompletionSource<RpcFrame>> _pending = new();
-    private readonly ConcurrentDictionary<string, List<Action<object?[]>>> _handlers = new();
+    private readonly ConcurrentDictionary<string, PendingExchange> _pending = new();
+    private readonly ConcurrentDictionary<string, SubscriptionEntry> _subscriptions = new();
     private readonly ConcurrentDictionary<string, IRpcTicketSink> _tickets = new();
 
     /// <summary>Creates a client over a transport. The transport is started by <see cref="StartAsync"/>.</summary>
@@ -47,6 +47,7 @@ public sealed class SourceRpcClient : IAsyncDisposable
         _dispatcher = dispatcher;
         _log = log ?? NullLogger.Instance;
         _transport.FrameReceived += OnFrameAsync;
+        _transport.LinkEstablished += ReplaySubscriptionsAsync;
     }
 
     /// <summary>Bring the link up. The transport keeps it up from there.</summary>
@@ -119,7 +120,7 @@ public sealed class SourceRpcClient : IAsyncDisposable
 
         // Registered before the exchange, because the far end may send its first ticket frame the
         // instant it has answered the call - and on a fast link that can beat this code to it.
-        var sink = new TicketSink<T>(correlation);
+        var sink = new TicketSink<T>(correlation, target);
         _tickets[correlation] = sink;
         try
         {
@@ -161,23 +162,88 @@ public sealed class SourceRpcClient : IAsyncDisposable
         Action<object?[]> handler,
         CancellationToken cancellationToken = default)
     {
-        var correlation = Guid.NewGuid().ToString("N");
-        var frame = new RpcFrame
-        {
-            Src = _options.Name,
-            Tgt = target,
-            Kind = "subscribe",
-            Corr = correlation,
-            Path = path,
-            Method = "on",
-            Ttl = (long)_options.CallTimeout.TotalMilliseconds,
-            Body = new object?[] { eventName }
-        };
-        await ExchangeAsync(frame, correlation, cancellationToken);
-
         var key = Key(target, path, eventName);
-        _handlers.AddOrUpdate(key, _ => [handler], (_, existing) => { lock (existing) { existing.Add(handler); } return existing; });
+        var entry = _subscriptions.GetOrAdd(key, _ => new SubscriptionEntry(target, path, eventName));
+
+        // The handler goes on *before* the request goes out, and that ordering is the fix for a
+        // real loss: the far end is entitled to emit the moment it has acknowledged, and an event
+        // that arrives while this code is still awaiting the acknowledgement would find no handler
+        // and be dropped. It is registered first and rolled back if the subscribe fails.
+        bool first;
+        lock (entry)
+        {
+            first = entry.Handlers.Count == 0;
+            entry.Handlers.Add(handler);
+        }
+
+        if (first)
+        {
+            try
+            {
+                await SendSubscribeAsync(target, path, eventName, cancellationToken);
+                lock (entry)
+                    entry.RemoteActive = true;
+            }
+            catch
+            {
+                // Rolled back, so a failed subscribe does not leave a handler that will never be
+                // fed and a key that later sends an unsubscribe for something never subscribed.
+                Drop(target, path, eventName, handler);
+                throw;
+            }
+        }
+
         return new Subscription(this, target, path, eventName, handler);
+    }
+
+    private Task SendSubscribeAsync(string target, string path, string eventName, CancellationToken cancellationToken)
+    {
+        var correlation = Guid.NewGuid().ToString("N");
+        return ExchangeAsync(
+            new RpcFrame
+            {
+                Src = _options.Name,
+                Tgt = target,
+                Kind = "subscribe",
+                Corr = correlation,
+                Path = path,
+                Method = "on",
+                Ttl = (long)_options.CallTimeout.TotalMilliseconds,
+                Body = new object?[] { eventName }
+            },
+            correlation,
+            cancellationToken);
+    }
+
+    /// <summary>
+    /// Take every active subscription out again, because the far end has forgotten them.
+    ///
+    /// A peer's subscriptions live on its connection at the other end: when the link drops they are
+    /// dropped with it, and a reconnect is - as far as the far end is concerned - a peer it has
+    /// never met. Without this a reconnected client looks perfectly healthy and silently never
+    /// receives another event, which is the failure mode hardest to notice in a running plant.
+    /// </summary>
+    private async Task ReplaySubscriptionsAsync()
+    {
+        foreach (var entry in _subscriptions.Values)
+        {
+            bool wanted;
+            lock (entry)
+                wanted = entry.Handlers.Count > 0;
+            if (!wanted)
+                continue;
+            try
+            {
+                await SendSubscribeAsync(entry.Target, entry.Path, entry.Event, CancellationToken.None);
+                lock (entry)
+                    entry.RemoteActive = true;
+            }
+            catch (Exception e)
+            {
+                // One subscription that cannot be retaken must not stop the others being retaken.
+                _log.LogError(e, "SourceRpc could not restore its subscription to {Path}.{Event} on {Target}", entry.Path, entry.Event, entry.Target);
+            }
+        }
     }
 
     private async Task<RpcFrame> ExchangeAsync(RpcFrame frame, string correlation, CancellationToken cancellationToken)
@@ -188,8 +254,9 @@ public sealed class SourceRpcClient : IAsyncDisposable
             throw new SourceRpcException(RpcErrorCode.TransportError, $"not connected to send {frame.Kind} for '{frame.Tgt}'");
 
         var waiting = new TaskCompletionSource<RpcFrame>(TaskCreationOptions.RunContinuationsAsynchronously);
-        // Registered before sending: an answer can arrive before SendAsync's task completes.
-        _pending[correlation] = waiting;
+        // Registered before sending: an answer can arrive before SendAsync's task completes. Kept
+        // with the peer it was sent to, so an answer has to come back from there - see Accepts.
+        _pending[correlation] = new PendingExchange(frame.Tgt, _options.Name, waiting);
         try
         {
             await _transport.SendAsync(frame, cancellationToken);
@@ -212,6 +279,32 @@ public sealed class SourceRpcClient : IAsyncDisposable
         }
     }
 
+    private void Refuse(RpcFrame frame, PendingExchange pending)
+    {
+        // Reported rather than ignored: a reply arriving from the wrong peer is either an attack or
+        // a routing bug, and both are things somebody needs to see. The exchange is left waiting,
+        // so the real answer can still settle it.
+        _log.LogWarning(
+            "SourceRpc refused a {Kind} for {Correlation} from {Source} addressed to {Target}: that exchange is with {Expected}",
+            frame.Kind, frame.Corr, frame.Src, frame.Tgt, pending.ExpectedSource);
+        _telemetry.FrameRejected("reply from the wrong peer");
+    }
+
+    /// <summary>
+    /// One call waiting for its answer, and who is entitled to give it.
+    ///
+    /// The pair matters as much as the correlation: <see cref="ExpectedSource"/> is the peer this
+    /// call went to, and <see cref="ExpectedTarget"/> is this peer, so a frame has to be addressed
+    /// back to us by the peer we asked.
+    /// </summary>
+    private sealed record PendingExchange(string ExpectedSource, string ExpectedTarget, TaskCompletionSource<RpcFrame> Completion)
+    {
+        public bool Accepts(RpcFrame frame) =>
+            // A broadcast target ('*') is a call that may be answered by whoever holds the path, so
+            // the source cannot be pinned - the correlation and the addressee are what is left.
+            (ExpectedSource == "*" || frame.Src == ExpectedSource) && frame.Tgt == ExpectedTarget;
+    }
+
     private async Task OnFrameAsync(RpcFrame frame)
     {
         if (frame.V != TransportContract.FrameVersion)
@@ -221,17 +314,34 @@ public sealed class SourceRpcClient : IAsyncDisposable
         switch (frame.Kind)
         {
             case "result" or "error" when frame.Corr is { Length: > 0 } corr:
-                // Only for a call this peer actually made. A reply with no pending request has
-                // nothing to attach itself to, which is what makes a forged answer harmless.
-                if (_pending.TryGetValue(corr, out var waiting))
-                    waiting.TrySetResult(frame);
+                // Only for a call this peer actually made, *and* only from the peer it made it to.
+                // A correlation is hard to guess and that is not the same as being permission to
+                // answer: on a broker it travels in correlationData, where the broker and anyone
+                // subscribed to the topic can read it. Without the source check, whoever sees one
+                // can answer somebody else's exchange - a relay, a tap, a compromised bridge.
+                if (_pending.TryGetValue(corr, out var pending))
+                {
+                    if (pending.Accepts(frame))
+                        pending.Completion.TrySetResult(frame);
+                    else
+                        Refuse(frame, pending);
+                }
                 return;
 
             case "ticket" when frame.Corr is { Length: > 0 } ticketCorr:
                 // A later answer for a call already answered once. Accepted only for a ticket this
-                // peer is holding, which is a fact it has rather than one the frame asserts.
+                // peer is holding, which is a fact it has rather than one the frame asserts - and
+                // only from the peer that issued the receipt.
                 if (_tickets.TryGetValue(ticketCorr, out var sink))
                 {
+                    if (sink.Source != frame.Src || frame.Tgt != _options.Name)
+                    {
+                        _log.LogWarning(
+                            "SourceRpc refused a ticket for {Correlation} from {Source}: that exchange is with {Expected}",
+                            ticketCorr, frame.Src, sink.Source);
+                        _telemetry.FrameRejected("ticket from the wrong peer");
+                        return;
+                    }
                     if (sink.Settle(frame.Outcome, frame.Body))
                         _tickets.TryRemove(ticketCorr, out _);
                 }
@@ -268,12 +378,12 @@ public sealed class SourceRpcClient : IAsyncDisposable
     private void Deliver(RpcFrame frame)
     {
         var key = Key(frame.Src, frame.Path ?? "", frame.Event ?? "");
-        if (!_handlers.TryGetValue(key, out var handlers))
+        if (!_subscriptions.TryGetValue(key, out var entry))
             return;
         var args = frame.Body is null ? [] : Args(frame);
         Action<object?[]>[] snapshot;
-        lock (handlers)
-            snapshot = handlers.ToArray();
+        lock (entry)
+            snapshot = [.. entry.Handlers];
         foreach (var handler in snapshot)
             try
             {
@@ -328,12 +438,38 @@ public sealed class SourceRpcClient : IAsyncDisposable
         }
     }
 
-    private void Drop(string target, string path, string eventName, Action<object?[]> handler)
+    /// <summary>
+    /// Forget one handler, and say whether the far end should now be told to stop sending.
+    ///
+    /// Only the last handler for a key ends the remote subscription. Telling the far end on *every*
+    /// dispose is what made two subscriptions to one event destroy each other: dropping either one
+    /// stopped the event arriving, and the surviving handler went quiet with nothing to show for it.
+    /// </summary>
+    private bool Drop(string target, string path, string eventName, Action<object?[]> handler)
     {
-        if (!_handlers.TryGetValue(Key(target, path, eventName), out var handlers))
-            return;
-        lock (handlers)
-            handlers.Remove(handler);
+        if (!_subscriptions.TryGetValue(Key(target, path, eventName), out var entry))
+            return false;
+        lock (entry)
+        {
+            if (!entry.Handlers.Remove(handler) || entry.Handlers.Count > 0)
+                return false;
+            if (!entry.RemoteActive)
+                return false;
+            entry.RemoteActive = false;
+            return true;
+        }
+    }
+
+    /// <summary>One event this peer is watching, and everything listening to it here.</summary>
+    private sealed class SubscriptionEntry(string target, string path, string eventName)
+    {
+        public string Target { get; } = target;
+        public string Path { get; } = path;
+        public string Event { get; } = eventName;
+        public List<Action<object?[]>> Handlers { get; } = [];
+
+        /// <summary>Whether the far end has been asked to send, so it is told to stop exactly once.</summary>
+        public bool RemoteActive { get; set; }
     }
 
     /// <inheritdoc/>
@@ -346,6 +482,9 @@ public sealed class SourceRpcClient : IAsyncDisposable
     /// <summary>What a ticket frame is delivered to, without the client knowing the ticket's type.</summary>
     private interface IRpcTicketSink
     {
+        /// <summary>The peer this ticket's answer must come from, for the same reason a reply's must.</summary>
+        string Source { get; }
+
         /// <summary>Returns true when this settles the ticket, so it can be forgotten.</summary>
         bool Settle(string? outcome, object? body);
     }
@@ -361,8 +500,11 @@ public sealed class SourceRpcClient : IAsyncDisposable
     /// rather than running it. Dropping those frames lost the progress, and lost `resolved` too -
     /// which is not a missing notification but a caller that waits for ever.
     /// </summary>
-    private sealed class TicketSink<T>(string correlation) : IRpcTicketSink
+    private sealed class TicketSink<T>(string correlation, string source) : IRpcTicketSink
     {
+        /// <inheritdoc/>
+        public string Source { get; } = source;
+
         private readonly List<(string? Outcome, object? Body)> _early = [];
         private RpcTicket<T>? _ticket;
         private bool _settled;
@@ -428,7 +570,10 @@ public sealed class SourceRpcClient : IAsyncDisposable
     {
         public async ValueTask DisposeAsync()
         {
-            client.Drop(target, path, eventName, handler);
+            // Only the last handler for this event ends the remote subscription; the others are
+            // still listening, and telling the far end to stop would silence them too.
+            if (!client.Drop(target, path, eventName, handler))
+                return;
             // Told rather than merely forgotten: leaving the far end sending is a cost somebody else
             // pays. Failures are swallowed - a link already gone cannot be told anything, and a
             // dispose that throws is worse than a subscription that outlives its handler.

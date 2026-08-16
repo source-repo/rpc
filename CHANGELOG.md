@@ -2,6 +2,32 @@
 
 ## Unreleased
 
+### The C# packages: six correctness defects, found by review and each pinned by a test
+
+An external review of the framework at 5.0.1 marked the .NET packages **preview** for industrial command use, on three grounds. All three were real, and reproducing them turned up three more. None of these could be seen from the far end of a wire, which is why a cross-language suite that exercises every one of these semantics had them all passing.
+
+**Idempotency did not prevent a concurrent duplicate, which is the promise the whole mechanism exists for.** The store held a null outcome to mean "claimed but still running", and a second attempt could not tell that apart from "no record at all" - so it was told it owned the key and ran the command alongside the first. For a non-repeatable command that is two pump starts. The contract now answers `Acquired`, `InProgress` or `Completed`, matching the TypeScript store's `'acquired' | 'in-progress' | outcome` rather than inventing a second rule; a duplicate that finds a key in progress is dropped rather than answered, because its caller is already waiting on the attempt that holds it. With 64 attempts released together, exactly one now acquires.
+
+Three failures around it gained answers too. A store that cannot be reached, and a command that ran but whose outcome could not be written, both answer **`UnknownOutcome`** rather than success or `TransportError` - "it failed" invites a retry, "I do not know" says go and look, and for a non-repeatable command that is the whole difference. A key arriving where no store is registered is refused with **`IdempotencyUnavailable`**: carrying it and enforcing nothing told the caller a guard was applied when none was.
+
+**Replies were correlated by id but not by peer.** Any frame with a matching correlation completed the call, whoever sent it. A correlation is hard to guess and that is not permission to answer - on a broker it travels in `correlationData`, where the broker and anything subscribed to the topic can read it, so a relay, a tap or a compromised bridge could answer somebody else's exchange. Pending calls and tickets are now held with the peer they were sent to, and a reply from anywhere else is refused and counted.
+
+**Subscriptions were wrong in three ways at once.** Disposing any one handler told the far end to stop sending, so two subscribers to one event destroyed each other and the survivor went silent with nothing reported anywhere. The handler was registered only *after* the far end acknowledged, so an event emitted on acknowledgement was dropped. And nothing restored subscriptions after a reconnect, though the README promised a reconnecting peer keeps receiving - a peer's subscriptions live on its connection at the other end, so a reconnected client looked perfectly healthy and never received another event. Handlers are counted now, registered before the request goes out and rolled back if it fails, and taken out again on `ISourceRpcTransport.LinkEstablished` - a new signal every binding raises on every connection.
+
+**On MQTT, a reply address only had to be somewhere on the network.** The check was "starts with the prefix, no wildcard" - which admits another peer's request, event and presence topics, the last of which was the attack the code's own comment claimed it prevented. A request may now name only its own `rsp` topic, with `AllowResponseTopic` for deployments that genuinely need another arrangement.
+
+**The reply map was keyed by correlation alone**, and MQTT callers choose their own: two peers picking the same string meant the second silently overwrote the first one's return address, and the first caller's answer went to the second caller's topic. Keyed by peer and correlation now.
+
+**The replay nonce was committed before the signature was checked**, so anyone who could observe a nonce could burn it - send it first with a wrong signature and the genuine frame that follows is refused as a replay, turning the guard into a way to suppress traffic. The freshness window is still checked first, because it is cheap and refuses a wildly wrong clock without computing an HMAC; the nonce is now recorded only after the frame is known to be genuine.
+
+**The router removed routes by name without checking they were still that connection's.** A reconnecting peer takes its own name back, and the old connection's teardown is usually still running when it does - so the teardown deleted the route the new connection had just installed, announcing a connected peer offline and dropping its subscriptions. Removal is conditional on the exact route now. The race test fails on its second attempt against the old code.
+
+**There is now a C# test project.** Fifteen tests, and they exist because none of these are reachable from the TypeScript suite: a duplicate claim is a race inside one process, a lost handler is invisible from the far end, and the router race needs two threads interleaved at one line. Each fix was checked by reverting it and confirming the right test - and only the right test - fails.
+
+Still open from the same review, and named rather than absorbed: a deferred command holds its idempotency claim after the ticket settles; outbound calls cannot yet carry per-call deadlines, fences or keys; argument conversion still turns bad wire data into defaults instead of failing; dispatch is unbounded; and presence is unsigned on MQTT. Those are the next tranche, not this one.
+
+## Unreleased
+
 ### A store-backed node can accept writes, and the rule about writes is intact
 
 `@source-repo/relational/writes` and `@source-repo/document/writes` create, change and remove rows. The design question was never whether that was useful — a database you can only read is half a tool, and prototyping against one over MCP is exactly where the other half is missed — it was how to add it without contradicting the sentence this repository states in four places: **a value is never written over this bus, a method is called.**
