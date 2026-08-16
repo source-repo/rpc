@@ -1,8 +1,8 @@
 # Source RPC for .NET
 
-A .NET process as a peer on a Source RPC network — serving methods, publishing events, and calling out to other peers. It speaks the flat frame described in [`docs/flat-frame-spec.md`](../../docs/flat-frame-spec.md), which is the same protocol the TypeScript library speaks.
+A .NET process as a peer on a Source RPC network — serving methods, publishing events, and calling out to other peers. It speaks the same protocol the TypeScript library speaks, in whichever of its two spellings the carrier calls for: the flat frame of [`docs/flat-frame-spec.md`](../../docs/flat-frame-spec.md) on a connection, and the `mr-` property layout of [`docs/mqtt5-frame-spec.md`](../../docs/mqtt5-frame-spec.md) on a broker.
 
-## Two packages, and why
+## Four packages, and why
 
 | package | what is in it | depends on |
 | --- | --- | --- |
@@ -33,6 +33,8 @@ SourceRpc.SocketIo                   client only
 **MQTT does not use the flat frame, and that is the point of it.** It speaks the `mr-` property layout of [`docs/mqtt5-frame-spec.md`](../../docs/mqtt5-frame-spec.md): the topic carries the addressee, `responseTopic` says where a reply goes, `correlationData` pairs it, and `messageExpiryInterval` lets the broker drop a request whose caller has stopped waiting. A flat frame in the payload would throw all of that away — along with the property the layout exists for, that a plain MQTT client with no msgrpc code can take part and an operator can see why a call failed in MQTT Explorer without decoding anything. What the two share is the *model*: both map to `RpcFrame`, so a call means the same thing on either and only the spelling differs. That claim is what `packages/rpc/src/MqttInterop.test.ts` tests, by putting a TypeScript peer and a C# peer on one broker.
 
 Adding one is a class implementing [`ISourceRpcTransport`](SourceRpc/Transport.cs): start a link, send a frame, raise an event when one arrives. Correlation, deadlines, subscriptions, error mapping and dispatch are already written, once, in the core — which is what stops three transports quietly disagreeing about what a timeout means. `TransportContract` in the same file records what a binding must get right.
+
+That is not a claim about tidiness. Every binding written since has arrived carrying the same three mistakes, and each was found by a test rather than by review: a receive loop that waits for the responder (so a responder that calls out mid-invocation deadlocks, and reports as a slow method); a peer list built from the first presence message only (so it freezes at whatever was online when the process started); and a payload handed to a deserializer before anything has authenticated it. Read `TransportContract` before writing a fourth.
 
 ## Serving
 
@@ -106,6 +108,10 @@ await using var transport = new MqttTransport(new MqttTransportOptions { BrokerU
 
 Everything above the transport — correlation, deadlines, tickets, fences, idempotency, error mapping — is the same code in all three cases, which is what stops three bindings quietly disagreeing about what a timeout means.
 
+**A socket.io namespace goes in the URL**, as `http://plant:3000/cell-3`. `EnginePath` is engine.io's endpoint path (default `/socket.io`) and is only for a server mounted somewhere unusual — putting a namespace there produces a peer that never connects while the server logs nothing at all, which is a long way to travel from the symptom.
+
+**A refused frame is announced, not dropped.** The MQTT and socket.io transports raise `Rejected` with a reason — an unreadable frame, a bad signature, a reply address outside the network — because silence reaches a caller as a timeout, which is indistinguishable from a slow method and sends the search to the wrong place. Subscribe to it, or pass an `ILogger`; the default logger discards everything.
+
 ## Identity
 
 **A frame's `src` is a claim until something checks it.** The hub records which peers a connection holds a route for — the name it announced, plus whatever it advertised as `carrying` — and refuses a frame naming anything else. Without that, any connected client could send `src: "plc-production-1"` and be treated as that peer; and since subscriptions are keyed by the same field, it could cancel that peer's subscriptions too.
@@ -142,13 +148,13 @@ dotnet nuget push packages/csharp/nupkg/*.nupkg -s source-local
 
 A consumer anywhere on the machine then does `dotnet add package SourceRpc.SignalR`, and `SourceRpc` comes with it as a transitive dependency. That is worth doing before a real registry exists, because it removes the failure a cross-repository `ProjectReference` invites: a relative path out of one working tree and into another, which resolves on the machine that wrote it and ships broken from anywhere else.
 
-**Bump the version before re-pushing.** A folder feed will not replace an existing `<id>.<version>.nupkg`, and a consumer that has already restored `4.6.0` has it cached in `~/.nuget/packages` regardless — so republishing the same number is the one way to be sure everybody is looking at something different from what you built.
+**Bump the version before re-pushing.** A folder feed will not replace an existing `<id>.<version>.nupkg`, and a consumer that has already restored `4.8.0` has it cached in `~/.nuget/packages` regardless — so republishing the same number is the one way to be sure everybody is looking at something different from what you built.
 
 ## Building and testing
 
 ```
 npm run build:csharp     # the solution
-npm run pack:csharp      # both NuGet packages, into packages/csharp/nupkg
+npm run pack:csharp      # all four NuGet packages, into packages/csharp/nupkg
 npm run hub              # the test host, for the interop suite to point at
 ```
 
@@ -182,6 +188,8 @@ RPC_PEER_NAME=csharp-socketio \
 
 SOURCE_RPC_TEST_CSHARP_SOCKETIO=csharp-socketio npm test --workspace=@source-repo/rpc
 ```
+
+`MqttHostileFrames.test.ts` is the one to run after touching a receive path. It sends what an attacker sends — a nesting bomb, a crafted timestamp, thousands of unsigned nonces — and asserts from *outside* the peer that it still answers, because a process killed by a stack overflow returns no error to assert on. The socket.io suite carries one case of the same shape.
 
 **Turn on container validation in your host.** A dependency cycle among these registrations produced a hub whose methods were silently never invoked — SignalR accepted the connection, the caller's `invoke` never returned, and nothing was logged. With validation on, the same mistake is a startup exception naming the cycle:
 
@@ -242,14 +250,39 @@ var mqtt = new MqttTransportOptions
 };
 ```
 
-With `Verify` set, an unsigned frame is refused, so signing cannot be bypassed by omitting the signature. What the signature covers is everything a receiver *acts on*: the content type that decides how the payload is read, the error code, the ttl, the owner fence, the idempotency key, the deferred marker and the ticket outcome. `messageExpiryInterval` is deliberately excluded — the broker rewrites it in flight, and it may only narrow the signed ttl.
+`Verify` returns the peer it has *proven* the frame is from, and the transport re-checks that name against the frame's own `mr-src`. It is deliberately not a bool: a verifier that resolves keys loosely — `(canonical, sig, _) => AnyKnownKeyVerifies(...)` is an easy thing to write — would otherwise remove the binding between a signature and a name, which is the entire property signing provides here, with nothing in the library noticing.
 
-A signature says who wrote a frame, never how many times they meant to send it, so `ReplayGuard` refuses a frame whose nonce has been seen or whose timestamp is outside `MaxClockSkew` (one minute by default). Without it, a captured command can simply be sent again.
+With `Verify` set, an unsigned frame is refused, so signing cannot be bypassed by omitting the signature. What the signature covers is everything a receiver *acts on*: the topic and the source, the reply address, the path and method, the content type that decides how the payload is read, the error code, the contract version, the ttl, the owner fence, the idempotency key, the deferred marker, the ticket outcome and the event cursor — and the payload itself. `messageExpiryInterval` is deliberately excluded: the broker rewrites it in flight, so a signature over it would break on the first queued message, and it may only narrow the signed ttl.
+
+Verification runs over the properties **as they arrived**, not over a parsed copy of them. That distinction has teeth: rebuilding the canonical bytes from `frame.Ttl?.ToString()` re-spells what somebody else wrote, so a plain MQTT peer sending `mr-ttl: "05000"` — a perfectly valid frame — had its perfectly valid signature refused as "bad signature". Being reachable by a peer with no msgrpc code in it is the whole reason this layout exists.
+
+**The payload is not read until the frame is verified.** A broker gives anyone who can publish to a peer's request topic a direct line to a deserializer, and MessagePack's standard options are documented as omitting all protections, including any bound on nesting depth — so a few kilobytes of nested one-element arrays was a `StackOverflowException`, which .NET cannot catch and no `try` can contain. It is read after verification now, and read as untrusted data.
+
+A signature says who wrote a frame, never how many times they meant to send it, so `ReplayGuard` refuses a frame whose nonce has been seen or whose timestamp is outside `MaxClockSkew` (one minute by default). It runs *before* the signature check, which is the right order — the reverse lets anyone force an HMAC per packet — and the cost of that ordering is that anyone can put entries in it. So it is bounded by count (`MaxTrackedNonces`, 5000) as well as by age: everything inside the freshness window is by definition too young to expire, so an age-only rule bounds nothing at all and makes every later message walk the whole table.
+
+**Only a request may name a reply address, and it must be inside this network's own prefix.** Neither guard is about forgery — `responseTopic` is inside the signature and a signed frame attests it faithfully — they are about authorisation. Without the first, any peer holding a key for its own name can publish a signed `event` carrying another exchange's correlation and a reply address of its choosing, and this peer will send that exchange's answer there. Without the second, the named address can be another peer's presence topic, where an answer body reads as a presence update and evicts them.
 
 The canonical bytes are byte-identical with the TypeScript library's, and `packages/rpc/src/MqttSigningInterop.test.ts` compares them directly for the cases where JavaScript and System.Text.Json disagree — non-ASCII, `<`, `&`, `+`, control characters, surrogate pairs and lone surrogates. That test is not ceremony: it caught a matched surrogate pair being signed with its low half escaped, which would have produced frames that verify nowhere while looking like a key or clock problem.
+
+## Upgrading to 4.8.0
+
+Two breaking changes, both in transport options rather than in anything an application calls:
+
+- **`MqttTransportOptions.Verify`** returns `string?` — the peer it proved the frame is from — where it returned `bool`. `MqttSigning.HmacVerifier` already does this; a hand-written verifier returns the source on success and `null` to refuse.
+- **`SocketIoTransportOptions.Path`** is now **`EnginePath`**, because it is engine.io's endpoint and never was the namespace.
+
+Anything still on a `ProjectReference` into `packages/signalr/csharp/` is pointing at a directory that no longer exists — take the packages from the feed instead, as *Publishing to a local feed* above describes. `IRpcResponder.Invoke(path, method, frame)` became `ISourceRpcResponder.InvokeAsync(RpcInvocation, CancellationToken)` in the same move.
 
 ## What is not here yet
 
 **Shared subscriptions** (`$share/<group>/…`), which is how MQTT replicas load-balance requests.
+
+**A C# peer cannot be a bridge.** There is no `carrying`/`shape` advertisement here, so a .NET process joins a network as a leaf. Nothing depends on it today; it is the reason a C# node cannot sit between two segments.
+
+**socket.io reads only the current frame layout.** The TypeScript client also listens for the older `$`-delimited `message` event, so a server that has not yet learned a peer's dialect can still reach it. A C# peer with `AnnouncePresence = false` that is pushed a frame before it has sent one gets nothing.
+
+**`messageExpiryInterval` is not read on receive.** The TypeScript transport uses it to narrow a signed ttl, which is what makes "the broker may shorten a deadline, never extend it" true in both directions. Here a request that sat twenty-five seconds in the broker still runs with its full signed budget.
+
+**`mr-method` and `mr-event` share one slot in the signed canonical form.** Both implementations collapse them, so relabelling a signed event as a method keeps the signature valid and the frame is then dropped for want of a handler. The effect is suppression, which a hostile broker can achieve by discarding the frame anyway — but it is a genuine slot collision, and fixing it is a change to both languages rather than to this package.
 
 Method semantics are not declared, so the idempotency store is consulted whenever a call carries a key rather than only for methods marked non-repeatable — the caller sending a key is taken as the request. Introspection (`describe()`) is not implemented either.
