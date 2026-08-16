@@ -19,6 +19,18 @@ import { pageEntries, rpc, rpcNamespace, rpcComponent, RpcClient, RpcComponent, 
 const run = randomUUID().slice(0, 8)
 const peer = (name: string) => `${name}-${run}`
 
+/**
+ * How far under its nominal delay a `setTimeout` may be *measured* as having slept.
+ *
+ * Node schedules timers against the event loop's cached clock, and `Date.now()` can read a moment
+ * before the nominal deadline - so a `setTimeout(400)` is routinely measured as 399 ms. Asserting
+ * `>= 400` against one therefore fails a few runs in a hundred, and it did: three separate
+ * assertions in this file failed that way, each off by a single millisecond, each on a different
+ * run. A test that fails for a reason no reader can act on is worse than a weaker one, because
+ * the response to it is to re-run the suite rather than to read it.
+ */
+const TIMER_SLACK_MS = 20
+
 type FieldProps = { label: string; tags: number }
 type Reading = { value: number; unit: string; quality: string }
 type FieldState = { fast: number; zones: { top: { setpoint: number } }; tags: { [tag: string]: Reading } }
@@ -513,12 +525,12 @@ test('an answer says how long the peer spent, and a peer that stalled itself say
     // The number that tells a slow answer from a dead link. Without it, a browser cannot tell which
     // of the two it is looking at, and that is most of the time somebody spends wondering.
     const answer = await proxy.$data('getList', ['sludge'])
-    t.true((answer.ms ?? 0) >= 400, `the peer reported ${answer.ms} ms`)
+    t.true((answer.ms ?? 0) >= 400 - TIMER_SLACK_MS, `the peer reported ${answer.ms} ms`)
 
     // And the half a console cannot see: the peer saying it held itself up. Emitted where the time
     // went, because from outside a stalled peer and an absent one look identical.
     t.is(stalls.length, 1)
-    t.true(stalls[0].ms >= 400)
+    t.true(stalls[0].ms >= 400 - TIMER_SLACK_MS, `the peer reported ${stalls[0].ms} ms`)
     t.is(stalls[0].served, 'component')
     t.deepEqual([...stalls[0].resource], ['sludge'])
 
@@ -566,17 +578,28 @@ test('a fast page behind a slow count says so, which is the whole point of split
     const answer = await proxy.$data('getList', ['rows'])
     t.is(answer.total, 100000)
 
-    // The two numbers, and the ratio between them is the finding: the rows were nothing and the
+    // The two numbers, and the distance between them is the finding: the rows were nothing and the
     // count was everything. A single figure would have said "slow" and left the reason to guessing.
-    t.true((answer.queryMs ?? 0) < 100, `rows took ${answer.queryMs} ms`)
-    t.true((answer.countMs ?? 0) >= 300, `the count took ${answer.countMs} ms`)
+    //
+    // The slow half is asserted against its own sleep, which only timer precision can disturb. The
+    // fast half is asserted only to be the *faster* of the two, and that is deliberate: `queryMs
+    // < 100` was a wall-clock ceiling on one step of a suite that runs two dozen servers at once,
+    // so a busy event loop pushed the 5 ms sleep past it and the test failed for a reason no reader
+    // could act on. There is no ceiling that is both safe under load and tight enough to mean
+    // anything - a stall of arbitrary length can land in any window - so the honest assertion is
+    // the ordering, which needs the query to overtake a 300 ms count before it breaks.
+    //
+    // Weaker than what was here, and true, which is the trade worth making: an assertion that fails
+    // on a busy machine teaches everyone to re-run the suite instead of reading it.
+    t.true((answer.countMs ?? 0) >= 300 - TIMER_SLACK_MS, `the count took ${answer.countMs} ms`)
+    t.true((answer.queryMs ?? 0) < (answer.countMs ?? 0), `rows took ${answer.queryMs} ms against ${answer.countMs} for the count`)
     t.true((answer.ms ?? 0) >= (answer.countMs ?? 0), 'and the whole request is at least the sum of its parts')
 
     // The peer says which half held it up, not merely that something did - so the diagnosis is in
     // the event rather than in whoever reads it afterwards.
     t.is(stalls.length, 1)
-    t.true((stalls[0].countMs ?? 0) >= 300)
-    t.true((stalls[0].queryMs ?? 0) < 100)
+    t.true((stalls[0].countMs ?? 0) >= 300 - TIMER_SLACK_MS, `the count took ${stalls[0].countMs} ms`)
+    t.true((stalls[0].queryMs ?? 0) < (stalls[0].countMs ?? 0), `the reported halves were ${stalls[0].queryMs} and ${stalls[0].countMs} ms`)
 
     await client.close()
     await server.close()
