@@ -7,11 +7,24 @@
 #   1883  MQTT           18083  dashboard (admin/public)
 #   8083  MQTT over WS    8883  MQTT over TLS
 #   5432  PostgreSQL      3306  MySQL       27017  MongoDB
+#
+# Not here, because it is built from this repository rather than pulled: the C# SignalR hub that
+# @source-repo/signalr's interop tests need. Start it with
+#   npm run hub --workspace=@source-repo/signalr
+# and point the suite at it with SOURCE_RPC_TEST_SIGNALR_HUB - see that package's README.
 services:
   emqx:
     image: emqx/emqx:5.9.3
     container_name: msgrpc-emqx
     restart: unless-stopped
+    environment:
+      # EMQX 5.9 enables password authentication out of the box, so an anonymous CONNECT - which is
+      # every peer in this suite - is refused with "Not authorized", and a broker that accepts TCP
+      # while refusing MQTT is a confusing thing to debug. Emptying the array is the one override
+      # that works: setting `enable = false` on the existing entry replaces it rather than merging,
+      # and EMQX then refuses to start with `missing_mechanism_field`. Kept identical to
+      # .github/workflows/ci.yml, so a CI failure is still reproducible with one command here.
+      EMQX_AUTHENTICATION: '[]'
     ports:
       - '1883:1883'
       - '8083:8083'

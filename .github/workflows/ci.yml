@@ -24,6 +24,15 @@ jobs:
                 image: emqx/emqx:5.9.3
                 ports:
                     - 1883:1883
+                env:
+                    # EMQX 5.9 enables password authentication out of the box, so an anonymous
+                    # CONNECT - which is every peer in this suite - is refused with "Not
+                    # authorized". The whole job died at the wait step below, and a broker that
+                    # accepts TCP while refusing MQTT is the confusing way for it to happen.
+                    # Emptying the array is the one override that works: setting `enable = false`
+                    # on the existing entry replaces it rather than merging, and EMQX then refuses
+                    # to start at all with `missing_mechanism_field`.
+                    EMQX_AUTHENTICATION: '[]'
 
             # For @source-repo/relational's conformance suite, which asks all three SQL backends the
             # same questions and compares the answers. SQLite needs no server and is always in it.
@@ -71,6 +80,11 @@ jobs:
             SOURCE_RPC_REQUIRE_BROKER: '1'
             SOURCE_RPC_REQUIRE_SQL: '1'
             SOURCE_RPC_REQUIRE_MONGO: '1'
+            # @source-repo/signalr talks to a C# hub built from packages/signalr/csharp. It is not a
+            # service container because it is built from this repository rather than pulled, so it
+            # is started as a step below - after the checkout that contains it.
+            SOURCE_RPC_TEST_SIGNALR_HUB: http://127.0.0.1:5217/rpc
+            SOURCE_RPC_REQUIRE_SIGNALR: '1'
 
         steps:
             - uses: actions/checkout@v7
@@ -79,6 +93,14 @@ jobs:
               with:
                   node-version: 22
                   cache: npm
+
+            # For the SignalR interop tests, which drive a real TypeScript client against the real
+            # C# hub in packages/signalr/csharp. Without an SDK those tests skip - and
+            # SOURCE_RPC_REQUIRE_SIGNALR above turns that skip into a failure, so this is not
+            # optional here. 8.0 because that is what the hub targets.
+            - uses: actions/setup-dotnet@v6
+              with:
+                  dotnet-version: '8.0.x'
 
             # A lock file is a function of the npm that wrote it, and this one is written by npm 12.
             # npm 10 - what Node 22 bundles - resolves `@docsearch/react`'s peer range of react
@@ -125,7 +147,45 @@ jobs:
             - name: Check the committed contracts
               run: npm run check:contract --workspace=@source-repo/rpc-cli
 
+            # Started here rather than as a service container: it is built from this repository, so
+            # it cannot exist until the checkout has happened. Backgrounded and then waited for, the
+            # same shape as the broker wait above and for the same reason - a hub that has not
+            # finished binding its port yet would otherwise surface as a dozen puzzling failures.
+            #
+            # The polling watcher is not about speed. The default configuration watcher takes an
+            # inotify instance, and a runner that has spent its allowance throws at startup with an
+            # IOException naming inotify and nothing about this repository - which is a long way to
+            # travel from the symptom. A test host reads no configuration it could usefully reload.
+            - name: Start the SignalR hub
+              env:
+                  DOTNET_USE_POLLING_FILE_WATCHER: '1'
+              run: |
+                  dotnet build packages/signalr/csharp/testhost/TestHost.csproj -c Release
+                  nohup dotnet run --project packages/signalr/csharp/testhost/TestHost.csproj \
+                      -c Release --no-build -- --urls http://127.0.0.1:5217 > /tmp/signalr-hub.log 2>&1 &
+                  node -e '
+                    const net = require("net")
+                    const deadline = Date.now() + 60000
+                    const attempt = () => {
+                      const socket = net.connect(5217, "127.0.0.1")
+                      socket.once("connect", () => { socket.end(); console.log("hub is up"); process.exit(0) })
+                      socket.once("error", () => {
+                        socket.destroy()
+                        if (Date.now() > deadline) { console.error("no SignalR hub on 5217 after 60s"); process.exit(1) }
+                        setTimeout(attempt, 500)
+                      })
+                    }
+                    attempt()
+                  '
+
             - run: npm test
+
+            # The hub logs a warning when it cannot bind a frame and answers nothing, which from the
+            # client side is indistinguishable from being ignored. Worth having in the run that
+            # failed rather than reproducing it to find out.
+            - name: The hub's log, if anything failed
+              if: failure()
+              run: cat /tmp/signalr-hub.log || true
 
     # The platform some of the devices are, which is the only reason this is here: there are Windows
     # Embedded PLCs that would run a peer, and "it probably works" is not something a plant should

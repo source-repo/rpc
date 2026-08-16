@@ -65,7 +65,7 @@ SOURCE_RPC_TEST_SIGNALR_HUB=http://127.0.0.1:5217/rpc \
 SOURCE_RPC_REQUIRE_SIGNALR=1 npm test --workspace=@source-repo/signalr
 ```
 
-`SOURCE_RPC_REQUIRE_SIGNALR=1` turns the skip into a failure, which is what CI wants: these tests reporting ✔ having run nothing is the one outcome worse than red.
+`SOURCE_RPC_REQUIRE_SIGNALR=1` turns the skip into a failure, which is what CI wants: these tests reporting ✔ having run nothing is the one outcome worse than red. `.github/workflows/ci.yml` installs the SDK, builds the hub, waits for its port and sets both variables, so the interop suite runs on every push rather than only where somebody remembered to start a hub.
 
 ## Limits
 

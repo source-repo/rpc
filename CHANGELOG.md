@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### CI runs the SignalR interop tests, and its broker accepts connections again
+
+The interop suite has been skipping on every run since it was written, because a GitHub runner has no .NET SDK and therefore no hub to talk to. `actions/setup-dotnet` and a step that builds the hub, backgrounds it and waits for its port fix that, with `SOURCE_RPC_REQUIRE_SIGNALR=1` so the skip is a failure rather than a quiet ✔ — the same bargain `SOURCE_RPC_REQUIRE_BROKER` already makes.
+
+Not a service container, because the hub is built from this repository rather than pulled: it cannot exist before the checkout that contains it.
+
+**The broker was already refusing every connection**, which is the more urgent half. EMQX 5.9 enables password authentication out of the box, so an anonymous CONNECT — every peer in this suite — is answered `Not authorized`, while the TCP port opens perfectly happily. The wait step passed and the run died immediately after. `EMQX_AUTHENTICATION: '[]'` is the one override that works: setting `enable = false` on the existing entry replaces rather than merges it, and EMQX then refuses to start at all with `missing_mechanism_field`. The same line is in `docker-compose/docker-compose.yml`, so a CI failure stays reproducible with one command locally.
+
 ### The SignalR binding speaks MessagePack as well as JSON
 
 Both protocols are registered on the reference hub and the client picks at negotiation, so one process serves either kind of peer and `useMsgPack` is the only thing that differs. The interop suite runs **every test twice, once per protocol**, because the serializer is the half of this binding most likely to be subtly wrong and a JSON-only pass would leave the MessagePack path unexercised until somebody's first day using it.
