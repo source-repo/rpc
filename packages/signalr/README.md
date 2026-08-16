@@ -1,6 +1,8 @@
 # @source-repo/signalr
 
-Source RPC over an ASP.NET Core SignalR hub, so a .NET process can be an ordinary peer.
+Source RPC over an ASP.NET Core SignalR hub, so a .NET process can join a Source RPC network.
+
+The TypeScript transport is complete. The C# side is a **reference binding**: it speaks the wire format faithfully and serves methods and events, but it does not implement the semantics the main library treats as central — deadlines, non-repeatable-command idempotency, owner fences, authorization. Those are named in [`csharp/README.md`](csharp/README.md) and are yours to add. Calling it "an ordinary peer" would overstate what it currently promises.
 
 ## Why
 
@@ -29,7 +31,7 @@ There is no `SignalRServerTransport`, and there will not be one: a SignalR serve
 
 ## The hub side
 
-[`csharp/`](csharp/) holds a reference implementation: the frame records, an `RpcHub` that routes between connected peers, an `IRpcResponder` for the methods this process serves, and `RpcEvents` for the ones it pushes. It compiles, and `csharp/testhost` runs it — see [`csharp/README.md`](csharp/README.md).
+[`csharp/`](csharp/) holds a reference implementation, packable as `SourceRpc.SignalR` with `npm run pack:csharp`: the frame records, an `RpcHub` that routes between connected peers, an `IRpcResponder` for the methods this process serves, and `RpcEvents` for the ones it pushes. It compiles, and `csharp/testhost` runs it — see [`csharp/README.md`](csharp/README.md).
 
 The transport speaks exactly what `SocketIoClientTransport` speaks, so the hub is implementing one documented protocol rather than a SignalR-shaped variant of one:
 
@@ -51,6 +53,8 @@ The difference that matters is binary inside `body`: MsgPack carries a byte arra
 ## Reconnection
 
 SignalR does not reconnect unless asked, and its own default gives up after four attempts. This retries indefinitely, backing off to 30 seconds, because on a plant the far end may be down for a maintenance window and the link has to come back without anyone restarting anything. Pass `reconnectDelaysMs` to change the shape of that.
+
+**That includes the first connection**, which is a separate mechanism and easy to get wrong: `withAutomaticReconnect` explicitly does *not* retry a failed initial `start()`, so a peer that came up while the hub was down would otherwise have tried exactly once and stopped — the maintenance window the policy is written for being precisely the case it did not cover. `open()` therefore retries on the same schedule, and never rejects: the transport is simply not ready until it succeeds, `ready()` says so by timing out, and a send throws `not connected` rather than being discarded.
 
 ## Testing
 

@@ -43,7 +43,8 @@
         "test": "npm run clean && npm run build && ava",
         "prepack": "npm run clean && npm run build",
         "hub": "DOTNET_USE_POLLING_FILE_WATCHER=1 dotnet run --project csharp/testhost/TestHost.csproj -- --urls http://127.0.0.1:5217",
-        "build:csharp": "dotnet build csharp/testhost/TestHost.csproj"
+        "build:csharp": "dotnet build csharp/testhost/TestHost.csproj",
+        "pack:csharp": "dotnet pack csharp/SourceRpc.SignalR.csproj -c Release -o csharp/nupkg"
     },
     "dependencies": {
         "@microsoft/signalr": "^10.0.11",

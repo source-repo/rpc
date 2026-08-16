@@ -166,3 +166,49 @@ test('sending with no link throws rather than discarding the call', async (t) =>
     await t.throwsAsync(transport.receive(call, peer('hmi6'), peer('vs6')), { message: /not connected/ })
     await transport.close()
 })
+
+test('the first connection retries too, because a peer may come up before its hub does', async (t) => {
+    let attempts = 0
+    const stub = stubConnection()
+    // Fails twice and then succeeds, which is a hub finishing its own startup - or a maintenance
+    // window ending - while a peer that wants it is already running.
+    ;(stub.connection as unknown as { start: () => Promise<void> }).start = async () => {
+        attempts++
+        if (attempts < 3) throw new Error('hub is down')
+    }
+    const errors: unknown[] = []
+    const transport = new SignalRClientTransport(peer('coldstart'), 'http://localhost:0/rpc', undefined, {}, true, [0, 0, 0], () => stub.connection)
+    transport.on(TransportEvent.transportError, (e: unknown) => errors.push(e))
+
+    // Must not reject. `withAutomaticReconnect` does not cover the initial start(), so this used to
+    // be one attempt and then silence - and the caller had no way to tell a hub that was down from
+    // one that was never coming.
+    await t.notThrowsAsync(transport.open())
+
+    const deadline = Date.now() + 5000
+    while (!transport.connected && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 10))
+
+    t.true(transport.connected, 'it kept trying and got there')
+    t.is(attempts, 3, 'two failures and the attempt that worked')
+    t.is(errors.length, 2, 'and each failure was reported rather than swallowed')
+
+    await transport.close()
+})
+
+test('closing while it is still trying to connect does not leave a retry armed', async (t) => {
+    let attempts = 0
+    const stub = stubConnection()
+    ;(stub.connection as unknown as { start: () => Promise<void> }).start = async () => {
+        attempts++
+        throw new Error('hub is down')
+    }
+    const transport = new SignalRClientTransport(peer('giveup'), 'http://localhost:0/rpc', undefined, {}, true, [5], () => stub.connection)
+    await transport.open()
+    await transport.close()
+
+    // A timer left armed by the retry loop would bring the link back up under a transport its owner
+    // has finished with - and would keep the process alive doing it.
+    const after = attempts
+    await new Promise((resolve) => setTimeout(resolve, 100))
+    t.is(attempts, after, 'nothing tried again after close()')
+})

@@ -9,6 +9,16 @@ SOURCE_RPC_TEST_SIGNALR_HUB=http://127.0.0.1:5217/rpc \
 SOURCE_RPC_REQUIRE_SIGNALR=1 npm test --workspace=@source-repo/signalr
 ```
 
+## As a package
+
+```
+npm run pack:csharp --workspace=@source-repo/signalr
+```
+
+produces `SourceRpc.SignalR.<version>.nupkg` (and a `.snupkg` of symbols) in `csharp/nupkg`. Reference that rather than the `.csproj` when the consuming project lives in another repository: a `ProjectReference` there is a relative path out of one working tree and into another, which resolves on the machine that wrote it and ships broken from anywhere else.
+
+The version tracks `@source-repo/signalr`, and therefore `@source-repo/rpc`, for the reason the workspace versions together at all — this hub implements a wire format the library defines, and a number that cannot say which version of it was implemented is a number saying nothing.
+
 ## Wiring
 
 ```csharp
@@ -29,7 +39,7 @@ app.Run();
 
 ## A responder
 
-`IRpcResponder` is the whole surface. `path` is the instance name a caller addressed, `method` is the method on it, and `args` is the argument array:
+`IRpcResponder` is the whole surface. `path` is the instance name a caller addressed and `method` is the method on it; arguments come off the frame with `frame.Arg<T>(index)`, which reads the same whichever hub protocol delivered them.
 
 ```csharp
 public sealed class AutomationSurface : IRpcResponder
@@ -37,9 +47,7 @@ public sealed class AutomationSurface : IRpcResponder
     private readonly DTE2 _dte;
     public AutomationSurface(DTE2 dte) => _dte = dte;
 
-    public string Name => "vs-automation";
-
-    public Task<object?> Invoke(string path, string method, JsonElement? args, RpcFrame frame)
+    public Task<object?> Invoke(string path, string method, RpcFrame frame)
     {
         if (path != "solution")
             throw new InvalidOperationException($"no instance named '{path}' here");
@@ -48,13 +56,17 @@ public sealed class AutomationSurface : IRpcResponder
         {
             "fullName"  => _dte.Solution.FullName,
             "isOpen"    => _dte.Solution.IsOpen,
-            "open"      => Open(args!.Value[0].GetString()!),
+            "open"      => Open(frame.Arg<string>(0)!),
             "build"     => Build(),
             _ => throw new MissingMethodException($"solution has no method '{method}'")
         });
     }
 }
 ```
+
+**Do not reach into `frame.Body` directly.** Its CLR type is whatever the configured serializer produced — a `JsonElement` under JSON, boxed primitives in an `object[]` under MessagePack — so a method written against one of them stops working the day somebody switches protocol. `Arg<T>` exists to make that choice invisible, and it is the only reason the responder does not need to know which protocol it is serving.
+
+The peer name is not on this interface: it is `RpcPeer`, registered separately, for the dependency reason above.
 
 On the TypeScript side that is:
 

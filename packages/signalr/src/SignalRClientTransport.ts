@@ -187,11 +187,46 @@ export class SignalRClientTransport extends GenericModule<Message, unknown, Mess
         connection.onreconnecting((error) => this.onDown(error))
         connection.onclose((error) => this.onDown(error))
 
-        await connection.start()
-        this.connected = true
-        this.readyFlag = true
-        if (this.announcePresence) await this.announce()
-        this.emit(TransportEvent.connected)
+        await this.connect()
+    }
+
+    /** Cleared by close(), so a deliberate shutdown cannot leave a retry armed behind it. */
+    private reconnecting?: ReturnType<typeof setTimeout>
+
+    /**
+     * Connect, and keep trying on the same schedule as a dropped link.
+     *
+     * `withAutomaticReconnect` does **not** cover this: Microsoft documents that it does not retry a
+     * failed initial `start()`, so a peer that came up while the hub was down would have sat there
+     * for ever having tried exactly once. That is the maintenance window this transport's retry
+     * policy is written for, so it was precisely the case the policy did not cover.
+     *
+     * Treated as one problem rather than two, which is also simpler to describe: the transport wants
+     * to be connected until `close()` says otherwise, and "not connected yet" and "connection lost"
+     * are the same desired state seen at different moments.
+     *
+     * Never rejects, deliberately. A failure here schedules the next attempt instead, so `open()`
+     * resolves and the transport is simply not ready - `ready()` reports that honestly by timing
+     * out, and a send throws `not connected` rather than being discarded.
+     */
+    private async connect(attempt = 0): Promise<void> {
+        const connection = this.connection
+        if (this.closing || !connection) return
+        try {
+            await connection.start()
+            this.connected = true
+            this.readyFlag = true
+            if (this.announcePresence) await this.announce()
+            this.emit(TransportEvent.connected)
+        } catch (e) {
+            this.emit(TransportEvent.transportError, e)
+            if (this.closing) return
+            const delay = this.reconnectDelaysMs[Math.min(attempt, this.reconnectDelaysMs.length - 1)]
+            this.reconnecting = setTimeout(() => void this.connect(attempt + 1), delay)
+            // Unref'd so a peer waiting for a hub that never comes cannot be the only reason the
+            // process stays alive.
+            this.reconnecting.unref?.()
+        }
     }
 
     /** Nothing is reachable through a link that is down, so everyone it carried is reported gone. */
@@ -340,6 +375,10 @@ export class SignalRClientTransport extends GenericModule<Message, unknown, Mess
 
     override async close() {
         this.closing = true
+        // Before anything else: a retry armed by connect() would otherwise fire after this returns
+        // and quietly bring the link back up under a transport its owner has finished with.
+        if (this.reconnecting) clearTimeout(this.reconnecting)
+        this.reconnecting = undefined
         // A waiter on the sweep must not outlive the transport: on a link that never came up, the
         // answer to "has the first picture arrived" is that no picture is coming.
         this.sweepLanded?.()

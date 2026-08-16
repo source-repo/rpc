@@ -2,6 +2,28 @@
 
 ## Unreleased
 
+### Fixes from an outside review of the SignalR binding
+
+An external review of `main` found several things, and the concrete ones checked out against the code. Four are fixed here; the rest are recorded below rather than rushed.
+
+**The first connection did not retry, and the README claimed it did.** `withAutomaticReconnect` covers a dropped link and explicitly not a failed initial `start()` — which Microsoft documents and which this transport's own README quoted while promising the opposite. So a peer that came up while its hub was down tried once and stopped, and the maintenance window the retry policy was written for was exactly the case it did not cover. `open()` now retries on the same schedule and never rejects: the transport is not ready until it succeeds, `ready()` says so by timing out, and a send throws rather than being discarded. `close()` disarms a pending retry, or a shutdown would bring the link back up under a transport its owner had finished with.
+
+**The C# README taught a signature that no longer exists.** The responder example still took `JsonElement? args` and indexed it, which both fails to implement `IRpcResponder` and teaches precisely the JSON coupling `frame.Arg<T>()` was introduced to remove — in the first code a C# integrator copies.
+
+**`OnDisconnectedAsync` did not await its presence broadcast.** Fire-and-forget is wrong here because presence convergence is routing correctness rather than telemetry: a peer that is gone but still listed is a peer frames are still addressed to, and an unobserved task can be abandoned outright during the host shutdown that most often causes the disconnection.
+
+**`LangVersion` was `latest`**, which makes a published package's language surface depend on whichever SDK compiled it. Pinned to 12, the version that pairs with net8.0.
+
+Recorded and **not** fixed, because they are one design change rather than four patches: the hub does not pin `frame.Src` to the connection's authenticated identity, it ignores `PresenceAnnouncement.Carrying`, and its initial presence snapshot omits the `Shapes` dictionary it has a field for. The first is the serious one — any connected client can claim any name, and subscriptions are keyed by that name — and the reviewer is right that it and `carrying` are the same question: which identities is this connection entitled to originate and route for? `SocketIoServerTransport` already answers it for its own transport; the C# hub should answer it the same way, and that is worth designing rather than patching.
+
+### The C# hub is packable as `SourceRpc.SignalR`
+
+`npm run pack:csharp --workspace=@source-repo/signalr` produces a NuGet package and a symbol package. The reason is a `ProjectReference` across repositories: it is a relative path out of one working tree and into another, which resolves on the machine that wrote it and ships broken from anywhere else — and it is already how the hub was being consumed.
+
+The version tracks `@source-repo/signalr` and therefore `@source-repo/rpc`, for the reason the workspace versions together at all: this hub implements a wire format the library defines, and a number that cannot say which version of it was implemented is a number saying nothing.
+
+The XML documentation ships, so the reasoning in these types reaches a consumer's IntelliSense. `CS1591` is suppressed with it: under `TreatWarningsAsErrors` it demands a sentence on every public member including those whose names have already said it, and `/// The peer.` above `public string? Peer` is the mechanical comment this repository's style exists to avoid.
+
 ### The Windows job runs the interop tests too, which is where the hub will live
 
 The C# hub's reason for existing is a .NET process driving Visual Studio, which is a Windows process — so testing it only on Linux was exercising it everywhere except where it is going to run.
@@ -10,7 +32,7 @@ On Windows the hub and `npm test` share **one step**, which is the one place the
 
 The wait is now `tools/wait-for-port.mjs`, shared by three places that were about to hold three copies of it — and node rather than a shell loop because it is the one interpreter both runners have and it behaves the same on each.
 
-Worth recording, because it is expensive to rediscover: **`Microsoft.NETCore.App` 8 and `Microsoft.AspNetCore.App` 8 install separately.** A machine can run a `net8.0` console application and still fail a hub at launch with `Framework: 'Microsoft.AspNetCore.App', version '8.0.0' not found`, which is exactly what a real Windows box in this project does. A hosted runner's SDK brings both; anything hand-provisioned may not.
+Worth recording, because it is expensive to rediscover: **`Microsoft.NETCore.App` 8 and `Microsoft.AspNetCore.App` 8 install separately.** A machine can run a `net8.0` console application perfectly and still fail a hub at launch with `Framework: 'Microsoft.AspNetCore.App', version '8.0.0' not found` — and a console self-test cannot catch it, because a console application never asks for the web framework. Installing the SDK brings both, which is what a hosted runner has; a machine with only the runtime placed by hand may not.
 
 ### CI runs the SignalR interop tests, and its broker accepts connections again
 

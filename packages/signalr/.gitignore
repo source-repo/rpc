@@ -6,3 +6,4 @@ dist/
 # .NET build output for the reference hub and its test host.
 csharp/**/bin/
 csharp/**/obj/
+csharp/nupkg/

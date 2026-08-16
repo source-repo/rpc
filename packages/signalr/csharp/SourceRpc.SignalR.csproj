@@ -12,11 +12,53 @@
     <TargetFramework>net8.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
-    <LangVersion>latest</LangVersion>
+    <!-- Pinned rather than `latest`, which would make a published package's language surface depend
+         on whichever SDK happened to compile it. 12 is the version that pairs with net8.0. -->
+    <LangVersion>12</LangVersion>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
     <RootNamespace>SourceRpc.SignalR</RootNamespace>
     <AssemblyName>SourceRpc.SignalR</AssemblyName>
   </PropertyGroup>
+
+  <!--
+    Packable, because the alternative is a ProjectReference reaching across repositories: a relative
+    path out of one working tree and into another, which resolves on the machine that wrote it and
+    ships broken from anywhere else.
+
+    The version tracks @source-repo/signalr and therefore @source-repo/rpc, for the reason the
+    workspace versions together at all - this hub implements a wire format the library defines, and
+    a number that cannot say which version of it was implemented is a number saying nothing.
+  -->
+  <PropertyGroup>
+    <IsPackable>true</IsPackable>
+    <PackageId>SourceRpc.SignalR</PackageId>
+    <Version>4.6.0</Version>
+    <Authors>anderswestberg</Authors>
+    <Description>A Source RPC hub for ASP.NET Core: routes msgrpc flat frames over SignalR so a .NET process can be an ordinary peer on a Source RPC network. Serves methods and publishes events over JSON or MessagePack.</Description>
+    <PackageTags>signalr;rpc;aspnetcore;msgrpc;automation</PackageTags>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageProjectUrl>https://github.com/source-repo/rpc</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/source-repo/rpc</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <!-- A consumer stepping into this code wants the source it was built from, not a decompiler. -->
+    <IncludeSymbols>true</IncludeSymbols>
+    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <!--
+      The XML file ships so that the reasoning in these types reaches a consumer's IntelliSense,
+      which is most of what makes them readable. CS1591 - "missing XML comment for a publicly
+      visible member" - is off because with TreatWarningsAsErrors it demands a sentence on every
+      member including the ones whose names have already said it, and `/// The peer.` above
+      `public string? Peer` is the mechanical comment this repository's style exists to avoid.
+      What is worth explaining is explained; the rest is named well enough not to need it.
+    -->
+    <NoWarn>$(NoWarn);CS1591</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="README.md" Pack="true" PackagePath="/" />
+  </ItemGroup>
 
   <ItemGroup>
     <Compile Remove="testhost/**" />

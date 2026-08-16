@@ -215,10 +215,12 @@ jobs:
 
             # 8.0 because the hub targets net8.0 - and specifically because a runner needs the
             # ASP.NET Core 8 *shared framework*, not merely the .NET 8 runtime. They install
-            # separately: a machine can run a net8.0 console application and still fail a hub at
-            # launch with "Framework: 'Microsoft.AspNetCore.App', version '8.0.0' not found", which
-            # is what a real Windows box in this project does. A hosted runner's SDK brings both;
-            # anything hand-provisioned may not.
+            # separately, which is worth knowing before it is diagnosed: a machine can run a net8.0
+            # console application perfectly and still fail a hub at launch with
+            # "Framework: 'Microsoft.AspNetCore.App', version '8.0.0' not found". A console
+            # self-test cannot catch it, because a console application never asks for the web
+            # framework. `dotnet-install` of the SDK brings both, and so does a hosted runner's;
+            # a machine with only the runtime hand-placed may not.
             - uses: actions/setup-dotnet@v6
               with:
                   dotnet-version: '8.0.x'

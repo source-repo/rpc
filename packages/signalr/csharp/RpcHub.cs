@@ -203,7 +203,7 @@ public class RpcHub : Hub
 
     private Task Answer(RpcFrame reply) => Clients.Caller.SendAsync("frame", reply);
 
-    public override Task OnDisconnectedAsync(Exception? exception)
+    public override async Task OnDisconnectedAsync(Exception? exception)
     {
         foreach (var name in _peers.Remove(Context.ConnectionId))
         {
@@ -211,9 +211,13 @@ public class RpcHub : Hub
             // vanished, so the disconnection is the only signal - and without acting on it the hub
             // walks a growing list of the departed on every emission.
             _subscriptions.RemovePeer(name);
-            Clients.Others.SendAsync("presence", new PresenceUpdate { Peer = name, State = "offline" });
+            // Awaited, where this used to be fire-and-forget. Presence convergence is routing
+            // correctness rather than telemetry: a peer that is gone but still listed is a peer
+            // frames are still addressed to. An unobserved task can also be abandoned outright if
+            // the host is shutting down, which is exactly when a disconnection is most likely.
+            await Clients.Others.SendAsync("presence", new PresenceUpdate { Peer = name, State = "offline" });
         }
-        return base.OnDisconnectedAsync(exception);
+        await base.OnDisconnectedAsync(exception);
     }
 }
 
