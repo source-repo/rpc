@@ -1,5 +1,9 @@
 # Changelog
 
+## 5.0.1
+
+`@source-repo/rpc` only, and documentation only: the README named three of the eight packages in this repository, and npm serves a README from the tarball rather than from the repository - so the list nobody could see was the one on the package page.
+
 ## 5.0.0
 
 A major because the wire changed. MQTT peers speak frame version 3 on the `msgrpc/v2` topic prefix; connection transports - socket.io and SignalR - speak the flat frame. A peer on the old numbers does not talk to a peer on the new ones. Nothing running breaks on its own: a socket.io server serves both layouts from one listener, and the prefix change is what keeps the two MQTT populations from meeting. But there is no upgrade path that leaves half a network behind, which is what the number is for.
