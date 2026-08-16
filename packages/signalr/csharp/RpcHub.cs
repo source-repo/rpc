@@ -5,6 +5,17 @@ using Microsoft.AspNetCore.SignalR;
 namespace SourceRpc.SignalR;
 
 /// <summary>
+/// The name this process answers to on the network.
+///
+/// Its own singleton rather than a property of the responder, and the reason is a dependency cycle
+/// that is easy to walk into: <see cref="RpcEvents"/> needs the name to address the frames it sends,
+/// and whatever emits events needs <see cref="RpcEvents"/> - so a name owned by the responder makes
+/// the two require each other and the container refuses to build either. Identity is configuration,
+/// not behaviour, so it is separated from both.
+/// </summary>
+public sealed record RpcPeer(string Name);
+
+/// <summary>
 /// What a .NET process exposes to a Source RPC network: a method, found by instance and name.
 ///
 /// Deliberately tiny. The library on the TypeScript side does a great deal more - authorization,
@@ -14,9 +25,6 @@ namespace SourceRpc.SignalR;
 /// </summary>
 public interface IRpcResponder
 {
-    /// <summary>The peer name this process answers to on the network.</summary>
-    string Name { get; }
-
     /// <summary>
     /// Run a method. Throw to have the caller receive an error frame; the exception message
     /// travels, so make it one an operator can read.
@@ -30,7 +38,10 @@ public interface IRpcResponder
 /// Wire it up with:
 /// <code>
 /// builder.Services.AddSignalR();
+/// builder.Services.AddSingleton(new RpcPeer("vs-automation"));
 /// builder.Services.AddSingleton&lt;PeerTable&gt;();
+/// builder.Services.AddSingleton&lt;SubscriptionTable&gt;();
+/// builder.Services.AddSingleton&lt;RpcEvents&gt;();
 /// builder.Services.AddSingleton&lt;IRpcResponder, MyAutomationSurface&gt;();
 /// // ...
 /// app.MapHub&lt;RpcHub&gt;("/rpc");
@@ -46,17 +57,21 @@ public interface IRpcResponder
 /// })
 /// </code>
 ///
-/// **This file has not been compiled.** It is written against the specification rather than against
-/// a build, so treat the first compile as part of adopting it.
+/// Compiled and exercised: `csharp/testhost` runs this hub, and `src/Interop.test.ts` drives a real
+/// TypeScript client against it - calls, errors, subscriptions and the event cursor.
 /// </summary>
 public class RpcHub : Hub
 {
     private readonly PeerTable _peers;
+    private readonly SubscriptionTable _subscriptions;
+    private readonly RpcPeer _self;
     private readonly IRpcResponder _responder;
 
-    public RpcHub(PeerTable peers, IRpcResponder responder)
+    public RpcHub(PeerTable peers, SubscriptionTable subscriptions, RpcPeer self, IRpcResponder responder)
     {
         _peers = peers;
+        _subscriptions = subscriptions;
+        _self = self;
         _responder = responder;
     }
 
@@ -78,7 +93,7 @@ public class RpcHub : Hub
 
         // This process's own name goes first: a newcomer has to know what to call the thing it just
         // connected to before it can address anything at all.
-        var peers = new List<string> { _responder.Name };
+        var peers = new List<string> { _self.Name };
         peers.AddRange(_peers.Names().Where(name => name != who.Name));
         await Clients.Caller.SendAsync("presence", new PresenceUpdate { Peers = peers.ToArray() });
     }
@@ -103,7 +118,7 @@ public class RpcHub : Hub
         if (!string.IsNullOrEmpty(frame.Src))
             _peers.Add(frame.Src, Context.ConnectionId);
 
-        if (frame.Tgt != _responder.Name)
+        if (frame.Tgt != _self.Name)
         {
             // Somebody else's. Forwarded if this hub can reach them, refused if it cannot -
             // refused rather than dropped, because a caller waiting on silence learns nothing.
@@ -117,11 +132,17 @@ public class RpcHub : Hub
             return;
         }
 
+        if (frame.Kind == "subscribe" || frame.Kind == "unsubscribe")
+        {
+            await Watch(frame);
+            return;
+        }
+
         if (frame.Kind != "call")
         {
-            // subscribe/unsubscribe need an event registry, and results and tickets are answers to
-            // calls this process made. Both are worth having; neither is needed to serve methods,
-            // which is what a first hub is for.
+            // Results and tickets are answers to calls this process made, which needs a client of
+            // its own to have made them. Worth having; not needed to serve methods and events,
+            // which is what this hub is for.
             await Answer(frame.Reply("error", new { name = "RpcError", message = $"this hub does not handle '{frame.Kind}' frames" }, "MethodNotFound"));
             return;
         }
@@ -139,12 +160,64 @@ public class RpcHub : Hub
         }
     }
 
+    /// <summary>
+    /// Take or drop a subscription. `subscribe` and `unsubscribe` are ordinary requests whose kind
+    /// says what they are, and whose body is the argument array holding the event name - so every
+    /// request has one shape, and a caller writes `proxy.on('built', handler)` without knowing that
+    /// anything different happens on the wire.
+    /// </summary>
+    private async Task Watch(RpcFrame frame)
+    {
+        var ev = EventNameIn(frame.Body);
+        if (string.IsNullOrEmpty(ev))
+        {
+            await Answer(frame.Reply("error", new { name = "RpcError", message = "a subscribe names its event in the argument array" }, "InvalidParams"));
+            return;
+        }
+        var path = frame.Path ?? "";
+
+        if (frame.Kind == "unsubscribe")
+        {
+            // Deliberately not authorized, and this is not an oversight. The key includes the
+            // caller, so a peer can only ever drop its own subscription, and refusing to let
+            // somebody stop receiving events would be a strange thing to enforce.
+            var dropped = _subscriptions.Remove(path, ev, frame.Src);
+            await Answer(frame.Reply("result", dropped ? "ok" : "ok - was not subscribed"));
+            return;
+        }
+
+        // Where an authorization check belongs, and the reason it belongs *here* rather than beside
+        // Invoke: a subscription is a standing grant to receive, taken once and honoured for as long
+        // as the peer stays connected, so a rule applied only to calls would never see it. Answer
+        // code Forbidden to refuse one.
+        var added = _subscriptions.Add(path, ev, frame.Src);
+
+        // "already exists" rather than an error, because a client replaying its subscriptions after
+        // a reconnect is doing the right thing and must not end up receiving everything twice.
+        await Answer(frame.Reply("result", added ? "ok" : "ok - already exists"));
+    }
+
+    /// <summary>The event name a subscribe carried, or null if it carried nothing usable.</summary>
+    private static string? EventNameIn(JsonElement? body)
+    {
+        if (body is not { ValueKind: JsonValueKind.Array } array || array.GetArrayLength() == 0)
+            return null;
+        var first = array[0];
+        return first.ValueKind == JsonValueKind.String ? first.GetString() : null;
+    }
+
     private Task Answer(RpcFrame reply) => Clients.Caller.SendAsync("frame", reply);
 
     public override Task OnDisconnectedAsync(Exception? exception)
     {
         foreach (var name in _peers.Remove(Context.ConnectionId))
+        {
+            // Whatever it was watching goes with it. There is no frame for a subscriber that simply
+            // vanished, so the disconnection is the only signal - and without acting on it the hub
+            // walks a growing list of the departed on every emission.
+            _subscriptions.RemovePeer(name);
             Clients.Others.SendAsync("presence", new PresenceUpdate { Peer = name, State = "offline" });
+        }
         return base.OnDisconnectedAsync(exception);
     }
 }

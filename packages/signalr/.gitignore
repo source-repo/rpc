@@ -2,3 +2,7 @@
 # node_modules with another checkout. A normal clone installs from the workspace and needs none of it.
 node_modules/
 dist/
+
+# .NET build output for the reference hub and its test host.
+csharp/**/bin/
+csharp/**/obj/

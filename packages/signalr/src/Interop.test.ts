@@ -4,14 +4,14 @@ import { RpcClient } from '@source-repo/rpc'
 import { SignalRClientTransport } from './SignalRClientTransport.js'
 
 /**
- * The half that needs a hub.
+ * The half that needs a hub, run against a real one.
  *
  * A SignalR server is ASP.NET Core, so unlike the MQTT suite - which starts a broker in Docker -
- * this cannot bring its own. What it does instead is the same thing that suite does about a missing
- * broker: skip, loudly, and let an environment variable turn the skip into a failure so a run
- * cannot report itself green having quietly asked nothing.
+ * this needs a .NET SDK rather than a container. When there is none it does what that suite does
+ * about a missing broker: skip, loudly, with an environment variable to turn the skip into a
+ * failure so a run cannot report itself green having quietly asked nothing.
  *
- * To run it, start a hub built from `csharp/` and point this at it:
+ * Start the hub with `npm run hub` and point this at it:
  *
  * ```
  * SOURCE_RPC_TEST_SIGNALR_HUB=http://localhost:5217/rpc \
@@ -19,14 +19,30 @@ import { SignalRClientTransport } from './SignalRClientTransport.js'
  * SOURCE_RPC_REQUIRE_SIGNALR=1 npm test --workspace=@source-repo/signalr
  * ```
  *
- * The hub needs one instance exposed under the name `meter` with a `read(tag)` method returning
- * `"<tag>=42"`, which is what the assertions below expect - the smallest surface that proves a call
- * went out, was understood, ran, and came back.
+ * `csharp/testhost` is exactly that hub, and `npm run hub` builds and starts it.
  */
 
+/**
+ * Serial, every one of them, because they share a hub.
+ *
+ * ava runs the tests in a file concurrently, and these do not have a fixture each: there is one
+ * process on the other end of the link with one `meter` in it, so a subscriber taken out by one
+ * test receives the emissions of every other. Run concurrently they fail on each other's traffic,
+ * which reads as a broken hub and is nothing of the kind.
+ */
 const HUB_URL = process.env.SOURCE_RPC_TEST_SIGNALR_HUB
 const HUB_PEER = process.env.SOURCE_RPC_TEST_SIGNALR_PEER ?? 'vs-automation'
 const run = randomUUID().slice(0, 8)
+
+type Watchable = { on(event: string, handler: (...args: unknown[]) => void): Promise<unknown>; off(event: string, handler: (...args: unknown[]) => void): Promise<unknown> }
+
+const until = async (condition: () => boolean, timeout = 5000) => {
+    const deadline = Date.now() + timeout
+    while (!condition()) {
+        if (Date.now() > deadline) throw new Error('until timed out')
+        await new Promise((resolve) => setTimeout(resolve, 20))
+    }
+}
 
 const skipWithoutHub = (t: { pass: (message?: string) => void }) => {
     if (!HUB_URL) t.pass('SOURCE_RPC_TEST_SIGNALR_HUB is not set - skipped')
@@ -40,7 +56,7 @@ test.before(() => {
         throw new Error('SOURCE_RPC_REQUIRE_SIGNALR is set, but SOURCE_RPC_TEST_SIGNALR_HUB names no hub - these tests must not be skipped here')
 })
 
-test('a call reaches a C# hub and its answer comes back', async (t) => {
+test.serial('a call reaches a C# hub and its answer comes back', async (t) => {
     if (skipWithoutHub(t)) return
     const client = new RpcClient(undefined, {
         name: `hmi-${run}`,
@@ -58,7 +74,100 @@ test('a call reaches a C# hub and its answer comes back', async (t) => {
     await client.close()
 })
 
-test('an exception in a C# method reaches the caller as a rejection', async (t) => {
+test.serial('a subscription taken on the C# hub delivers its events, stamped', async (t) => {
+    if (skipWithoutHub(t)) return
+    const client = new RpcClient(undefined, {
+        name: `hmi3-${run}`,
+        defaultTarget: HUB_PEER,
+        useMsgPack: false,
+        transport: new SignalRClientTransport(`hmi3-${run}`, HUB_URL!)
+    })
+    await client.ready()
+    const meter = await client.proxy<Watchable & { pulse(reading: number): Promise<number> }>('meter')
+
+    const seen: unknown[][] = []
+    const stamps: (number | undefined)[] = []
+    const handler = (...args: unknown[]) => {
+        seen.push(args)
+        stamps.push(client.rpcClient?.lastDeliveredStamp?.seq)
+    }
+    // An ordinary `on`, which the transport turns into a `subscribe` frame and the hub answers.
+    t.is(await meter.on('tick', handler), 'ok')
+
+    await meter.pulse(7)
+    await until(() => seen.length > 0)
+    t.deepEqual(seen[0], [7, 'bar'], 'the emit arguments arrived as the handler heard them')
+    t.is(typeof stamps[0], 'number', 'and the emission was counted, so a watcher can claim it missed nothing')
+    t.truthy(client.rpcClient?.lastDeliveredStamp?.epoch)
+
+    // A repeat is one subscription, because a client replaying after a reconnect must not end up
+    // served twice - and being told so is how it can tell the two cases apart.
+    t.is(await meter.on('tick', handler), 'ok - already exists')
+
+    await client.close()
+})
+
+test.serial('an unsubscribe on the C# hub stops the events', async (t) => {
+    if (skipWithoutHub(t)) return
+    const client = new RpcClient(undefined, {
+        name: `hmi4-${run}`,
+        defaultTarget: HUB_PEER,
+        useMsgPack: false,
+        transport: new SignalRClientTransport(`hmi4-${run}`, HUB_URL!)
+    })
+    await client.ready()
+    const meter = await client.proxy<Watchable & { pulse(reading: number): Promise<number> }>('meter')
+
+    const seen: unknown[][] = []
+    const handler = (...args: unknown[]) => seen.push(args)
+    await meter.on('tick', handler)
+    await meter.pulse(1)
+    await until(() => seen.length === 1)
+
+    t.is(await meter.off('tick', handler), 'ok')
+    await meter.pulse(2)
+    // No frame is coming, so there is nothing to wait for - only a window in which one could have
+    // arrived, and the count afterwards.
+    await new Promise((resolve) => setTimeout(resolve, 300))
+    t.is(seen.length, 1, 'nothing arrives once the subscription is gone')
+
+    // Refusing this would be strange: the caller is asking to stop receiving something it has
+    // already stopped receiving.
+    t.is(await meter.off('tick', handler), 'ok - was not subscribed')
+
+    await client.close()
+})
+
+test.serial('the count runs whether or not anyone is subscribed, which is what a cursor is for', async (t) => {
+    if (skipWithoutHub(t)) return
+    const client = new RpcClient(undefined, {
+        name: `hmi5-${run}`,
+        defaultTarget: HUB_PEER,
+        useMsgPack: false,
+        transport: new SignalRClientTransport(`hmi5-${run}`, HUB_URL!)
+    })
+    await client.ready()
+    const meter = await client.proxy<Watchable & { pulse(reading: number): Promise<number> }>('meter')
+
+    // pulse() answers with the sequence the emission was given, so the count is observable from
+    // here without a cursor call. Two with nobody listening at all.
+    const before = await meter.pulse(1)
+    const next = await meter.pulse(2)
+    t.is(next, before + 1, 'an emission nobody received still counted')
+
+    const stamps: (number | undefined)[] = []
+    await meter.on('tick', () => stamps.push(client.rpcClient?.lastDeliveredStamp?.seq))
+    await meter.pulse(3)
+    await until(() => stamps.length === 1)
+
+    // The delivered stamp continues the count rather than starting at one, which is how a
+    // subscriber that arrives late learns that it did.
+    t.is(stamps[0], next + 1)
+
+    await client.close()
+})
+
+test.serial('an exception in a C# method reaches the caller as a rejection', async (t) => {
     if (skipWithoutHub(t)) return
     const client = new RpcClient(undefined, {
         name: `hmi2-${run}`,

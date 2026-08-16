@@ -1,0 +1,29 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    The reference hub, as a library. It exists to be compiled: a specification nobody has built is a
+    specification with unknown errors in it, and this one is the half of the protocol that no
+    TypeScript test can reach.
+
+    The test host beside it is a separate project rather than more files here, so this stays a
+    library somebody can reference from their own application without inheriting a web server.
+  -->
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <RootNamespace>SourceRpc.SignalR</RootNamespace>
+    <AssemblyName>SourceRpc.SignalR</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Remove="testhost/**" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
+</Project>

@@ -29,7 +29,7 @@ There is no `SignalRServerTransport`, and there will not be one: a SignalR serve
 
 ## The hub side
 
-[`csharp/`](csharp/) holds a reference implementation: the frame records, a `RpcHub` that routes between connected peers, and an `IRpcResponder` for the methods this process serves. It is written against [the frame specification](../../docs/flat-frame-spec.md) rather than against a compiler — see the note at the top of `csharp/README.md`.
+[`csharp/`](csharp/) holds a reference implementation: the frame records, an `RpcHub` that routes between connected peers, an `IRpcResponder` for the methods this process serves, and `RpcEvents` for the ones it pushes. It compiles, and `csharp/testhost` runs it — see [`csharp/README.md`](csharp/README.md).
 
 The transport speaks exactly what `SocketIoClientTransport` speaks, so the hub is implementing one documented protocol rather than a SignalR-shaped variant of one:
 
@@ -52,9 +52,20 @@ SignalR does not reconnect unless asked, and its own default gives up after four
 
 ## Testing
 
-`SignalRClientTransport.test.ts` runs anywhere: it drives the transport against a stubbed connection and asserts the frames it produces and accepts. `Interop.test.ts` needs a real hub and skips without one — set `SOURCE_RPC_TEST_SIGNALR_HUB`, and `SOURCE_RPC_REQUIRE_SIGNALR=1` where a skip would be a lie.
+`SignalRClientTransport.test.ts` runs anywhere: it drives the transport against a stubbed connection and asserts the frames it produces and accepts.
+
+`Interop.test.ts` drives a real `RpcClient` against the real C# hub — a call, a thrown exception, a subscription, an unsubscribe, and the event cursor. It needs a .NET SDK, and skips without one:
+
+```
+npm run hub --workspace=@source-repo/signalr          # in one terminal
+
+SOURCE_RPC_TEST_SIGNALR_HUB=http://127.0.0.1:5217/rpc \
+SOURCE_RPC_REQUIRE_SIGNALR=1 npm test --workspace=@source-repo/signalr
+```
+
+`SOURCE_RPC_REQUIRE_SIGNALR=1` turns the skip into a failure, which is what CI wants: these tests reporting ✔ having run nothing is the one outcome worse than red.
 
 ## Limits
 
 - **No per-frame signing.** Like socket.io, this trusts the connection: the hub authenticates it and should pin each frame's `src` to that identity. Unlike MQTT, there is no broker in the middle relaying a `source` field nobody checked. A hub with no authentication is one where every peer name is an unchecked claim.
-- **The reference hub serves methods and routes frames.** Subscribe/unsubscribe, tickets, deadlines, idempotency and owner fences are described in the frame spec and are yours to add where they earn their place.
+- **The reference hub serves methods, publishes events and routes frames.** Tickets, deadlines, idempotency and owner fences are described in the frame spec and are yours to add where they earn their place.

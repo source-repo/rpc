@@ -2,20 +2,30 @@
 
 Reference implementation of the hub side of [`docs/flat-frame-spec.md`](../../../docs/flat-frame-spec.md), so a .NET process can be an ordinary peer on a Source RPC network.
 
-> **Not compiled here.** These files were written against the specification, in a repository with no .NET SDK. The protocol they implement *is* verified — `packages/rpc/src/FlatFrame.test.ts` drives the same frames from a client with no library code — but the C# itself has not been through a compiler. Treat the first build as part of adopting it.
+**Compiled, run, and driven by the TypeScript suite.** `testhost/` is a minimal ASP.NET Core app hosting this hub, and `src/Interop.test.ts` points a real `RpcClient` at it — calls, thrown exceptions, subscriptions, unsubscribe, and the event cursor. Build and start it with `npm run hub --workspace=@source-repo/signalr`, then:
+
+```
+SOURCE_RPC_TEST_SIGNALR_HUB=http://127.0.0.1:5217/rpc \
+SOURCE_RPC_REQUIRE_SIGNALR=1 npm test --workspace=@source-repo/signalr
+```
 
 ## Wiring
 
 ```csharp
 var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddSignalR();
+builder.Services.AddSingleton(new RpcPeer("vs-automation"));   // this process's name on the network
 builder.Services.AddSingleton<PeerTable>();
+builder.Services.AddSingleton<SubscriptionTable>();
+builder.Services.AddSingleton<RpcEvents>();
 builder.Services.AddSingleton<IRpcResponder, AutomationSurface>();
 
 var app = builder.Build();
 app.MapHub<RpcHub>("/rpc");
 app.Run();
 ```
+
+`RpcPeer` is a singleton of its own rather than a property of the responder, and that is not fussiness: `RpcEvents` needs the name to address the frames it sends, and whatever emits events needs `RpcEvents` — so a name owned by the responder makes the two require each other and the container refuses to build either.
 
 ## A responder
 
@@ -68,9 +78,33 @@ new RpcClient(undefined, {
 
 MessagePack works too and is smaller, and it is the only one that carries binary inside `body` as binary rather than base64 — but it needs `AddMessagePackProtocol()` on the hub and a resolver that keys by property name, so it is the second thing to get working rather than the first.
 
+## Events
+
+`RpcEvents.Emit` is how this process tells the network something happened. Inject it and call it:
+
+```csharp
+public sealed class BuildWatcher(RpcEvents events)
+{
+    private void OnBuildFinished(bool succeeded) => _ = events.Emit("solution", "built", succeeded);
+}
+```
+
+A TypeScript peer receives that as an ordinary subscription:
+
+```ts
+const solution = await client.proxy<{ on(e: string, h: (ok: boolean) => void): Promise<unknown> }>('solution')
+await solution.on('built', (ok) => console.log('build finished', ok))
+```
+
+Three things about it are worth knowing, because each is a decision rather than an accident:
+
+- **The count runs whether or not anyone is subscribed.** That is what `seq` is for — a subscriber that joins late wants to know how many went past while it was away, and a counter that stood still cannot tell it. `epoch` is regenerated per process, so a restart is visibly a restart rather than a suspiciously small number.
+- **A repeated subscribe is one subscription**, answered `ok - already exists`. A client replaying its subscriptions after a reconnect is doing the right thing and must not end up served twice.
+- **A subscription is keyed by peer name, not connection id**, so a peer that reconnects keeps receiving. Its subscriptions are dropped when it disconnects, since nothing else will ever drop them.
+
 ## What this reference does not do
 
-It serves methods, routes between connected peers, and answers errors. It does **not** implement subscribe/unsubscribe (an event registry), tickets (deferred answers), deadlines, idempotency, owner fences, or authorization. Each is described in the frame spec and each is worth adding where it earns its place; none is needed to serve a method.
+It serves methods, publishes events, routes between connected peers, and answers errors. It does **not** implement tickets (deferred answers), deadlines, idempotency, owner fences, or authorization. Each is described in the frame spec and each is worth adding where it earns its place; none is needed to serve a method or push an event.
 
 Two are worth calling out because their absence is silent rather than obvious:
 
