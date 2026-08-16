@@ -250,7 +250,12 @@ public sealed class SourceRpcClient : IAsyncDisposable
                 // so a method behaves identically whichever direction the link was dialled.
                 if (_dispatcher is null)
                     return;
-                var reply = await _dispatcher.HandleAsync(frame, new RpcCaller(frame.Src));
+                // With a reply channel, so a method served over this link may defer. Without it the
+                // dispatcher refuses to defer rather than accepting work whose answer it has no way
+                // to deliver - which is the right refusal, and was the one this hit.
+                var reply = await _dispatcher.HandleAsync(
+                    frame,
+                    new RpcCaller(frame.Src, null, CancellationToken.None, later => _transport.SendAsync(later)));
                 if (reply is not null)
                 {
                     await _transport.SendAsync(reply);

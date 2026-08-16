@@ -8,6 +8,7 @@ A .NET process as a peer on a Source RPC network — serving methods, publishing
 | --- | --- | --- |
 | **`SourceRpc`** | the frame, the dispatcher, the client, routing, the error model, telemetry | nothing but the BCL |
 | **`SourceRpc.SignalR`** | a hub for a process others dial into, and a client transport for one that dials out | ASP.NET Core |
+| **`SourceRpc.Mqtt`** | a peer on a broker — no server to write, because the broker is the middle | MQTTnet |
 
 The split is the point. A SignalR hub needs ASP.NET Core; an MQTT client on a device does not, and should not carry a web framework to get a protocol. So everything that decides what a frame *means* lives in `SourceRpc`, and a binding is a small class that moves frames.
 
@@ -22,11 +23,13 @@ SourceRpc                            frame · dispatcher · client · routing ·
 ISourceRpcTransport                  ← the seam
    ▼
 SourceRpc.SignalR                    hub (server) + client transport
-SourceRpc.SocketIo                   client only — see below
-SourceRpc.Mqtt                       client
+SourceRpc.Mqtt                       peer on a broker
+SourceRpc.SocketIo                   client only — planned, see below
 ```
 
-**Planned bindings.** SignalR gives both halves, because ASP.NET Core can host a hub. socket.io gives a **client only**: there is no reasonable C# socket.io *server*, and none is needed — the TypeScript side already serves socket.io, and a C# process joins it as a client. MQTT has no server to write at all, since the broker is the middle.
+**The bindings.** SignalR gives both halves, because ASP.NET Core can host a hub. MQTT has no server to write at all, since the broker is the middle — a peer subscribes to its own topics and publishes to others'. socket.io will give a **client only**: there is no reasonable C# socket.io *server*, and none is needed, since the TypeScript side already serves socket.io.
+
+**MQTT does not use the flat frame, and that is the point of it.** It speaks the `mr-` property layout of [`docs/mqtt5-frame-spec.md`](../../docs/mqtt5-frame-spec.md): the topic carries the addressee, `responseTopic` says where a reply goes, `correlationData` pairs it, and `messageExpiryInterval` lets the broker drop a request whose caller has stopped waiting. A flat frame in the payload would throw all of that away — along with the property the layout exists for, that a plain MQTT client with no msgrpc code can take part and an operator can see why a call failed in MQTT Explorer without decoding anything. What the two share is the *model*: both map to `RpcFrame`, so a call means the same thing on either and only the spelling differs. That claim is what `packages/rpc/src/MqttInterop.test.ts` tests, by putting a TypeScript peer and a C# peer on one broker.
 
 Adding one is a class implementing [`ISourceRpcTransport`](SourceRpc/Transport.cs): start a link, send a frame, raise an event when one arrives. Correlation, deadlines, subscriptions, error mapping and dispatch are already written, once, in the core — which is what stops three transports quietly disagreeing about what a timeout means. `TransportContract` in the same file records what a binding must get right.
 
@@ -140,6 +143,15 @@ npm run hub              # the test host, for the interop suite to point at
 dotnet run --project packages/csharp/TestHost -c Release -- client http://127.0.0.1:5217/rpc vs-automation
 ```
 
+And the MQTT pairing, which needs a broker and both peers:
+
+```
+dotnet run --project packages/csharp/TestHost -c Release -- mqtt mqtt://127.0.0.1:1883 msgrpc/v2
+
+SOURCE_RPC_TEST_CSHARP_MQTT=csharp-mqtt SOURCE_RPC_REQUIRE_CSHARP_MQTT=1 \
+    npm test --workspace=@source-repo/rpc
+```
+
 **Turn on container validation in your host.** A dependency cycle among these registrations produced a hub whose methods were silently never invoked — SignalR accepted the connection, the caller's `invoke` never returned, and nothing was logged. With validation on, the same mistake is a startup exception naming the cycle:
 
 ```csharp
@@ -184,5 +196,9 @@ case "build":
 The ticket's id is the call's own correlation, so nothing is minted and nothing extra travels — and a caller accepts the later answer only for a call it actually made, to the peer it made it to, which is what leaves a forged result nothing to attach itself to. From C#, `client.CallDeferredAsync<T>(…)` returns an `RpcTicket<T>` with a `Result` task and a `Progress` event.
 
 ## What is not here yet
+
+**Signing on MQTT.** The `mr-nonce`/`mr-ts`/`mr-sig` properties are named in `Mqtt5Frame` and nothing produces or checks them, so a C# peer cannot join a network whose frames are signed. That matters more here than on the other bindings and is worth saying plainly: MQTT has no connection to attribute a frame to, so signing is how a peer's identity is checked at all — a broker relays a `source` field written by whoever sent it. Until it exists, trust on an MQTT network with a C# peer rests on broker credentials and ACLs.
+
+**Shared subscriptions** (`$share/<group>/…`), which is how MQTT replicas load-balance requests.
 
 Method semantics are not declared, so the idempotency store is consulted whenever a call carries a key rather than only for methods marked non-repeatable — the caller sending a key is taken as the request. Introspection (`describe()`) is not implemented either.

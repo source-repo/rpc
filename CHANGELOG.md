@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+### `SourceRpc.Mqtt` — a C# peer on a broker
+
+The second binding, and the one that tests whether the seam was real: it shares no wire format with the first. SignalR carries the flat frame as a typed object; MQTT carries the `mr-` property layout with the body alone in the payload, and the two have no bytes in common. What they share is `RpcFrame`, the dispatcher, the client and every semantic below them - so the binding is a frame mapping and a class that moves packets, and calls, errors, events, subscriptions, fences, idempotency and deferred answers all behaved without being written twice.
+
+**The MQTT frame is unchanged, deliberately.** Moving it to the flat frame would have made this binding trivial and cost the layout everything it exists for: the topic carries the addressee so shared subscriptions can load-balance, `responseTopic` and `correlationData` are MQTT's own request/response, `messageExpiryInterval` lets the broker drop a request whose caller has gone, the `req`/`rsp`/`evt` split is what least-privilege ACLs are drawn on, `mr-code` is readable in MQTT Explorer without decoding, and a plain mqtt.js peer can take part with no msgrpc code at all. One shared *model* with two spellings is the right shape; one shared spelling would have been a worse protocol wearing tidier code.
+
+`packages/rpc/src/MqttInterop.test.ts` puts a TypeScript peer and a C# peer on one broker and checks the pairing: a call, an error with its code, an owner fence refusing a stale generation, an idempotency key answered from the record, a subscription delivering stamped events, and a deferred method answering twice. Five passed on the first run; the sixth failed with `this call arrived over a link that cannot deliver a later answer` - the dispatcher's own guard, refusing to defer because `SourceRpcClient` dispatched without a reply channel. The guard was right and the client now supplies one.
+
+Also found: **MessagePack 2.5.192 carries known vulnerabilities**, and `TreatWarningsAsErrors` turned NU1902 into a build failure rather than a warning nobody reads. Both projects now pin 2.5.302 - the version `Microsoft.AspNetCore.SignalR.Protocols.MessagePack` already resolves - so one MessagePack is loaded rather than two majors in a process that holds both bindings.
+
+Not here yet, and worth naming rather than discovering: **signing.** `mr-nonce`/`mr-ts`/`mr-sig` are named and nothing produces or checks them, so a C# peer cannot join a signed network. That matters more on MQTT than elsewhere, because there is no connection to attribute a frame to and the broker relays a `source` field written by whoever sent it.
+
 ### A ticket's answer is no longer lost when it arrives before the caller holds the ticket
 
 Both sides had a window between a deferred call being answered and the caller having something to put the answer on, and both dropped what arrived in it. The window is not exotic: completing the receipt's promise *queues* the caller's continuation rather than running it, so the far end's next frame can and does arrive first.

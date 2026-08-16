@@ -9,6 +9,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SourceRpc.SignalR", "Source
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "TestHost", "TestHost\TestHost.csproj", "{898567B0-A821-4E84-8B59-484817FF05D7}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SourceRpc.Mqtt", "SourceRpc.Mqtt\SourceRpc.Mqtt.csproj", "{6B716C98-6D6B-45B6-9DB5-4DF9ED28C0A5}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -30,5 +32,9 @@ Global
 		{898567B0-A821-4E84-8B59-484817FF05D7}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{898567B0-A821-4E84-8B59-484817FF05D7}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{898567B0-A821-4E84-8B59-484817FF05D7}.Release|Any CPU.Build.0 = Release|Any CPU
+		{6B716C98-6D6B-45B6-9DB5-4DF9ED28C0A5}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{6B716C98-6D6B-45B6-9DB5-4DF9ED28C0A5}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{6B716C98-6D6B-45B6-9DB5-4DF9ED28C0A5}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{6B716C98-6D6B-45B6-9DB5-4DF9ED28C0A5}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 EndGlobal

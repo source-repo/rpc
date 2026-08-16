@@ -15,6 +15,7 @@
 
   <ItemGroup>
     <ProjectReference Include="../SourceRpc.SignalR/SourceRpc.SignalR.csproj" />
+    <ProjectReference Include="../SourceRpc.Mqtt/SourceRpc.Mqtt.csproj" />
   </ItemGroup>
 
 </Project>

@@ -1,5 +1,6 @@
 using SourceRpc;
 using SourceRpc.SignalR;
+using SourceRpc.Mqtt;
 
 /*
  * The smallest hub the TypeScript interop suite can be pointed at - and, incidentally, the whole of
@@ -19,6 +20,12 @@ using SourceRpc.SignalR;
 if (args.Length > 0 && args[0] == "client")
 {
     await RunAsClient(args.Length > 1 ? args[1] : "http://127.0.0.1:5217/rpc", args.Length > 2 ? args[2] : "vs-automation");
+    return;
+}
+
+if (args.Length > 0 && args[0] == "mqtt")
+{
+    await RunOnBroker(args.Length > 1 ? args[1] : "mqtt://127.0.0.1:1883", args.Length > 2 ? args[2] : "msgrpc/v2");
     return;
 }
 
@@ -113,6 +120,89 @@ static async Task RunAsClient(string url, string target)
     }
 
     Console.WriteLine("CLIENT-OK");
+}
+
+/// <summary>
+/// The same surface, served on a broker instead.
+///
+/// The point of it is how little differs: the responder, the dispatcher and every semantic below
+/// them are the ones the hub uses, and what changes is the class that moves frames. That is the
+/// transport seam doing its job - and this is the first binding to prove it, because it shares no
+/// wire format with the other one at all.
+/// </summary>
+static async Task RunOnBroker(string brokerUrl, string prefix)
+{
+    var options = new SourceRpcOptions { Name = Environment.GetEnvironmentVariable("RPC_PEER_NAME") ?? "csharp-mqtt", IncludeExceptionDetail = true };
+    var telemetry = new SourceRpcTelemetry();
+    var events = new BrokerEvents();
+    var dispatcher = new RpcDispatcher(options, new SubscriptionTable(), telemetry, new Meter(events), null, new FixedOwner(), new InMemoryIdempotencyStore());
+    await using var transport = new MqttTransport(new MqttTransportOptions { BrokerUrl = brokerUrl, Prefix = prefix }, options);
+    await using var client = new SourceRpcClient(transport, options, telemetry, dispatcher);
+    // Bound after the dispatcher exists rather than injected into it. The publisher needs to know
+    // who is subscribed and the dispatcher needs the responder that publishes - a cycle a container
+    // cannot build, and the one that produced a hub whose methods were never invoked.
+    events.Bind(transport, options.Name, dispatcher);
+
+    await client.StartAsync();
+    for (var waited = 0; !transport.Connected && waited < 100; waited++)
+        await Task.Delay(100);
+    Console.WriteLine(transport.Connected ? "RPC-MQTT-READY" : "RPC-MQTT-FAILED");
+
+    // Serves until it is stopped, which is what a peer on a broker does.
+    await Task.Delay(Timeout.Infinite);
+}
+
+/// <summary>
+/// Event publishing over a transport rather than a hub.
+///
+/// Deliberately small and deliberately here rather than in the library: fanning an event out to
+/// subscribers needs the subscription table and a way to send, and on a broker "a way to send" is
+/// the transport itself. A binding-independent publisher is the obvious next thing to lift into the
+/// core, and it is not lifted yet because one implementation is not a pattern.
+/// </summary>
+internal sealed class BrokerEvents : ISourceRpcEvents
+{
+    private ISourceRpcTransport? _transport;
+    private string _self = "";
+    private readonly Dictionary<string, long> _sequences = [];
+
+    public string Epoch { get; } = Guid.NewGuid().ToString("N")[..8];
+
+    private RpcDispatcher? _dispatcher;
+
+    public void Bind(ISourceRpcTransport transport, string self, RpcDispatcher dispatcher)
+    {
+        _transport = transport;
+        _self = self;
+        _dispatcher = dispatcher;
+    }
+
+    public Task EmitAsync(string path, string eventName, params object?[] args) => EmitAsync(path, eventName, args, CancellationToken.None);
+
+    public async Task EmitAsync(string path, string eventName, object?[] args, CancellationToken cancellationToken)
+    {
+        long seq;
+        lock (_sequences)
+        {
+            var key = path + "\0" + eventName;
+            seq = _sequences.TryGetValue(key, out var at) ? at + 1 : 1;
+            _sequences[key] = seq;
+        }
+        if (_transport is null)
+            return;
+        // On a broker an event goes to the subscriber's own evt topic, so each subscriber is
+        // addressed rather than the event being broadcast to whoever happens to be listening.
+        foreach (var peer in _dispatcher?.SubscribersOf(path, eventName) ?? [])
+            await _transport.SendAsync(
+                new RpcFrame { Src = _self, Tgt = peer, Kind = "event", Path = path, Event = eventName, Seq = seq, Epoch = Epoch, Body = args },
+                cancellationToken);
+    }
+
+    public long SequenceOf(string path, string eventName)
+    {
+        lock (_sequences)
+            return _sequences.TryGetValue(path + "\0" + eventName, out var seq) ? seq : 0;
+    }
 }
 
 /// <summary>

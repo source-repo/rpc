@@ -1,0 +1,48 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    The MQTT binding: a peer on a broker, which on this carrier is the only shape there is - there
+    is no server to write, because the broker is the middle.
+
+    Note what this does *not* reference: ASP.NET Core. That is the reason the core was split out of
+    the SignalR package, and this is the project that proves it was worth doing.
+  -->
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>12</LangVersion>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <RootNamespace>SourceRpc.Mqtt</RootNamespace>
+    <AssemblyName>SourceRpc.Mqtt</AssemblyName>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <IsPackable>true</IsPackable>
+    <PackageId>SourceRpc.Mqtt</PackageId>
+    <Version>4.6.0</Version>
+    <Authors>anderswestberg</Authors>
+    <Description>Source RPC over MQTT 5: a peer on a broker, speaking the mr- property layout that lets a plain MQTT client take part with no msgrpc code.</Description>
+    <PackageTags>mqtt;rpc;msgrpc;automation;iiot</PackageTags>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageProjectUrl>https://github.com/source-repo/rpc</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/source-repo/rpc</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PublishRepositoryUrl>true</PublishRepositoryUrl>
+    <IncludeSymbols>true</IncludeSymbols>
+    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+    <EmbedUntrackedSources>true</EmbedUntrackedSources>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <NoWarn>$(NoWarn);CS1591</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="MQTTnet" Version="4.3.7.1207" />
+    <PackageReference Include="MessagePack" Version="2.5.302" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../SourceRpc/SourceRpc.csproj" />
+  </ItemGroup>
+
+</Project>
