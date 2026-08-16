@@ -19,9 +19,13 @@ An **authenticating socket.io transport** pins the connection to the identity it
 
 That pinning extends to the routing table: a frame's source is registered as a peer only *after* the identity check, so a rejected frame cannot leave a peer that does not exist in the registry, nor point lookups for a real peer's name at a link where nothing answers.
 
-**Signing** does the same job where there is no connection. The signature covers everything the receiver acts on — source, target, method, arguments, the error code, the declared contract version, the deadline, the content type and the reply address — with a nonce so a captured frame cannot be replayed. A verifier returns an identity, and the transport refuses the frame if that identity is not the source it claims. So a peer holding its own valid key cannot sign as another peer.
+**Signing** does the same job where there is no connection. The signature covers everything the receiver acts on — source, target, method, arguments, the error code, the declared contract version, the deadline, the content type, the reply address, the owner fence, the idempotency key, the deferred marker, the ticket outcome and the event cursor — with a nonce so a captured frame cannot be replayed. A verifier returns an identity, and the transport refuses the frame if that identity is not the source it claims. So a peer holding its own valid key cannot sign as another peer.
 
-Signed frame **version 2** is not backward compatible on purpose: accepting version 1 as well would let a sender choose the weaker form. Unsigned MQTT peers are unaffected, because an unsigned frame's version says nothing about security.
+The rule for what belongs in there is *acted on*, not *important-looking*, and each of the later additions is one a receiver decides something by: the content type decides how the payload is read (`0x31` is the JSON text `"1"` and a MsgPack fixint `49` — both parse, both verified, one setpoint), the fence decides whether a command runs under an ownership its caller never observed, and the deferred marker and outcome decide whether a caller keeps waiting. `messageExpiryInterval` is deliberately excluded: the broker rewrites it in flight, so a signature over it would break on the first queued message, and it may only narrow the signed ttl.
+
+Signed frame **version 3** is not backward compatible on purpose: accepting an older version as well would let a sender choose the weaker form. Unsigned MQTT peers are unaffected, because an unsigned frame's version says nothing about security.
+
+Both implementations produce the same canonical bytes — `canonicalSignedBytesV5` in TypeScript and `MqttSigning.CanonicalBytes` in C# — and `packages/rpc/src/MqttSigningInterop.test.ts` compares them directly rather than trusting that they agree. It has to: System.Text.Json escapes more than JavaScript does, and one escape apart is a frame that verifies nowhere while presenting as a wrong key or a clock skew.
 
 ## Tokens: one per peer
 

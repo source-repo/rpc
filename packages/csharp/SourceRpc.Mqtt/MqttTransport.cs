@@ -272,25 +272,38 @@ public sealed class MqttTransport : ISourceRpcTransport
         if (!_replays.Accept(nonce, timestamp))
             return "stale or replayed";
 
+        // Rebuilt from the properties **as they arrived**, not from the parsed frame - so tampering
+        // with any of them fails the signature rather than changing how the payload is read, where
+        // the answer is sent, what the caller does about a failure, whether a command that is
+        // already too late still runs, or whether it runs under an ownership its caller never
+        // observed.
+        //
+        // Raw text rather than round-tripped values, and that is the whole of the difference: this
+        // used to sign `frame.Ttl?.ToString()`, which re-spells what arrived. Anything this library
+        // sends is unaffected, because String(5000) is "5000" either way - but a plain MQTT peer
+        // writing `mr-ttl: "05000"` is sending a valid frame, and its perfectly good signature was
+        // refused as "bad signature". Being reachable by a peer with no msgrpc code in it is the
+        // entire reason this layout exists, so signing a normalised copy of somebody else's frame
+        // is not a small liberty. The TypeScript verifier reads the raw values; now so does this.
         var canonical = MqttSigning.CanonicalBytes(
             announced,
             topic,
             packet.ResponseTopic ?? "",
             frame.Src,
             frame.Kind,
-            frame.Path ?? "",
-            frame.Method ?? frame.Event ?? "",
+            Property(Mqtt5Frame.Path) ?? "",
+            Property(Mqtt5Frame.Method) ?? Property(Mqtt5Frame.Event) ?? "",
             frame.Corr ?? "",
             packet.ContentType ?? "",
-            frame.Code ?? "",
-            frame.Ver ?? "",
-            frame.Ttl?.ToString() ?? "",
-            frame.Idem ?? "",
-            frame.Fence ?? "",
-            frame.Deferred == true ? "1" : "",
-            frame.Outcome ?? "",
-            frame.Seq?.ToString() ?? "",
-            frame.Epoch ?? "",
+            Property(Mqtt5Frame.Code) ?? "",
+            Property(Mqtt5Frame.ContractVersion) ?? "",
+            Property(Mqtt5Frame.Ttl) ?? "",
+            Property(Mqtt5Frame.IdempotencyKey) ?? "",
+            Property(Mqtt5Frame.Fence) ?? "",
+            Property(Mqtt5Frame.Deferred) ?? "",
+            Property(Mqtt5Frame.Outcome) ?? "",
+            Property(Mqtt5Frame.Seq) ?? "",
+            Property(Mqtt5Frame.Epoch) ?? "",
             timestamp,
             nonce,
             packet.PayloadSegment);

@@ -84,8 +84,10 @@ Worth doing, in this order:
 
 Steps 1 and 2 were worth it even though nobody has yet written a non-TS peer, because they were the difference between four features that work and four features that work on one transport. Step 3 is the one that answered the original question, and it was the cheapest of the three.
 
-### What step 2 turned up that is still open
+### What step 2 turned up, and what happened to it
 
-**Progress on a ticket is lost if it arrives before the caller can listen.** A caller receives its ticket only when the receipt arrives, and `TicketRegistry.hold` drains its early-held queue before the ticket object is constructed — so progress that overtook the receipt is emitted to nothing, and progress arriving in the window between the receipt and the caller's `ticket.on('progress', …)` is dropped for want of a listener. Over socket.io that window is sub-millisecond, which is why nothing ever caught it. Over MQTT it is a broker round trip wide, and it is reproducible under load.
+**Progress on a ticket was lost if it arrived before the caller could listen** — and on the C# side the *answer* was lost, not just the progress. A caller receives its ticket only when the receipt arrives, so anything that overtakes the receipt lands where nothing is waiting: in TypeScript `TicketRegistry.hold` drained its early queue before the ticket object existed, and progress arriving between the receipt and the caller's `ticket.on('progress', …)` went to an emitter with no listener. Over socket.io that window is sub-millisecond, which is why nothing ever caught it; over MQTT it is a broker round trip wide and reproducible under load.
 
-This is a defect in the ticket API rather than in any wire format, and the fix is to buffer progress on the ticket until its first subscription. Left out of the frame work deliberately: it is a change to what a ticket promises, and it should be argued on its own.
+**Both are fixed.** Each side now holds what arrives early and replays it in order once there is something to replay it to — bounded at 64 progress messages and dropping oldest first, because a caller arriving late wants where the work has got to rather than where it began. Checked in both directions: removing the hold makes the MQTT deferred test fail.
+
+That it showed up at all is the argument for the whole exercise. Four features worked on one transport and were quietly broken on another; a second transport is what turned "works" into "works because the window was too small to notice".

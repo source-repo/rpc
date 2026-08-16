@@ -2,12 +2,14 @@
 
 # msgrpc over a connection — the flat frame
 
-**Status: implemented.** The layout for any transport with one bidirectional link and a way to name a message. Two carry it:
+**Status: implemented.** The layout for any transport with one bidirectional link and a way to name a message. Four bindings carry it, in two languages:
 
 | binding | names a message with | in |
 | --- | --- | --- |
 | **socket.io** | an event, `frame` | `@source-repo/rpc` — `SocketIoClientTransport`, `SocketIoServerTransport` |
+| **socket.io (.NET)** | the same event | `SourceRpc.SocketIo` — client only; socket.io's server is a Node library |
 | **SignalR** | a hub method, `Frame` | `@source-repo/signalr` — `SignalRClientTransport`, and a C# hub |
+| **SignalR (.NET)** | the same hub method | `SourceRpc.SignalR` — `RpcHub` and `SignalRClientTransport` |
 
 A socket.io server serves the older `$`-delimited layout at the same time, on a different event, so the two populations coexist without configuration. Verified with a vanilla `socket.io-client` and `@msgpack/msgpack` on the far side, in `packages/rpc/src/FlatFrame.test.ts`.
 
@@ -136,11 +138,11 @@ Three things differ from the socket.io binding, and all three follow from Signal
 
 **Binary inside `body` depends on that choice.** The MessagePack hub protocol carries a byte array as one; the JSON hub protocol base64s it into a string. Nothing else in the frame is affected, since every other field is a string, a number or a boolean — and `packages/signalr` asserts that by running its whole interop suite over both protocols.
 
-**A C# frame type has to be annotated for both serializers.** `[JsonPropertyName]` and MessagePack's `[Key]` do not see each other, so a type annotated for one sends PascalCase under the other; and MessagePack additionally refuses to build a formatter at all unless every remaining public member carries `[IgnoreMember]`. Both failures arrive at the first frame rather than at build time. See `packages/signalr/csharp/RpcFrame.cs`, which carries both.
+**A C# frame type has to be annotated for both serializers.** `[JsonPropertyName]` and MessagePack's `[Key]` do not see each other, so a type annotated for one sends PascalCase under the other; and MessagePack additionally refuses to build a formatter at all unless every remaining public member carries `[IgnoreMember]`. Both failures arrive at the first frame rather than at build time. See `packages/csharp/SourceRpc/RpcFrame.cs`, which carries both.
 
 **There is no version negotiation, because there is nothing to negotiate.** No SignalR peer ever spoke the `$`-delimited layout, so the hub method name is simply the name, and a `v` other than 2 is refused rather than interpreted.
 
-**Client only.** A SignalR server is ASP.NET Core, so the direction is fixed: the .NET process hosts the hub and the TypeScript peer dials in. That is the direction the problem has anyway.
+**Client only, on the TypeScript side.** A SignalR server is ASP.NET Core, so the direction is fixed: the .NET process hosts the hub and the TypeScript peer dials in. That is the direction the problem has anyway — and socket.io is the mirror image, where the .NET side can only be a client because socket.io's server is a Node library. Between the two, either language can take either role; neither binding can take both.
 
 ## On socket.io, version negotiation is the event name
 

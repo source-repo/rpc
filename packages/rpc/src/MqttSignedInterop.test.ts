@@ -296,6 +296,28 @@ test.serial('a captured frame cannot be sent again', async (t) => {
     await raw.close()
 })
 
+test.serial('a stranger spelling a number its own way is still verified', async (t) => {
+    if (skipWithoutPeer(t)) return
+    const raw = await RawPeer.connect('raw-spelling')
+    const body = JSON.stringify(['flow'])
+
+    // Being reachable by a peer with no msgrpc code is the whole reason this layout exists, and
+    // such a peer has no reason to spell a ttl the way `String(5000)` does. A verifier that
+    // rebuilds the canonical bytes from *parsed* values signs a normalised copy of somebody else's
+    // frame - and refuses their perfectly good signature as "bad signature", which is about the
+    // most misleading thing it could say. Verified over the bytes that arrived, these all pass.
+    const spellings = ['5000', '05000', '+5000', '5000 ']
+    for (const [index, ttl] of spellings.entries()) {
+        const before = raw.replies.length
+        const properties = { [MR.path]: 'meter', [MR.method]: 'read', [MR.ttl]: ttl }
+        await signedAs(raw, properties, properties, body)
+        await new Promise((resolve) => setTimeout(resolve, 1200))
+        t.is(raw.replies.length, before + 1, `a frame with mr-ttl '${ttl}' (case ${index}) was refused`)
+    }
+
+    await raw.close()
+})
+
 test.serial('the fields a receiver acts on are covered, one at a time', async (t) => {
     if (skipWithoutPeer(t)) return
     const raw = await RawPeer.connect('raw-tamper')
