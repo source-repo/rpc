@@ -78,21 +78,13 @@ public sealed class SignalRClientTransport : ISourceRpcTransport
         var connection = _build();
         _connection = connection;
 
-        connection.On<RpcFrame>(TransportContract.FrameName, async frame =>
-        {
-            var handler = FrameReceived;
-            if (handler is null)
-                return;
-            try
-            {
-                await handler(frame);
-            }
-            catch (Exception e)
-            {
-                // One unreadable frame from the far end must not take this peer down.
-                _log.LogError(e, "SourceRpc failed to handle an inbound frame");
-            }
-        });
+        // Started, not awaited, which is the same rule the socket.io and MQTT bindings follow and
+        // for the same reason: a receive loop that waits for the responder cannot deliver anything
+        // while it runs, so a responder that calls out mid-invocation waits for a reply that cannot
+        // arrive until it stops waiting. It resolves as a timeout on the outer call, which reads as
+        // a slow method rather than as the transport - the two other bindings each had it, and each
+        // was found only by a test that called back the other way.
+        connection.On<RpcFrame>(TransportContract.FrameName, frame => _ = DispatchAsync(frame));
         connection.On<PresenceUpdate>(TransportContract.PresenceName, update =>
         {
             if (update.Peers is { Length: > 0 } peers)
@@ -150,6 +142,22 @@ public sealed class SignalRClientTransport : ISourceRpcTransport
                     // Closed while waiting, which is the ordinary way this loop ends.
                 }
             });
+        }
+    }
+
+    private async Task DispatchAsync(RpcFrame frame)
+    {
+        var handler = FrameReceived;
+        if (handler is null)
+            return;
+        try
+        {
+            await handler(frame);
+        }
+        catch (Exception e)
+        {
+            // One unreadable frame from the far end must not take this peer down.
+            _log.LogError(e, "SourceRpc failed to handle an inbound frame");
         }
     }
 

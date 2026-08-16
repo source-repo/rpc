@@ -35,6 +35,25 @@ public sealed class MqttTransportOptions
 
     /// <summary>Credentials, when the broker wants them.</summary>
     public string? Password { get; set; }
+
+    /// <summary>
+    /// Sign every outgoing frame: (canonical bytes, this peer's name) -> base64 signature.
+    ///
+    /// Set it and this peer's frames can be checked by anyone holding its key. Leave it and its
+    /// `mr-src` is an unchecked claim, which on a broker is all it can ever be.
+    /// </summary>
+    public Func<byte[], string, string>? Sign { get; set; }
+
+    /// <summary>
+    /// Check every incoming frame: (canonical bytes, signature, claimed source) -> whether it holds.
+    ///
+    /// Set it and an unsigned frame is refused too - otherwise signing would be bypassed by simply
+    /// omitting the signature, which is not a check but a suggestion.
+    /// </summary>
+    public Func<byte[], string, string, bool>? Verify { get; set; }
+
+    /// <summary>How far a frame's timestamp may differ from now, for the replay window.</summary>
+    public TimeSpan MaxClockSkew { get; set; } = TimeSpan.FromMinutes(1);
 }
 
 /// <summary>
@@ -57,6 +76,7 @@ public sealed class MqttTransport : ISourceRpcTransport
     private readonly MqttFactory _factory = new();
     private readonly ConcurrentDictionary<string, PendingReply> _replies = new();
     private CancellationTokenSource? _closing;
+    private readonly ReplayGuard _replays;
 
     /// <summary>Where a caller asked to be answered, and in what.</summary>
     private readonly record struct PendingReply(string Topic, bool Json);
@@ -82,6 +102,7 @@ public sealed class MqttTransport : ISourceRpcTransport
         _mqtt = mqtt;
         _options = options;
         _log = log ?? NullLogger.Instance;
+        _replays = new ReplayGuard(mqtt.MaxClockSkew);
         _client = _factory.CreateMqttClient();
         _client.ApplicationMessageReceivedAsync += OnMessageAsync;
         _client.DisconnectedAsync += OnDisconnectedAsync;
@@ -168,13 +189,13 @@ public sealed class MqttTransport : ISourceRpcTransport
         return Task.CompletedTask;
     }
 
-    private async Task OnMessageAsync(MqttApplicationMessageReceivedEventArgs args)
+    private Task OnMessageAsync(MqttApplicationMessageReceivedEventArgs args)
     {
         var topic = args.ApplicationMessage.Topic;
         if (topic.StartsWith($"{_mqtt.Prefix}/presence/", StringComparison.Ordinal))
         {
             OnPresence(topic, args.ApplicationMessage.ConvertPayloadToString());
-            return;
+            return Task.CompletedTask;
         }
 
         var addressee = Mqtt5Frame.AddresseeOf(_mqtt.Prefix, topic) ?? _options.Name;
@@ -185,13 +206,32 @@ public sealed class MqttTransport : ISourceRpcTransport
             // and "the calls just time out" is the hardest kind of problem to diagnose.
             _log.LogWarning("SourceRpc refused a frame on {Topic}: {Reason}", topic, refusal);
             Rejected?.Invoke(refusal ?? "unreadable frame");
-            return;
+            return Task.CompletedTask;
+        }
+
+        if (_mqtt.Verify is not null && Refuse(args.ApplicationMessage, frame, topic) is { } denial)
+        {
+            _log.LogWarning("SourceRpc refused a frame from {Source}: {Reason}", frame.Src, denial);
+            Rejected?.Invoke(denial);
+            return Task.CompletedTask;
         }
 
         // Remembered before dispatch so a reply can go where the caller asked and in what it asked.
         if (frame.Corr is { Length: > 0 } corr && args.ApplicationMessage.ResponseTopic is { Length: > 0 } responseTopic)
             _replies[corr] = new PendingReply(responseTopic, args.ApplicationMessage.ContentType == "application/json");
 
+        // Started, not awaited. MQTTnet waits for this callback before delivering the next message,
+        // so awaiting a responder here means nothing else arrives until it returns - and a responder
+        // that calls out while handling a call would then wait for a reply that cannot be read until
+        // it stops waiting. That is a deadlock, and it resolves as a timeout on the outer call,
+        // which reads as a slow method rather than as this. Everything the reply path needs -
+        // the reply topic and its content type - was recorded above, synchronously, before this.
+        _ = DispatchAsync(frame);
+        return Task.CompletedTask;
+    }
+
+    private async Task DispatchAsync(RpcFrame frame)
+    {
         var handler = FrameReceived;
         if (handler is null)
             return;
@@ -203,6 +243,59 @@ public sealed class MqttTransport : ISourceRpcTransport
         {
             _log.LogError(e, "SourceRpc failed to handle a frame from {Source}", frame.Src);
         }
+    }
+
+    /// <summary>Why this frame must not be acted on, or null when it is authentic.</summary>
+    private string? Refuse(MqttApplicationMessage packet, RpcFrame frame, string topic)
+    {
+        string? Property(string name) =>
+            packet.UserProperties?.FirstOrDefault(p => p.Name == name)?.Value;
+
+        var signature = Property(Mqtt5Frame.Signature);
+        var nonce = Property(Mqtt5Frame.Nonce);
+        if (string.IsNullOrEmpty(signature) || string.IsNullOrEmpty(nonce))
+            // An unsigned frame is not a valid frame once verification is on, or signing would be
+            // bypassed by omitting the signature.
+            return "unsigned";
+        if (!long.TryParse(Property(Mqtt5Frame.Timestamp), out var timestamp))
+            return "no timestamp";
+
+        // The version gate applies to signed frames only, and the distinction is deliberate: an
+        // unsigned peer's version says nothing about security and refusing it would break plain-MQTT
+        // interop, which is the point of the layout. A *signed* frame announcing an older version is
+        // different - version 2 left the fence outside the signature, so accepting one would let a
+        // sender choose the form in which deleting one property disarms the owner check.
+        var announced = Property(Mqtt5Frame.Version) ?? Mqtt5Frame.FrameVersion;
+        if (announced != Mqtt5Frame.FrameVersion)
+            return $"signed frame version '{announced}', which this build does not accept";
+
+        if (!_replays.Accept(nonce, timestamp))
+            return "stale or replayed";
+
+        var canonical = MqttSigning.CanonicalBytes(
+            announced,
+            topic,
+            packet.ResponseTopic ?? "",
+            frame.Src,
+            frame.Kind,
+            frame.Path ?? "",
+            frame.Method ?? frame.Event ?? "",
+            frame.Corr ?? "",
+            packet.ContentType ?? "",
+            frame.Code ?? "",
+            frame.Ver ?? "",
+            frame.Ttl?.ToString() ?? "",
+            frame.Idem ?? "",
+            frame.Fence ?? "",
+            frame.Deferred == true ? "1" : "",
+            frame.Outcome ?? "",
+            frame.Seq?.ToString() ?? "",
+            frame.Epoch ?? "",
+            timestamp,
+            nonce,
+            packet.PayloadSegment);
+
+        return _mqtt.Verify!(canonical, signature, frame.Src) ? null : "bad signature";
     }
 
     private void OnPresence(string topic, string state)
@@ -247,6 +340,36 @@ public sealed class MqttTransport : ISourceRpcTransport
         var expiry = frame.Ttl is { } ttl and > 0 ? (uint)Math.Clamp((ttl + 999) / 1000, 1, uint.MaxValue) : _mqtt.DefaultExpirySeconds;
 
         var packet = Mqtt5Frame.ToPacket(frame, topic, responseTopic, json, expiry);
+        if (_mqtt.Sign is { } sign)
+        {
+            var nonce = MqttSigning.CreateNonce();
+            var timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+            var canonical = MqttSigning.CanonicalBytes(
+                Mqtt5Frame.FrameVersion,
+                topic,
+                responseTopic ?? "",
+                frame.Src,
+                frame.Kind,
+                frame.Path ?? "",
+                frame.Method ?? frame.Event ?? "",
+                frame.Corr ?? "",
+                packet.ContentType ?? "",
+                frame.Code ?? "",
+                frame.Ver ?? "",
+                frame.Ttl?.ToString() ?? "",
+                frame.Idem ?? "",
+                frame.Fence ?? "",
+                frame.Deferred == true ? "1" : "",
+                frame.Outcome ?? "",
+                frame.Seq?.ToString() ?? "",
+                frame.Epoch ?? "",
+                timestamp,
+                nonce,
+                packet.PayloadSegment);
+            packet.UserProperties.Add(new MQTTnet.Packets.MqttUserProperty(Mqtt5Frame.Nonce, nonce));
+            packet.UserProperties.Add(new MQTTnet.Packets.MqttUserProperty(Mqtt5Frame.Timestamp, timestamp.ToString()));
+            packet.UserProperties.Add(new MQTTnet.Packets.MqttUserProperty(Mqtt5Frame.Signature, sign(canonical, frame.Src)));
+        }
         await _client.PublishAsync(packet, cancellationToken);
     }
 

@@ -1,6 +1,7 @@
 using SourceRpc;
 using SourceRpc.SignalR;
 using SourceRpc.Mqtt;
+using SourceRpc.SocketIo;
 
 /*
  * The smallest hub the TypeScript interop suite can be pointed at - and, incidentally, the whole of
@@ -23,9 +24,42 @@ if (args.Length > 0 && args[0] == "client")
     return;
 }
 
+if (args.Length > 0 && args[0] == "canonical")
+{
+    // Prints the canonical signed bytes for field values given on stdin as a JSON array, so the
+    // TypeScript side can compute the same and the two can be compared byte for byte. A signature
+    // is worth nothing unless both ends agree on what was signed, and "it looked right" is not
+    // agreement - one escape apart is a frame that verifies nowhere.
+    // Fields arrive base64-encoded UTF-16, not as JSON strings: a lone surrogate is a legal .NET
+    // string and one of the cases worth checking, but no JSON reader will hand one back.
+    var line = await Console.In.ReadToEndAsync();
+    // Rebuilt code unit by code unit rather than through Encoding.Unicode, which replaces an
+    // unpaired surrogate with U+FFFD - it would quietly repair the very input under test.
+    var fields = line.Trim('\n', '\r').Split(',').Select(f =>
+    {
+        var raw = Convert.FromBase64String(f);
+        var chars = new char[raw.Length / 2];
+        for (var i = 0; i < chars.Length; i++)
+            chars[i] = (char)(raw[i * 2] | (raw[i * 2 + 1] << 8));
+        return new string(chars);
+    }).ToArray();
+    var canonical = MqttSigning.CanonicalBytes(
+        fields[0], fields[1], fields[2], fields[3], fields[4], fields[5], fields[6], fields[7], fields[8],
+        fields[9], fields[10], fields[11], fields[12], fields[13], fields[14], fields[15], fields[16], fields[17],
+        long.Parse(fields[18]), fields[19], System.Text.Encoding.UTF8.GetBytes(fields[20]));
+    Console.WriteLine(Convert.ToBase64String(canonical));
+    return;
+}
+
 if (args.Length > 0 && args[0] == "mqtt")
 {
     await RunOnBroker(args.Length > 1 ? args[1] : "mqtt://127.0.0.1:1883", args.Length > 2 ? args[2] : "msgrpc/v2");
+    return;
+}
+
+if (args.Length > 0 && args[0] == "socketio")
+{
+    await RunOnSocketIo(args.Length > 1 ? args[1] : "http://127.0.0.1:3970");
     return;
 }
 
@@ -130,18 +164,65 @@ static async Task RunAsClient(string url, string target)
 /// transport seam doing its job - and this is the first binding to prove it, because it shares no
 /// wire format with the other one at all.
 /// </summary>
+/// <summary>
+/// The same peer again, dialling a socket.io server.
+///
+/// Worth reading beside <see cref="RunOnBroker"/>: the responder, the dispatcher, the ownership and
+/// the idempotency store are identical, and what differs is one constructor. That is the transport
+/// seam's whole claim, and this is the cheapest place to check it is still true.
+/// </summary>
+static async Task RunOnSocketIo(string url)
+{
+    var options = new SourceRpcOptions { Name = Environment.GetEnvironmentVariable("RPC_PEER_NAME") ?? "csharp-socketio", IncludeExceptionDetail = true };
+    var telemetry = new SourceRpcTelemetry();
+    var events = new TransportEvents();
+    var meter = new Meter(events);
+    var dispatcher = new RpcDispatcher(options, new SubscriptionTable(), telemetry, meter, null, new FixedOwner(), new InMemoryIdempotencyStore());
+    using var logging = LoggerFactory.Create(b => b.AddSimpleConsole().SetMinimumLevel(
+        Enum.TryParse<LogLevel>(Environment.GetEnvironmentVariable("RPC_LOG_LEVEL"), out var socketIoLevel) ? socketIoLevel : LogLevel.Warning));
+    await using var transport = new SocketIoClientTransport(url, options, logging.CreateLogger("SourceRpc.SocketIo"));
+    await using var client = new SourceRpcClient(transport, options, telemetry, dispatcher);
+    events.Bind(transport, options.Name, dispatcher);
+    meter.Caller = client;
+
+    await client.StartAsync();
+    for (var waited = 0; !transport.Connected && waited < 100; waited++)
+        await Task.Delay(100);
+    // Not a readiness gate, unlike the other two modes: this peer dials a server that the suite
+    // using it usually starts *afterwards*, so being unconnected here is the ordinary case and the
+    // retry loop is what resolves it. Printed anyway, because a peer that never connects looks
+    // identical to one that connected and was ignored.
+    Console.WriteLine(transport.Connected ? "RPC-SOCKETIO-READY" : "RPC-SOCKETIO-WAITING (no server yet; retrying)");
+
+    await Task.Delay(Timeout.Infinite);
+}
+
 static async Task RunOnBroker(string brokerUrl, string prefix)
 {
     var options = new SourceRpcOptions { Name = Environment.GetEnvironmentVariable("RPC_PEER_NAME") ?? "csharp-mqtt", IncludeExceptionDetail = true };
     var telemetry = new SourceRpcTelemetry();
-    var events = new BrokerEvents();
-    var dispatcher = new RpcDispatcher(options, new SubscriptionTable(), telemetry, new Meter(events), null, new FixedOwner(), new InMemoryIdempotencyStore());
-    await using var transport = new MqttTransport(new MqttTransportOptions { BrokerUrl = brokerUrl, Prefix = prefix }, options);
+    var events = new TransportEvents();
+    var meter = new Meter(events);
+    var dispatcher = new RpcDispatcher(options, new SubscriptionTable(), telemetry, meter, null, new FixedOwner(), new InMemoryIdempotencyStore());
+
+    var mqtt = new MqttTransportOptions { BrokerUrl = brokerUrl, Prefix = prefix };
+    // One shared secret for every peer, which is right for a test and wrong for a plant: HMAC is
+    // symmetric, so a secret this broad lets any holder sign as any peer. A real deployment gives
+    // each peer its own and resolves it by name, which is what the verifier's callback is for.
+    if (Environment.GetEnvironmentVariable("RPC_MQTT_SECRET") is { Length: > 0 } shared)
+    {
+        var secret = System.Text.Encoding.UTF8.GetBytes(shared);
+        mqtt.Sign = MqttSigning.HmacSigner(secret);
+        mqtt.Verify = MqttSigning.HmacVerifier(_ => secret);
+    }
+
+    await using var transport = new MqttTransport(mqtt, options);
     await using var client = new SourceRpcClient(transport, options, telemetry, dispatcher);
     // Bound after the dispatcher exists rather than injected into it. The publisher needs to know
     // who is subscribed and the dispatcher needs the responder that publishes - a cycle a container
     // cannot build, and the one that produced a hub whose methods were never invoked.
     events.Bind(transport, options.Name, dispatcher);
+    meter.Caller = client;
 
     await client.StartAsync();
     for (var waited = 0; !transport.Connected && waited < 100; waited++)
@@ -153,14 +234,15 @@ static async Task RunOnBroker(string brokerUrl, string prefix)
 }
 
 /// <summary>
-/// Event publishing over a transport rather than a hub.
+/// Event publishing over a transport rather than a hub - the same class for MQTT and socket.io,
+/// because nothing in it is either.
 ///
 /// Deliberately small and deliberately here rather than in the library: fanning an event out to
 /// subscribers needs the subscription table and a way to send, and on a broker "a way to send" is
 /// the transport itself. A binding-independent publisher is the obvious next thing to lift into the
 /// core, and it is not lifted yet because one implementation is not a pattern.
 /// </summary>
-internal sealed class BrokerEvents : ISourceRpcEvents
+internal sealed class TransportEvents : ISourceRpcEvents
 {
     private ISourceRpcTransport? _transport;
     private string _self = "";
@@ -226,6 +308,15 @@ internal sealed class Meter : ISourceRpcResponder
     // a real host a PLC client and a logger beside it.
     public Meter(ISourceRpcEvents events) => _events = events;
 
+    /// <summary>
+    /// This peer's own client, for the one method that calls back out.
+    ///
+    /// Assigned after construction rather than injected, for the reason the event publisher is: the
+    /// client owns the dispatcher and the dispatcher owns this responder, so asking a container to
+    /// build the cycle produces a peer whose methods are silently never invoked.
+    /// </summary>
+    public SourceRpcClient? Caller { get; set; }
+
     private int _ran;
 
     public async ValueTask<object?> InvokeAsync(RpcInvocation invocation, CancellationToken cancellationToken = default)
@@ -262,6 +353,20 @@ internal sealed class Meter : ISourceRpcResponder
 
             case "echo":
                 return invocation.Arg<string>(0);
+
+            case "relay":
+                // The other direction: this peer as the *caller*, over the same link something just
+                // called it on. Worth a method of its own because a client transport that can only
+                // answer is half a binding, and the half that is missing is the one an engineering
+                // tool actually wants - reaching a service, rather than waiting to be reached.
+                if (Caller is null)
+                    throw SourceRpcException.Forbidden("this peer has no client to relay through");
+                return await Caller.CallAsync<string>(
+                    invocation.Arg<string>(0) ?? "",
+                    "echo",
+                    "say",
+                    [invocation.Arg<string>(1)],
+                    cancellationToken: cancellationToken);
 
             case "slow":
             {

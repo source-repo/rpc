@@ -1,7 +1,7 @@
 import anyTest, { TestFn } from 'ava'
 import { randomUUID } from 'crypto'
 import { connectAsync } from 'mqtt'
-import { MqttTransport, RpcClient } from './index.js'
+import { MqttTransport, rpc, rpcNamespace, RpcClient, RpcServer } from './index.js'
 
 /**
  * A TypeScript peer and a C# peer on one broker.
@@ -158,6 +158,36 @@ test.serial('a subscription taken over the broker delivers C# events, stamped', 
     t.is(typeof stamps[0], 'number', 'and the emission was counted, so a watcher can claim it missed nothing')
 
     await client.close()
+})
+
+/** Something on the TypeScript side for the C# peer to call, so both directions are under test. */
+@rpcNamespace('echo')
+class Echo {
+    @rpc({ semantics: 'query' })
+    async say(tag: string) {
+        return `echo:${tag}`
+    }
+}
+
+test.serial('the C# peer calls back the other way, while answering a call', async (t) => {
+    if (skipWithoutPeer(t)) return
+    const host = `ts-host-${run}`
+    const server = new RpcServer({
+        name: host,
+        transports: [new MqttTransport(host, BROKER_URL, { prefix: PREFIX, sessionExpirySeconds: 10 })]
+    })
+    server.exposeClassInstance(new Echo(), 'echo')
+    await server.ready()
+
+    const meter = await server.proxy<{ relay(target: string, tag: string): Promise<string> }>('meter', CSHARP_PEER)
+
+    // Re-entrant on purpose: the C# peer is *inside* a method this call started when it makes its
+    // own. A binding that waits for the responder before reading the next frame cannot deliver the
+    // answer to that inner call, and the whole thing resolves as a timeout on the outer one - which
+    // looks like a slow method and sends the search nowhere near the transport.
+    t.is(await meter.relay(host, 'ping'), 'echo:ping')
+
+    await server.close()
 })
 
 test.serial('a deferred C# method answers twice over the broker', async (t) => {

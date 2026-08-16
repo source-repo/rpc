@@ -2,6 +2,26 @@
 
 ## Unreleased
 
+### `SourceRpc.SocketIo` — a C# client, and two deadlocks the other bindings were also carrying
+
+The third binding, and a client only: socket.io's server is a Node library with no maintained .NET equivalent, so a .NET process that needs to be dialled into serves SignalR instead. What is actually written here is an encoder, a decoder and two event names — everything else is the shared dispatcher and client, which is what the seam was cut for.
+
+Two bugs, both found by one test that nothing else in the suite had asked for: **the C# peer calling back the other way while it is answering a call.**
+
+**A responder that calls out mid-invocation deadlocked, on every binding.** socket.io, MQTTnet and SignalR all wait for the receive callback to return before delivering the next message, so awaiting the responder there means nothing arrives until it finishes — and a responder waiting for a reply is waiting for something that cannot be read until it stops waiting. It resolves as a timeout on the *outer* call, which reads as a slow method and sends the search nowhere near the transport. All three bindings now start the dispatch instead of awaiting it, which is what the TypeScript client has always done: socket.io's JavaScript client never awaits a listener either, so this is the ordering the protocol was written against. Frames are correlated and events carry a cursor, so nothing above depends on being *handled* in arrival order.
+
+**A server restart orphaned every .NET socket.io peer, permanently and silently.** socket.io deliberately never auto-reconnects after a server-initiated close — which is exactly what a restarting server sends on its way down. The process stayed healthy, sends threw "not connected", and nothing ever tried again. The TypeScript client transport has carried the workaround for a while; this one now does too. Found because the interop suite failed the second time it was run against the same peer, and the peer's own log ended with `link closed: io server disconnect`.
+
+### Signing on MQTT
+
+The `mr-nonce`/`mr-ts`/`mr-sig` properties were named and nothing produced or checked them, which is recorded two entries below as known and unfixed. `MqttSigning` now produces and checks them: HMAC-SHA256 out of the box, a `ReplayGuard` that refuses a repeated nonce or a stale timestamp, and refusal of any unsigned frame once `Verify` is set — because signing that can be bypassed by omitting the signature is not signing.
+
+This matters more on MQTT than on the other carriers, and structurally rather than by degree: peers connect to a broker rather than to each other, so a receiver has no connection to attribute a frame to and `mr-src` is only a claim. socket.io and SignalR authenticate the connection once and pin the source to it, which is a stronger claim checked in one place — which is why neither of those bindings signs frames and neither needs to.
+
+**The canonical bytes had to be byte-identical with the TypeScript library's, and were not.** System.Text.Json escapes more than JavaScript does — `<`, `>`, `&`, `+` and every non-ASCII character — and "more escaping" is not a safe difference: it is a different byte sequence, and the signature over it verifies nowhere while looking like a wrong key, a clock skew or a broker problem. So the JSON is written out by hand against ECMA-262's QuoteJSONString, and `MqttSigningInterop.test.ts` computes the same bytes in both libraries and compares them. It earned its place immediately: a matched surrogate pair was signed with its low half escaped, because the loop met that half again on the next turn and read it as a lone surrogate.
+
+`MqttSignedInterop.test.ts` then checks the whole thing on a real broker with real HMACs, from outside the library — an unsigned frame refused, a wrongly signed one refused, a captured frame that cannot be sent again, and each covered field tampered with **one at a time**, signing one set of properties and publishing another. That last part is the difference between a test that passes and one that means something: changing a property *and* the nonce would fail on the nonce, and prove nothing about the property. Every case is anchored by a positive control — the same raw construction, honestly signed, is answered — so "nothing came back" is a refusal rather than a topic typo.
+
 ### `SourceRpc.Mqtt` — a C# peer on a broker
 
 The second binding, and the one that tests whether the seam was real: it shares no wire format with the first. SignalR carries the flat frame as a typed object; MQTT carries the `mr-` property layout with the body alone in the payload, and the two have no bytes in common. What they share is `RpcFrame`, the dispatcher, the client and every semantic below them - so the binding is a frame mapping and a class that moves packets, and calls, errors, events, subscriptions, fences, idempotency and deferred answers all behaved without being written twice.
@@ -12,7 +32,7 @@ The second binding, and the one that tests whether the seam was real: it shares 
 
 Also found: **MessagePack 2.5.192 carries known vulnerabilities**, and `TreatWarningsAsErrors` turned NU1902 into a build failure rather than a warning nobody reads. Both projects now pin 2.5.302 - the version `Microsoft.AspNetCore.SignalR.Protocols.MessagePack` already resolves - so one MessagePack is loaded rather than two majors in a process that holds both bindings.
 
-Not here yet, and worth naming rather than discovering: **signing.** `mr-nonce`/`mr-ts`/`mr-sig` are named and nothing produces or checks them, so a C# peer cannot join a signed network. That matters more on MQTT than elsewhere, because there is no connection to attribute a frame to and the broker relays a `source` field written by whoever sent it.
+Signing was named here as missing and is no longer — see the entry above. `mr-nonce`/`mr-ts`/`mr-sig` were declared in `Mqtt5Frame` and produced by nothing, so a C# peer could not join a signed network at all.
 
 ### A ticket's answer is no longer lost when it arrives before the caller holds the ticket
 

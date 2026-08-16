@@ -85,6 +85,16 @@ jobs:
             # is started as a step below - after the checkout that contains it.
             SOURCE_RPC_TEST_SIGNALR_HUB: http://127.0.0.1:5217/rpc
             SOURCE_RPC_REQUIRE_SIGNALR: '1'
+            # The same C# peer again on the other two carriers, which is the point of running them
+            # here: the dispatcher, the responder, the ownership and the idempotency store are
+            # shared, so a semantic that only holds over SignalR would pass its own suite and fail
+            # these. Each is started as a step below, for the reason the hub is.
+            SOURCE_RPC_TEST_CSHARP_MQTT: csharp-mqtt
+            SOURCE_RPC_TEST_CSHARP_MQTT_SIGNED: csharp-signed
+            SOURCE_RPC_TEST_CSHARP_MQTT_SECRET: interop-secret
+            SOURCE_RPC_TEST_CSHARP_SOCKETIO: csharp-socketio
+            SOURCE_RPC_REQUIRE_CSHARP_MQTT: '1'
+            SOURCE_RPC_REQUIRE_CSHARP_SOCKETIO: '1'
 
         steps:
             - uses: actions/checkout@v7
@@ -153,7 +163,7 @@ jobs:
             # inotify instance, and a runner that has spent its allowance throws at startup with an
             # IOException naming inotify and nothing about this repository - which is a long way to
             # travel from the symptom. A test host reads no configuration it could usefully reload.
-            - name: Start the SignalR hub
+            - name: Start the C# peers
               env:
                   DOTNET_USE_POLLING_FILE_WATCHER: '1'
               run: |
@@ -162,14 +172,43 @@ jobs:
                       -c Release --no-build -- --urls http://127.0.0.1:5217 > /tmp/signalr-hub.log 2>&1 &
                   node tools/wait-for-port.mjs 5217 "SignalR hub"
 
+                  # A peer on the broker, and a second one that signs every frame and refuses
+                  # anything unsigned. Two processes rather than one option, because a peer cannot
+                  # be both: verification is on or off for the whole link, and both states need
+                  # covering - the signed suite proves the checks bite, the unsigned one proves
+                  # they are not what makes the protocol work.
+                  RPC_PEER_NAME=csharp-mqtt nohup dotnet run --project packages/csharp/TestHost/TestHost.csproj \
+                      -c Release --no-build -- mqtt "$MSGRPC_TEST_BROKER" msgrpc/v2 > /tmp/csharp-mqtt.log 2>&1 &
+                  RPC_PEER_NAME=csharp-signed RPC_MQTT_SECRET="$SOURCE_RPC_TEST_CSHARP_MQTT_SECRET" \
+                      nohup dotnet run --project packages/csharp/TestHost/TestHost.csproj \
+                      -c Release --no-build -- mqtt "$MSGRPC_TEST_BROKER" msgrpc/v2 > /tmp/csharp-signed.log 2>&1 &
+
+                  # And one on socket.io, which is the only peer here that cannot be waited for:
+                  # it dials a server the test suite starts, so it is *expected* to be unconnected
+                  # until then and its retry loop is what closes the gap.
+                  RPC_PEER_NAME=csharp-socketio nohup dotnet run --project packages/csharp/TestHost/TestHost.csproj \
+                      -c Release --no-build -- socketio http://127.0.0.1:3970 > /tmp/csharp-socketio.log 2>&1 &
+
+                  for log in /tmp/csharp-mqtt.log /tmp/csharp-signed.log; do
+                      for _ in $(seq 1 60); do
+                          grep -q RPC-MQTT-READY "$log" && break
+                          sleep 1
+                      done
+                      grep -q RPC-MQTT-READY "$log" || { echo "peer never reached the broker:"; cat "$log"; exit 1; }
+                  done
+
             - run: npm test
 
             # The hub logs a warning when it cannot bind a frame and answers nothing, which from the
             # client side is indistinguishable from being ignored. Worth having in the run that
             # failed rather than reproducing it to find out.
-            - name: The hub's log, if anything failed
+            - name: The peers' logs, if anything failed
               if: failure()
-              run: cat /tmp/signalr-hub.log || true
+              run: |
+                  for log in /tmp/signalr-hub.log /tmp/csharp-mqtt.log /tmp/csharp-signed.log /tmp/csharp-socketio.log; do
+                      echo "===== $log"
+                      cat "$log" || true
+                  done
 
     # The platform some of the devices are, which is the only reason this is here: there are Windows
     # Embedded PLCs that would run a peer, and "it probably works" is not something a plant should
@@ -204,6 +243,16 @@ jobs:
             # where it is going to live.
             SOURCE_RPC_TEST_SIGNALR_HUB: http://127.0.0.1:5217/rpc
             SOURCE_RPC_REQUIRE_SIGNALR: '1'
+            # The same C# peer again on the other two carriers, which is the point of running them
+            # here: the dispatcher, the responder, the ownership and the idempotency store are
+            # shared, so a semantic that only holds over SignalR would pass its own suite and fail
+            # these. Each is started as a step below, for the reason the hub is.
+            SOURCE_RPC_TEST_CSHARP_MQTT: csharp-mqtt
+            SOURCE_RPC_TEST_CSHARP_MQTT_SIGNED: csharp-signed
+            SOURCE_RPC_TEST_CSHARP_MQTT_SECRET: interop-secret
+            SOURCE_RPC_TEST_CSHARP_SOCKETIO: csharp-socketio
+            SOURCE_RPC_REQUIRE_CSHARP_MQTT: '1'
+            SOURCE_RPC_REQUIRE_CSHARP_SOCKETIO: '1'
 
         steps:
             - uses: actions/checkout@v7

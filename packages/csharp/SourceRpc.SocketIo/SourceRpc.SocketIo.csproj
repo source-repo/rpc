@@ -1,11 +1,16 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <!--
-    The MQTT binding: a peer on a broker, which on this carrier is the only shape there is - there
-    is no server to write, because the broker is the middle.
+    The socket.io binding, and a client only.
 
-    Note what this does *not* reference: ASP.NET Core. That is the reason the core was split out of
-    the SignalR package, and this is the project that proves it was worth doing.
+    There is no server here, and that is a judgement rather than an omission: socket.io's server is
+    a Node library with no maintained .NET equivalent, and a half-built one would be a protocol
+    surface nobody could stand behind. A .NET process that wants to *be* served dials out to a
+    TypeScript socket.io server with this, or serves SignalR with SourceRpc.SignalR, which is the
+    same shape in the world that has a server.
+
+    Like the MQTT binding, this references no ASP.NET Core - a console app, a service or a Windows
+    Forms tool can take part without pulling a web stack in behind it.
   -->
   <PropertyGroup>
     <TargetFramework>net8.0</TargetFramework>
@@ -13,17 +18,17 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <LangVersion>12</LangVersion>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
-    <RootNamespace>SourceRpc.Mqtt</RootNamespace>
-    <AssemblyName>SourceRpc.Mqtt</AssemblyName>
+    <RootNamespace>SourceRpc.SocketIo</RootNamespace>
+    <AssemblyName>SourceRpc.SocketIo</AssemblyName>
   </PropertyGroup>
 
   <PropertyGroup>
     <IsPackable>true</IsPackable>
-    <PackageId>SourceRpc.Mqtt</PackageId>
+    <PackageId>SourceRpc.SocketIo</PackageId>
     <Version>4.7.0</Version>
     <Authors>anderswestberg</Authors>
-    <Description>Source RPC over MQTT 5: a peer on a broker, speaking the mr- property layout that lets a plain MQTT client take part with no msgrpc code.</Description>
-    <PackageTags>mqtt;rpc;msgrpc;automation;iiot</PackageTags>
+    <Description>Source RPC over socket.io, for a .NET peer that dials out to a TypeScript socket.io server. Client only - socket.io has no maintained .NET server.</Description>
+    <PackageTags>socketio;rpc;msgrpc;automation;iiot</PackageTags>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
     <PackageProjectUrl>https://github.com/source-repo/rpc</PackageProjectUrl>
     <RepositoryUrl>https://github.com/source-repo/rpc</RepositoryUrl>
@@ -37,7 +42,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="MQTTnet" Version="4.3.7.1207" />
+    <PackageReference Include="SocketIOClient" Version="4.0.5" />
     <PackageReference Include="MessagePack" Version="2.5.302" />
   </ItemGroup>
 

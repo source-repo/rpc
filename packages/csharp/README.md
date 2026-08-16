@@ -9,6 +9,7 @@ A .NET process as a peer on a Source RPC network — serving methods, publishing
 | **`SourceRpc`** | the frame, the dispatcher, the client, routing, the error model, telemetry | nothing but the BCL |
 | **`SourceRpc.SignalR`** | a hub for a process others dial into, and a client transport for one that dials out | ASP.NET Core |
 | **`SourceRpc.Mqtt`** | a peer on a broker — no server to write, because the broker is the middle | MQTTnet |
+| **`SourceRpc.SocketIo`** | a client for a .NET process that dials into a TypeScript socket.io server | SocketIOClient |
 
 The split is the point. A SignalR hub needs ASP.NET Core; an MQTT client on a device does not, and should not carry a web framework to get a protocol. So everything that decides what a frame *means* lives in `SourceRpc`, and a binding is a small class that moves frames.
 
@@ -24,10 +25,10 @@ ISourceRpcTransport                  ← the seam
    ▼
 SourceRpc.SignalR                    hub (server) + client transport
 SourceRpc.Mqtt                       peer on a broker
-SourceRpc.SocketIo                   client only — planned, see below
+SourceRpc.SocketIo                   client only
 ```
 
-**The bindings.** SignalR gives both halves, because ASP.NET Core can host a hub. MQTT has no server to write at all, since the broker is the middle — a peer subscribes to its own topics and publishes to others'. socket.io will give a **client only**: there is no reasonable C# socket.io *server*, and none is needed, since the TypeScript side already serves socket.io.
+**The bindings.** SignalR gives both halves, because ASP.NET Core can host a hub. MQTT has no server to write at all, since the broker is the middle — a peer subscribes to its own topics and publishes to others'. socket.io gives a **client only**: socket.io's server is a Node library with no maintained .NET equivalent, and none is needed, since the TypeScript side already serves socket.io. A .NET process that needs to be *dialled into* serves SignalR instead — the same flat frame under different method names, which is why a TypeScript client reaches either.
 
 **MQTT does not use the flat frame, and that is the point of it.** It speaks the `mr-` property layout of [`docs/mqtt5-frame-spec.md`](../../docs/mqtt5-frame-spec.md): the topic carries the addressee, `responseTopic` says where a reply goes, `correlationData` pairs it, and `messageExpiryInterval` lets the broker drop a request whose caller has stopped waiting. A flat frame in the payload would throw all of that away — along with the property the layout exists for, that a plain MQTT client with no msgrpc code can take part and an operator can see why a call failed in MQTT Explorer without decoding anything. What the two share is the *model*: both map to `RpcFrame`, so a call means the same thing on either and only the spelling differs. That claim is what `packages/rpc/src/MqttInterop.test.ts` tests, by putting a TypeScript peer and a C# peer on one broker.
 
@@ -91,6 +92,20 @@ await using var watch = await client.SubscribeAsync("vs-automation", "meter", "t
 
 A client is a peer, so it can also be called: give it a dispatcher and frames addressed to it are served down the same link. That is the ordinary shape for a device that both reports and takes instructions.
 
+The carrier is one constructor. The same three lines over socket.io, dialling a TypeScript server:
+
+```csharp
+await using var transport = new SocketIoClientTransport("http://plant:3000", options);
+```
+
+or over a broker:
+
+```csharp
+await using var transport = new MqttTransport(new MqttTransportOptions { BrokerUrl = "mqtt://plant:1883" }, options);
+```
+
+Everything above the transport — correlation, deadlines, tickets, fences, idempotency, error mapping — is the same code in all three cases, which is what stops three bindings quietly disagreeing about what a timeout means.
+
 ## Identity
 
 **A frame's `src` is a claim until something checks it.** The hub records which peers a connection holds a route for — the name it announced, plus whatever it advertised as `carrying` — and refuses a frame naming anything else. Without that, any connected client could send `src: "plc-production-1"` and be treated as that peer; and since subscriptions are keyed by the same field, it could cancel that peer's subscriptions too.
@@ -152,6 +167,22 @@ SOURCE_RPC_TEST_CSHARP_MQTT=csharp-mqtt SOURCE_RPC_REQUIRE_CSHARP_MQTT=1 \
     npm test --workspace=@source-repo/rpc
 ```
 
+A second peer with `RPC_MQTT_SECRET` set signs every frame and refuses anything unsigned, which is what `MqttSignedInterop.test.ts` needs:
+
+```
+RPC_PEER_NAME=csharp-signed RPC_MQTT_SECRET=interop-secret \
+    dotnet run --project packages/csharp/TestHost -c Release -- mqtt mqtt://127.0.0.1:1883 msgrpc/v2
+```
+
+And socket.io, where the roles are the other way round — the C# peer dials a server the test suite starts, so start the peer *first* and let its retry loop close the gap:
+
+```
+RPC_PEER_NAME=csharp-socketio \
+    dotnet run --project packages/csharp/TestHost -c Release -- socketio http://127.0.0.1:3970
+
+SOURCE_RPC_TEST_CSHARP_SOCKETIO=csharp-socketio npm test --workspace=@source-repo/rpc
+```
+
 **Turn on container validation in your host.** A dependency cycle among these registrations produced a hub whose methods were silently never invoked — SignalR accepted the connection, the caller's `invoke` never returned, and nothing was logged. With validation on, the same mistake is a startup exception naming the cycle:
 
 ```csharp
@@ -195,9 +226,29 @@ case "build":
 
 The ticket's id is the call's own correlation, so nothing is minted and nothing extra travels — and a caller accepts the later answer only for a call it actually made, to the peer it made it to, which is what leaves a forged result nothing to attach itself to. From C#, `client.CallDeferredAsync<T>(…)` returns an `RpcTicket<T>` with a `Result` task and a `Progress` event.
 
-## What is not here yet
+## Signing on MQTT
 
-**Signing on MQTT.** The `mr-nonce`/`mr-ts`/`mr-sig` properties are named in `Mqtt5Frame` and nothing produces or checks them, so a C# peer cannot join a network whose frames are signed. That matters more here than on the other bindings and is worth saying plainly: MQTT has no connection to attribute a frame to, so signing is how a peer's identity is checked at all — a broker relays a `source` field written by whoever sent it. Until it exists, trust on an MQTT network with a C# peer rests on broker credentials and ACLs.
+MQTT is the one carrier where a frame's `mr-src` is only a claim. Peers connect to a broker rather than to each other, so a receiver has no connection to attribute a message to; a broker operator, or any peer whose ACLs let it publish to another peer's topic, can otherwise issue commands as anybody. On socket.io and SignalR the connection is authenticated once at the handshake and the source pinned to it, which is a stronger claim checked in one place — and is why those two bindings have no per-frame signature and do not need one.
+
+```csharp
+var secret = Encoding.UTF8.GetBytes(configuration["Rpc:Secret"]!);
+var mqtt = new MqttTransportOptions
+{
+    BrokerUrl = "mqtt://plant-broker:1883",
+    Sign = MqttSigning.HmacSigner(secret),
+    // Given the sender's name, so a real deployment holds one secret per peer rather than one
+    // secret shared by all of them — HMAC is symmetric, and whoever can verify can also forge.
+    Verify = MqttSigning.HmacVerifier(peer => SecretFor(peer)),
+};
+```
+
+With `Verify` set, an unsigned frame is refused, so signing cannot be bypassed by omitting the signature. What the signature covers is everything a receiver *acts on*: the content type that decides how the payload is read, the error code, the ttl, the owner fence, the idempotency key, the deferred marker and the ticket outcome. `messageExpiryInterval` is deliberately excluded — the broker rewrites it in flight, and it may only narrow the signed ttl.
+
+A signature says who wrote a frame, never how many times they meant to send it, so `ReplayGuard` refuses a frame whose nonce has been seen or whose timestamp is outside `MaxClockSkew` (one minute by default). Without it, a captured command can simply be sent again.
+
+The canonical bytes are byte-identical with the TypeScript library's, and `packages/rpc/src/MqttSigningInterop.test.ts` compares them directly for the cases where JavaScript and System.Text.Json disagree — non-ASCII, `<`, `&`, `+`, control characters, surrogate pairs and lone surrogates. That test is not ceremony: it caught a matched surrogate pair being signed with its low half escaped, which would have produced frames that verify nowhere while looking like a key or clock problem.
+
+## What is not here yet
 
 **Shared subscriptions** (`$share/<group>/…`), which is how MQTT replicas load-balance requests.
 
