@@ -10,9 +10,9 @@ npm install @source-repo/rpc
 
 ## If all you need is a browser and a Node server
 
-Use [tRPC](https://trpc.io). It is very good at exactly that, it is far more widely used, and you will find more answers to your questions.
+For a conventional web app — one browser talking to one backend — [tRPC](https://trpc.io), typically with TanStack Query, is today the more battle-tested choice, and we recommend it for that shape.
 
-Come here when the shape is different — when there are *more than two* parties and they are not all on the same kind of link:
+Source RPC is for systems: peers on both sides of the browser boundary, components with live observable state, multiple addressable services, and AI/MCP participation across the network. Come here when the shape is different — when your app is, or is becoming, a distributed, MCP-enabled topology:
 
 - devices on an MQTT broker and operator screens on a WebSocket, calling each other without either end knowing which transport the other is on
 - peers that cannot listen — a browser tab hosting a service, a box behind NAT — that still need to be addressable by name

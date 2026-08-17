@@ -27,7 +27,7 @@ ESM only, Node 22 or later, and it runs in the browser.
 
 **Documentation: [source-repo.github.io/rpc](https://source-repo.github.io/rpc/)** — the guide, the tools and the operations pages, with search.
 
-**If all you need is a browser talking to a Node server, use [tRPC](https://trpc.io).** It is very good at that and far more widely used. This is for the case it does not cover: more than two parties, not all on the same kind of link, and commands where sending one twice is not free.
+**If all you need is a browser talking to one backend, use [tRPC](https://trpc.io), typically with TanStack Query.** It is today the more battle-tested choice for a conventional web app, and we recommend it for that shape. Source RPC is for systems: peers on both sides of the browser boundary, components with live observable state, multiple addressable services, and AI/MCP participation across the network. Use it when your app is, or is becoming, a distributed, MCP-enabled topology.
 
 ## Quick start
 
