@@ -4,8 +4,10 @@
 # package answers the same questions against Postgres and MySQL, and all of those tests skip
 # themselves when nothing is reachable - which is right on a laptop and wrong here, because a run
 # that reports itself green having quietly skipped them is the run somebody trusts.
-# SOURCE_RPC_REQUIRE_BROKER and SOURCE_RPC_REQUIRE_SQL turn those skips into failures, so an absent
-# server cannot pass for a passing test.
+# SOURCE_RPC_REQUIRE_BROKER, SOURCE_RPC_REQUIRE_SQL and SOURCE_RPC_REQUIRE_MONGO turn those skips
+# into failures, so an absent server cannot pass for a passing test. Each of them needs a service
+# below to be worth anything: a guard set against a server nothing starts does not make the run
+# honest, it makes it red for a reason no change caused.
 name: CI
 
 on:
@@ -68,6 +70,26 @@ jobs:
                     --health-timeout 3s
                     --health-retries 20
 
+            # For @source-repo/document, and the one service whose absence is invisible: there is no
+            # in-memory MongoDB, so without a server every test in that package skips and the package
+            # reports itself green having run nothing. SOURCE_RPC_REQUIRE_MONGO below is what turns
+            # that into a failure - and it was set here before this service existed, so the job died
+            # on every run until it did. `ping` is one of the few commands a mongod answers before
+            # authentication, which is what lets the health check work against a server that has root
+            # credentials configured.
+            mongo:
+                image: mongo:8.0
+                env:
+                    MONGO_INITDB_ROOT_USERNAME: test
+                    MONGO_INITDB_ROOT_PASSWORD: test
+                ports:
+                    - 27017:27017
+                options: >-
+                    --health-cmd "mongosh --quiet --eval 'db.runCommand({ ping: 1 }).ok'"
+                    --health-interval 5s
+                    --health-timeout 3s
+                    --health-retries 20
+
         env:
             MSGRPC_TEST_BROKER: mqtt://localhost:1883
             MSGRPC_TEST_POSTGRES: postgres://test:test@localhost:5432/test
@@ -126,11 +148,9 @@ jobs:
             # A service container is started before the job, not necessarily *ready* before it: EMQX
             # takes a few seconds to open 1883. Waiting here rather than lengthening every test's
             # connect timeout keeps the wait in one place, and fails with a clear message if the
-            # broker never arrives - rather than as a dozen puzzling test failures.
-            # A service container is started before the job, not necessarily *ready* before it: EMQX
-            # takes a few seconds to open 1883. Waiting here rather than lengthening every test's
-            # connect timeout keeps the wait in one place, and fails with a clear message if the
-            # broker never arrives - rather than as a dozen puzzling test failures.
+            # broker never arrives - rather than as a dozen puzzling test failures. The three servers
+            # with a health check need no such step, because the runner already withholds the job
+            # until they answer one; EMQX has none, which is why this is here and they are not.
             - name: Wait for the broker
               run: node tools/wait-for-port.mjs 1883 "MQTT broker"
 
