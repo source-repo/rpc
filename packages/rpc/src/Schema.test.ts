@@ -588,6 +588,15 @@ test('a component leaving or widening is named; arriving is additive', (t) => {
     const emptied: NamespaceSchema = { methods: {}, component: { ...component, state: { kind: 'object', fields: {} } } }
     t.true(namespaceProblems(observed, emptied).some((problem) => problem.where === 'component state'))
 
+    // And the envelope's own version, which went uncompared long enough to be worth a test of its
+    // own: a component could move its snapshot layout and every checker reported nothing at all.
+    // Named in both directions, because whichever side moved, the observer is parsing the layout it
+    // was built against and the server is sending the other one. Cast because the authoring type
+    // pins the literal, while a contract read off disk carries whatever was committed to it.
+    const relaid: NamespaceSchema = { methods: {}, component: { ...component, snapshot: 2 as unknown as 1 } }
+    t.true(namespaceProblems(observed, relaid).some((problem) => problem.where === 'component snapshot'), 'a raised snapshot version should be named')
+    t.true(namespaceProblems(relaid, observed).some((problem) => problem.where === 'component snapshot'), 'and a lowered one should be named too')
+
     // A field added to a strict state is named too. The schema *document* evolves additively, but
     // snapshot values are validated strictly - an observer that checks what it receives would refuse
     // the unknown field, and the checker must not promise compatibility the validator will break.

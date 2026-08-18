@@ -48,16 +48,86 @@ The store underneath is exposed via the `rpcComponent` symbol, and its shape is 
 import { rpcComponent } from '@source-repo/rpc'
 
 const store = oven[rpcComponent]
-store.getSnapshot()             // { epoch, revision, props, state, status, receivedAt, staleSince? }
+store.getSnapshot()             // { epoch, revision, props, state, status, receivedAt, confirmedAt, staleSince? }
 const stop = store.subscribe(() => render())
 await store.close()             // each component() call owes one close
 ```
 
+### Re-rendering for one thing rather than for everything
+
+A projection narrows the wire; a **selector** narrows the render, and a panel wants both for the same reason. `select` takes the whole view, so the revision and the status stay selectable, and `at` takes a path spelled exactly as a projection entry is:
+
+```typescript
+const mode = store.select((view) => view.state.mode)
+const bottom = store.at<Zone>(['state', 'zones', 'bottom'])
+
+bottom.getSnapshot()            // { value, status, staleSince? }
+const stop = bottom.subscribe(() => render())
+```
+
+Both are `getSnapshot`/`subscribe` stores, so `useSyncExternalStore` consumes them unchanged, and both cache — a selector returning a fresh object from every `getSnapshot` is React's *"the result of getSnapshot should be cached"* loop, and that single hazard is most of the reason this is in the library rather than in every application. Which makes `isEqual` the sharp edge: one that reports a changed value unchanged freezes a pane, and a frozen pane is indistinguishable from a plant that stopped.
+
+`at` carries the **status** beside the value and not by accident. A pane that selected `state.pressure` alone would keep drawing the last number after the feed went stale and never re-render to say so — this channel's whole argument, defeated by an optimisation. It deliberately does *not* carry `receivedAt` or `confirmedAt`, which move on every frame and would notify every selected leaf on every publish; those belong to the one line at the top that draws them, and the age of an individual *reading* belongs in the reading, which is what `RpcSourcedValue.at` is for.
+
+A selector over an **object** is only correct because the snapshot is reference-shared underneath. Each accepted frame is reproduced against the one before it, keeping the previous reference at every node whose value did not move, so `state.zones.bottom` is the same object until something under it changes. The result is always deep-equal to the frame that arrived — only identities change, nothing is ever carried over from a frame into a later one — which is why a narrowed subscription narrows the view rather than stranding what it stopped sending. A component holding binary in its state gets no sharing on the path from that buffer to the root: typed arrays are compared by reference, because walking a waveform on every publish would cost more than the sharing saves.
+
 ## The status tells the truth
 
-Every view carries `status: 'initializing' | 'live' | 'stale' | 'closed'`. A dropped link marks the picture **stale and keeps it readable** — "20 °C, stale since 14:03" is an answer and a blank is not — and a reconnect repairs it with one targeted snapshot rather than a replay. A restarted server is a new `epoch`, and the fresh snapshot replaces the old world; within one epoch, revisions only ever move forward, so a duplicate or delayed frame changes nothing.
+Every view carries `status: 'initializing' | 'live' | 'stale' | 'closed'`. A dropped link marks the picture **stale and keeps it readable** — "20 °C, stale since 14:03" is an answer and a blank is not — and a reconnect repairs it with one targeted snapshot rather than a replay. A restarted server is a new `epoch`, and the fresh snapshot replaces the old world; within one epoch, revisions only ever move forward, so a duplicate or delayed frame never moves a value backwards.
+
+What such a frame *does* do is **confirm**, and that is a second fact with a second timestamp. `receivedAt` is when these values arrived; `confirmedAt` is when the feed last proved it is current. A component that has not committed since 14:03 and answered a re-subscribe at 14:19 is three quarters of an hour old *and* current, and one number cannot say both.
+
+That is what repairs the ordinary reconnect. Nothing changed while the link was down, so the targeted snapshot carries the revision the observer already holds — and a channel that discarded it as stating nothing new would go on reporting `stale` behind a subscription that had just answered, with nothing to distinguish it from a peer that had genuinely gone quiet. The values and their object identities are left exactly as they were, so a reader memoizing on them sees nothing move except the two facts that did.
 
 Two observers of one component share one channel and one remote subscription; one leaving does not blind the other.
+
+### Not listening while nobody is looking
+
+Two options bound what a channel costs when it is not being watched, both **off by default** and both reached through the client or server options:
+
+```typescript
+const client = new RpcClient(url, {
+    components: { activity: visibilityActivity(), activityGraceMs: 10_000, keepAliveMs: 30_000 }
+})
+```
+
+`activity` stops the subscriptions while this peer is inactive and starts them again when it is not. A console left on a spare monitor over a weekend otherwise receives every snapshot of every component it ever opened. The signal is injected rather than read from the DOM, because this runs in Node as well as a browser — and because it then generalises for free to a screensaver, a kiosk showing another page, or an operator who locked the screen. `visibilityActivity()` is the browser implementation, exported from the web build only.
+
+It is off by default, and the argument is stronger than the wall panel it is usually made with: a page hosting the Sparkplug projection runner turns a non-live status into a device **DEATH**, so an edge node would go offline because somebody switched tabs. The grace period is in seconds for a related reason — every resume costs a full targeted snapshot, so an operator alt-tabbing to check something would otherwise pay one per switch, on exactly the link this is meant to protect. Resuming is immediate; there is nothing to be gained by making somebody wait. A paused view goes **stale**, never staying `live`: nothing is arriving, so the freshness is unknown and saying otherwise would be this library's own fake in miniature.
+
+`keepAliveMs` holds a channel for a while after its last observer leaves, so a pane closed and reopened inside the window costs nothing on the wire and is still `live` when it comes back — the subscription never went, so there is nothing to restore. It deliberately stops there rather than going on to hold a *cold* cache: `component()` resolves only on an accepted snapshot, and a cache nobody may read without weakening that promise would be dead weight. What it buys is the round trip, not a stale read. The cost, since it is invisible otherwise: inside the window the channel is still live, so a store handle whose owner already called `close()` goes on being notified until the window ends.
+
+## What the status is not
+
+**`status` is a fact about the link, never about the values.** `live` means snapshots are arriving from that peer. It does not mean the numbers inside one are current, and the difference is not academic: a component that has stopped polling its devices goes on publishing `live` for ever, because nothing here watches a publishing cadence. A gateway fronting fifty devices with three of them unreachable is `live`, `rev 4471`, and twenty numbers of which seventeen are current and three are from 14:03.
+
+`receivedAt` does not close that gap either, and the code says so where it is declared: it is *local receipt time*, the age of the last hop rather than the age of the measurement. Everything this channel guarantees stops at the edge of the library, and on a plant the interesting part is on the other side of it.
+
+So freshness of a **reading** is data about that reading, and it goes where this library already puts data — inside `props` or `state`:
+
+```typescript
+type OvenState = {
+    mode: string
+    flueTemperature: RpcSourcedValue<number>   // { value, at, quality?, unit?, forced? }
+}
+```
+
+`RpcSourcedValue<T>` is exported, and it is a convention with a name rather than a mechanism. Putting it in the state shape is what earns everything else: the schema describes it, `extract` publishes it, the compatibility checker rules on it as output, `validateComponentSnapshots` checks it, a projection narrows it for free, and `$data` can filter, sort and page on it — `quality:bad` is a query a screen exists for, and it is the one that cannot be answered locally at any bandwidth. A freshness section carried *beside* props and state could do none of those, which is why there is not one. The console already draws this shape as a single row with its badges, and `@source-repo/sparkplug` already resolves its `qualityPath` to a path inside props or state.
+
+Nothing enforces the spelling. A component writing `timestamp` instead of `at` gets no badge and no diagnostic, which is the same way a naming rule fails on the write side and the reason `sets` is declared rather than guessed.
+
+### When it is the source that went quiet, not the value
+
+Fifty tags behind one Modbus gateway that stopped answering is one fact, not fifty coincidences, and stamping fifty readings says it fifty times without ever saying *why*. Publish the source as ordinary state beside them:
+
+```typescript
+type FieldState = {
+    tags: { [tag: string]: RpcSourcedValue<number> }
+    sources: { [bus: string]: { reachable: boolean; checkedAt: number; problem?: string } }
+}
+```
+
+That is `DockerService` generalised, and it is worth reading as the worked example: `DockerState` carries `reachable`, `problem` and a `checkedAt` documented as *"when the counts were last taken, so a stale screen says so"*, with the per-thing status inside `ContainerRow` and the collection served through `dataResources()`. `RelationalState.lastRequestMs` is the same shape a third time. All of it rides the author's existing poll cycle — one `setState` covers all fifty — and all of it is projectable, filterable and checked, because it is state.
 
 ## Asking for less than the whole state
 

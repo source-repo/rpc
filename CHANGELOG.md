@@ -2,6 +2,98 @@
 
 ## Unreleased
 
+### A channel can stop listening while nobody is looking, and hold on briefly after they leave
+
+Two options on `components`, both off by default, both built on one new primitive: a channel that drops its remote subscription and keeps everything else — the values, the listeners, the epoch.
+
+**`activity`** stops the subscriptions while this peer is inactive and restarts them when it is not. A console left on a spare monitor over a weekend otherwise receives every snapshot of every component it ever opened. The signal is injected rather than read from the DOM: the component client is exported from the Node build as well as the web one, so it must not touch `document` at all — and injecting it is also what makes the behaviour testable under a Node test runner, and what lets a kiosk, a screensaver or an application that knows its own pane is closed supply something better than the document can. `visibilityActivity()` is the browser implementation and is exported from the web entry point only.
+
+Off by default, and the reason is sharper than the wall panel usually cited: a page hosting the Sparkplug projection runner turns a non-live status into a device **DEATH**, so an edge node would go offline because somebody switched tabs. The grace period is in seconds for a related reason — every resume costs a full targeted snapshot, so an operator alt-tabbing to check something would otherwise pay one per switch on exactly the link this protects. Resuming is immediate. A paused view goes **stale** and never stays `live`, because nothing is arriving and the freshness is genuinely unknown; a resume that fails is retried with a bounded backoff, since a resume that failed silently would leave a pane somebody is looking at stale for ever.
+
+**`keepAliveMs`** holds a channel for a while after its last observer leaves, so a pane closed and reopened inside the window costs nothing on the wire and is still `live` — the subscription never went, so there is nothing to restore. It deliberately stops there rather than going on to hold a cold cache: `component()` still resolves only on an accepted snapshot, and that promise is worth more than a cache nobody could read without weakening it. What this buys is the round trip, not a stale read. The cost, stated because it is otherwise invisible: inside the window the channel is still live, so a store handle whose owner has already called `close()` goes on being notified until the window ends.
+
+Both regression tests fail with the feature removed.
+
+### A snapshot keeps the identities it can, and a store can be narrowed to one thing
+
+Every accepted frame was installed exactly as it was decoded, so every object in it was new on every publish — and a consumer selecting anything larger than a primitive re-rendered whether or not what it selected had moved. One tag at 10 Hz redrew every pane bound to any object in that component. The console had already worked around it twice, selecting only primitives and joining a record's keys into a string to get something comparable, and those workarounds are the evidence rather than the fix.
+
+An accepted frame is now reproduced against the one before it, keeping the previous reference at every node whose value did not move. **This is not a merge**, and the distinction is the whole design: the result is always deep-equal to the frame that arrived, and nothing is ever carried over from an earlier one. A merge in the ordinary sense fills gaps in the new frame from the old, which this repository already calls inventing — and it is reachable, because a channel's own feed can be re-projected underneath it by one ordinary `on($snapshot, handler, paths)`. Reproducing the frame means a narrowed subscription narrows the view, with no guard needed to make that true. Identities are shared within one epoch only: an epoch is the statement that this is a different object under the same name, and telling a memoizing reader that nothing changed across that boundary would collapse two different facts.
+
+Plain objects and arrays are walked; typed arrays, `Map`, `Set` and anything with a prototype of its own are compared by reference, so a component carrying binary in its state gets no sharing on the path from that buffer to the root — msgpack round-trips a `Uint8Array` as itself, and walking a waveform on every publish would cost more than the sharing saves. `Date` compares by its time.
+
+On top of it, `RpcComponentStore` gains **`select`** and **`at`**. `select` takes the whole view, so the revision and the status stay selectable; `at` takes a path spelled exactly as a projection entry is. Both are `getSnapshot`/`subscribe` stores that `useSyncExternalStore` consumes unchanged, both cache — a selector returning a fresh object per `getSnapshot` is React's cached-snapshot loop, which is most of the argument for this being in the library — and both attach to the channel only while something is listening.
+
+`at` carries the **status** beside the value deliberately. A pane selecting `state.pressure` alone would go on drawing the last number after the feed went stale and never re-render to say so, which is this channel's central claim defeated by an optimisation. It just as deliberately omits `receivedAt` and `confirmedAt`: those move on every frame, so carrying them would notify every selected leaf on every publish — the exact re-render the selector exists to avoid. They belong to the one line that draws them, and the age of an individual reading belongs in the reading, as `RpcSourcedValue.at`.
+
+The two ship together because neither is worth much alone: a selector over an object can only bail out if the object kept its identity, and sharing with nothing selecting is forty lines the console no longer needs. Both regression tests fail when either half is removed. `select` and `at` are required members of a published interface, so anything outside this workspace implementing `RpcComponentStore` by hand will need them — nothing in the workspace does.
+
+### `status` is about the link, and freshness of a reading is about the reading
+
+The channel's status has always been a fact about the **link** — snapshots are arriving — and it has always been read as a fact about the **values**. Those part company more often than the guide admitted: a component that stops polling its devices publishes `live` for ever, because nothing here watches a publishing cadence, so a gateway fronting fifty devices with three of them unreachable reports `live`, a rising revision, and twenty numbers of which three are from 14:03. `receivedAt` does not close it either — it is local receipt time, the age of the last hop rather than of the measurement.
+
+The guide now says so outright, in the section that previously claimed the status tells the truth and left it there.
+
+What it does **not** do is add a freshness section beside `props` and `state`. That was the obvious design and it does not survive contact with the case it exists for: the three-hundred-tag component is drawn through `$data`, whose result type has no such field and whose filter grammar reaches inside a row only — so the operator question, *which three of three hundred are quiet*, would still be unaskable. Narrowing such a section under a projection produces a false all-clear, not narrowing it claims knowledge of paths the frame does not carry, and since a snapshot travels whole, each freshness transition costs a full publish — measured at 13.7 kB on 300 tags, about ninety seconds at 1200 baud.
+
+So freshness is data about a reading, and it goes where this library already puts data: **inside `props` or `state`**, where the schema describes it, `extract` publishes it, the compatibility checker rules on it, a projection narrows it for free, and `$data` can filter, sort and page on it. `RpcSourcedValue<T>` — `{ value, at, quality?, unit?, forced? }` — is now exported as a named type. It is a convention rather than a mechanism, and naming it is admitting what three things already assume: `@source-repo/sparkplug` constrains `qualityPath` to a path inside props or state, the console recognises this shape and draws it as one row, and `quality:bad` is typeable in a filter today. Nothing enforces the spelling, and the guide says that too.
+
+The console now accepts `at` as a qualifying sibling, so `{ value, at }` — the minimum form — is drawn as one row rather than expanding into a branch of two, and it draws the stamp as a **clock time rather than an age**. An age is only true at the moment it renders, and a row for a value that has stopped changing stops re-rendering, so "3 s ago" would sit there being wrong; a time is true whenever it is read.
+
+For the case where a whole source went quiet rather than a value — fifty tags behind one gateway — the guide documents publishing the source as ordinary state beside them, with `DockerService` as the worked example it already is.
+
+### The compatibility checker can see the component section it was checking
+
+`namespaceProblems` compared `component.props` and `component.state` and nothing else, so a component could change the version of its snapshot envelope and `check`, `check --peer` and `conform` would all report no breaking changes. A false "safe" is the expensive direction, which is the argument that file is written around.
+
+It now compares `component.snapshot`, in both directions — the number exists to say the layout *around* props and state is different, and an observer parses the layout it was built against whichever side moved. This has to be in place before any future change to that envelope, which is the other reason it is here now rather than then.
+
+### A frame is never handed to a transport that cannot send it — and this is why the next release is a major
+
+The library's headline claim about machinery is that a call which timed out will not run afterwards. It was not true, on two of the three transports, and the demonstration is short: with the link down, a `non-repeatable-command` was issued, its caller was told `Timeout: no response to pump.start within 2000 ms`, and the method then **executed 11.8 seconds after the call was made — 9.8 seconds after its caller had been told it had failed**.
+
+Nothing was broken in this library's own logic. socket.io buffers an emit made while disconnected and flushes the buffer on reconnect; mqtt.js stores the packet and replays it verbatim, including the message expiry it was given, whose clock only starts when the broker finally receives it. The server's deadline re-read cannot see any of it, because that budget is measured from the moment a frame **arrives**, and these arrive untouched. SignalR has always refused to send while disconnected — so the same program got three different answers to the most safety-relevant question this library claims to have an opinion on, and the regression test that was supposed to cover it only ever exercised the in-process wait.
+
+Both client transports now refuse instead, alongside the check for a missing socket or client that was already there for the same reason. The call fails at once with `TransportError`, which is the code that means *certainly did not run*, and it now goes on meaning that.
+
+**This is a behaviour change, and it is the one that makes this release a major.** A call that used to survive a two-second blip by being quietly buffered will now fail. That is the point — a buffered command is a command nobody is waiting for any more — but an application that was relying on it will see failures it did not see before, and the honest place to say so is the version number rather than a paragraph. It narrows a race rather than closing it: the link can drop in the moment between the check and the emit, and what protects a command there is the same thing that always did, which is `UnknownOutcome` and an idempotency key.
+
+`sentRequests`' promise is worth restating now that it holds: it is not proof of delivery, and nothing here can have that — it is proof that the frame left, which is the line between a command that certainly did not run and one that might have. On socket.io that was proof of nothing.
+
+### A subscription is restored when the peer comes back, not only when the link does
+
+`resubscribe()` was wired to the transport's `connected` event and to nothing else, which covers exactly one of the two ways a subscription is lost. Behind a bus — the topology this library exists for — the observed peer restarts and the observer's link is never touched: no `disconnected`, no `connected`, nothing replayed, and the revived peer holding none of the subscriptions it had a moment ago. The channel went `stale` on `peerGone` and stayed there for ever, showing a pre-restart value, while `peerOnline` went past with nothing keyed to it. Reproduced on socket.io and on MQTT, gracefully and by kill; a bare `resubscribe()` was the whole repair in every case.
+
+So `peerGone` and `peerDisplaced` now **mark** that peer's subscriptions, and `peerOnline` replays the marked ones. Marked rather than all of them, because every replay is answered with a full targeted snapshot: MQTT emits `peerOnline` for every retained presence message rather than on a transition, so this peer's own reconnect re-announces every peer it has ever seen, and replaying blindly would send a second snapshot per component down the link least able to carry one. A link-wide replay and a peer's return no longer double up either — whichever is already running covers it.
+
+`RpcClientHandler.resubscribe()` therefore takes an optional peer, and `markLost(peer)` is public beside it. `RpcServer` does the same for the subscriptions it holds as a caller, and forwards `peerOnline` to the context resolver, whose chains gain `peerReturned` — a hop whose peer restarted is repaired by re-opening that hop and by nothing else, and its subscriptions are method-registered so the event replay could never have reached them.
+
+### A replay that fails is retried, unless the refusal was a decision
+
+`resubscribeFailed` named the subscriptions a pass could not restore and then stopped, so a peer that was still booting when the replay went out stayed unsubscribed until something else happened to trigger another one. The failures now start a bounded backoff — eight attempts over roughly two minutes, half-jittered so a hundred observers of one peer do not all ask again in the same millisecond — and a replay from any fresh trigger supersedes whatever a chain was in the middle of.
+
+**Two refusals are terminal and are not retried: `Forbidden`/`Unauthorized`, and `ClassNotFound`.** The first is `authorize()` having ruled, so retrying is a peer repeatedly asking for what it has been told it may not have, with every attempt landing in somebody's audit log. The second is a peer that no longer serves the namespace, which is a decision about what it is rather than a moment it is having. Everything else — a peer not yet up, a broker that would not take the publish, a full mailbox — is timing, and timing is what a retry is for. Terminal *in kind*, not in severity.
+
+Giving up is now said out loud, on a new **`resubscribeAbandoned`** carrying the same shape as `resubscribeFailed`. `stale` means the freshness is unknown; this means nobody is working on it any more, and a channel that reported only the first would leave an operator waiting for a repair that is not coming. Abandonment is never permanent: any fresh trigger — a link back, a peer back — clears it, because a restarted peer is a new incarnation and the refusal may have gone with the process that made it. `resubscribeRetry` on the client handler carries the numbers.
+
+One case is still open, and it is **not** the one a retry covers. Where a hub coalesces a peer's departure and return so that neither `peerGone` nor `peerOnline` fires, nothing marks the subscription lost and nothing attempts a replay — so there is no failure for a retry to work from, and the channel goes on reporting `live` while holding a value from a process that no longer exists. That is the absence of any publish-cadence liveness rather than a gap in recovery, and it wants its own answer.
+
+### A refused subscribe no longer leaves one behind
+
+Both halves of a subscription — the map entry that reconnects replay from, and the local emitter handler — were registered before the `on` call was issued, and neither was unwound when it was refused. The ordering is right and has to stay: the server attaches its listener before answering with a snapshot, so a handler registered after the reply could miss an update that landed in between. What was missing was the rollback, so a failed `component()` left a phantom that every later reconnect faithfully re-issued against a namespace that had already said no, with no channel behind it to receive anything. Dormant until now; a retry loop would have turned it into recurring traffic.
+
+The entry is removed only when no local handler remains, which is the same reference count `off` reads and for the same reason: one observer's refused subscribe must not delete the entry another observer's live subscription is replayed from.
+
+### A snapshot carrying no news still says the feed is current
+
+A component channel discarded any frame that was not strictly newer than what it held. That is right about the values and it was wrong about the link, and the case where the two part company is the common one rather than an exotic one: a component that does not commit while the link is down is answered, on re-subscribe, with a targeted snapshot at exactly the revision the observer already has. The repair arrived, was dropped as stating nothing new, and the view went on reporting `stale` — behind a subscription that had just answered, and with nothing on it to distinguish that from a peer which had genuinely gone quiet. In a channel whose argument is that the status tells the truth, that was the status telling the reverse of it.
+
+Such a frame now **confirms** rather than being discarded. The values, the revision and their object identities are untouched, so nothing a reader memoizes on moves; `status` returns to `live`, `staleSince` clears, and the receipt time splits in two.
+
+`RpcComponentView` therefore gains **`confirmedAt`**, and `receivedAt` keeps the meaning it always had. `receivedAt` is when these values arrived; `confirmedAt` is when the feed last proved it is current. A reading taken at 14:03 whose feed answered a re-subscribe at 14:19 is both three quarters of an hour old and current, and the alternative — moving `receivedAt` on a confirmation — would have made a screen say a value had been updated when only the connection had. That is a small instance of exactly the conflation this channel exists to refuse, so it is two fields.
+
+The console prints both where they differ (`rev 41 · updated 14:03, confirmed 14:19`) and one where they do not, and the MCP `read_state` tool reports both. `@source-repo/sparkplug` stamps its metrics from `receivedAt` and is left alone deliberately: a confirmation is not a new measurement, and a re-birth should not restamp a value that has not moved.
+
 ### A store-backed node can accept writes, and the rule about writes is intact
 
 `@source-repo/relational/writes` and `@source-repo/document/writes` create, change and remove rows. The design question was never whether that was useful — a database you can only read is half a tool, and prototyping against one over MCP is exactly where the other half is missed — it was how to add it without contradicting the sentence this repository states in four places: **a value is never written over this bus, a method is called.**

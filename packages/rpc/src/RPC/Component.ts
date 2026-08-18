@@ -20,6 +20,40 @@ import type { ILogger } from '../Logging/ILogger.js'
 export type RpcComponentData = Record<string, unknown>
 
 /**
+ * A reading with a device behind it: the value, and what is known about how far to trust it.
+ *
+ * This is not a library mechanism, and that is the whole point of writing it down. `status` on a
+ * component channel is a fact about the **link** - snapshots are arriving - and says nothing about
+ * whether the values inside one are current: a component that has stopped polling its devices
+ * publishes `live` for ever. So the freshness of a reading is data *about that reading*, and it
+ * belongs where this library already puts data - inside `props` or `state`, where the schema
+ * describes it, `extract` publishes it, the compatibility checker rules on it as output, a
+ * projection narrows it for free, and `$data` can filter, sort and page it. A freshness section
+ * carried beside props and state could do none of those, which is why there is not one.
+ *
+ * Named rather than left to convention because it is already the de facto contract in three
+ * places: `@source-repo/sparkplug` constrains its `qualityPath` to a path inside props or state,
+ * the console recognises this exact shape and draws it as one row rather than a branch of four,
+ * and `quality:bad` is typeable in a `$data` filter today. A shape three things already depend on
+ * is better named than rediscovered.
+ *
+ * Nothing enforces it. A component spelling the time field `timestamp` gets no diagnostic and no
+ * badge - the same failure mode `sets` was introduced to replace on the write side, and the reason
+ * this is a convention with a name rather than a guarantee.
+ */
+export interface RpcSourcedValue<T> {
+    value: T
+    /** When the source last produced this value. Never when a frame carrying it arrived. */
+    at: number
+    /** Whether it is worth acting on. `stale` is a reading that was good and has stopped arriving. */
+    quality?: 'good' | 'bad' | 'stale'
+    /** The engineering unit, so a screen does not have to be told it separately. */
+    unit?: string
+    /** Set by hand and no longer following the device - the one an operator must not mistake. */
+    forced?: boolean
+}
+
+/**
  * Who is in control of this component, visible to every observer - the plant's arbitration state,
  * carried in the snapshot beside props and state rather than inside either: it is the library's
  * bookkeeping, not the class's contract, and it must not collide with a schema-checked state shape.

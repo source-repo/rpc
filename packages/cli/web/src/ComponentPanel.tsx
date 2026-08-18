@@ -99,18 +99,28 @@ const statusOf = (view: ReturnType<Store['getSnapshot']>) => view.status
  * The one line that legitimately moves on every snapshot, so it moves on its own. Three words in
  * a span is a cheap thing to redraw at ten hertz; three hundred rows is not.
  */
+const at = (time: number) => new Date(time).toLocaleTimeString()
+
 const Revision = ({ store }: { store: Store }) => {
     const view = useSyncExternalStore(
         useCallback((listener: () => void) => store.subscribe(listener), [store]),
         useCallback(() => store.getSnapshot(), [store])
     )
     if (view.receivedAt === 0) return null
+    const updated = at(view.receivedAt)
+    const confirmed = at(view.confirmedAt)
     return (
         <span className="muted">
             rev {view.revision} ·{' '}
             {view.status === 'stale' && view.staleSince
-                ? `last known ${new Date(view.receivedAt).toLocaleTimeString()}, stale since ${new Date(view.staleSince).toLocaleTimeString()}`
-                : `updated ${new Date(view.receivedAt).toLocaleTimeString()}`}
+                ? `last known ${updated}, stale since ${at(view.staleSince)}`
+                : // Two facts where they differ, one where they do not. A component that has not
+                  // moved since 14:03 and answered a re-subscribe at 14:19 is current *and* three
+                  // quarters of an hour old, and an operator reading one number cannot tell which
+                  // of those they are looking at.
+                  confirmed === updated
+                  ? `updated ${updated}`
+                  : `updated ${updated}, confirmed ${confirmed}`}
         </span>
     )
 }

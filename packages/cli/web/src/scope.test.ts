@@ -57,6 +57,22 @@ describe('the scope tree', () => {
         expect(zones?.children).toEqual([])
     })
 
+    it('treats a reading stamped with a time as a leaf too', () => {
+        // `at` qualifies a value the same way `quality` and `unit` do, and it has to: a reading
+        // whose only sibling is its timestamp - the minimum RpcSourcedValue - would otherwise be
+        // drawn as an expandable branch of two, which is a worse screen and a wronger one. The
+        // predicate recognises the shape rather than importing it, because the domain classes live
+        // in packages this console has no compile-time sight of.
+        const stamped = {
+            subscribers: 0,
+            state: { kind: 'object' as const, fields: { flue: { type: { kind: 'object' as const, fields: { value: { type: { kind: 'number' as const } }, at: { type: { kind: 'number' as const } } } } } } }
+        }
+        // A leaf is not a node, so the test is that `state` gained no branch at all - and that the
+        // reading is still reachable as one leaf rather than two.
+        expect(scopeTree(stamped)[0].children).toEqual([])
+        expect(leafNames(stamped, ['state'])).toEqual(['state.flue'])
+    })
+
     it('omits a root the contract does not publish, rather than showing an empty one', () => {
         // A component serving no schema has no scope to show. An empty `props` node would claim it
         // had one and that it was empty, which is a different and wrong statement.

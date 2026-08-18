@@ -2,7 +2,7 @@ import { EventEmitter } from 'events'
 import { declaredNamespace } from './RPC/Expose.js'
 import type { RpcElevation } from './RPC/Elevation.js'
 import { GenericModule, PeerRegistry, Transport, TransportEvent } from './RPC/Core.js'
-import { ComponentChannels, componentFacade, type RpcComponentLike, type RpcComponentOptions, type RpcComponentProxy } from './RPC/ComponentClient.js'
+import { ComponentChannels, componentFacade, type RpcComponentChannelOptions, type RpcComponentLike, type RpcComponentOptions, type RpcComponentProxy } from './RPC/ComponentClient.js'
 import { HostTopology, type HostTopologyOptions, type RpcRef } from './RPC/Topology.js'
 import { contextEvent, contextNamespace, HostContext, type RpcCapturedContext, type RpcContextProviderHandle, type RpcContextToken } from './RPC/Context.js'
 import { ContextResolver, type RpcContextStore } from './RPC/ContextResolver.js'
@@ -64,6 +64,11 @@ export interface RpcServerOptions {
     authenticate?: RpcAuthenticator
     /** Called for every call and every event subscription. Return false to reject it. */
     authorize?: RpcAuthorizer
+    /**
+     * How this server's *outgoing* component channels behave - the ones it holds as an observer of
+     * other peers, not the components it serves. Both off by default.
+     */
+    components?: RpcComponentChannelOptions
     /**
      * What AI principals may do on this server. Absent - the default everywhere - means the four
      * capability grants are closed: a credentialed AI principal may observe wherever ordinary
@@ -406,22 +411,36 @@ export class RpcServerBase extends EventEmitter implements IManageRpc {
         // way RpcClient does it - otherwise a server that watches its peers goes deaf after a blip
         // with nothing to say so.
         transport.on(TransportEvent.connected, () => void this.caller.resubscribe().catch((e) => this.emitSafely('resubscribeError', e)))
+        // And the same for a peer returning rather than the link, which is the case a bus makes
+        // ordinary: this server's link to the hub is never touched when the peer it watches
+        // restarts, so the replay above does not run and nothing else was listening.
+        transport.on(TransportEvent.peerOnline, (peer: string) => void this.caller.resubscribe(peer).catch((e) => this.emitSafely('resubscribeError', e)))
         // Component channels and context chains learn staleness from the first three. Link down
         // stales every picture; a peer going or being displaced stales only that peer's. The
-        // component channels need no recovery listener - resubscribe() above replays their event
-        // subscription - but the context resolver's subscriptions are method-registered, so
-        // `connected` is forwarded too and re-subscribing is its own replay.
+        // component channels need no recovery listener of their own - resubscribe() above replays
+        // their event subscription on both returns - but the context resolver's subscriptions are
+        // method-registered, so `connected` and `peerOnline` are both forwarded to it and
+        // re-subscribing is its own replay.
         // A ticket this peer is waiting on is answered by the peer holding the work, so that peer
         // going means nothing will ever answer. Rejected rather than left to lapse at its expiry,
         // which could be half an hour away.
         for (const event of [TransportEvent.peerGone, TransportEvent.peerDisplaced])
             transport.on(event, (peer: string) => {
                 this.caller.tickets.dropTarget(peer)
+                // Which of this server's own subscriptions the peer's return should replay. Set
+                // here rather than worked out on the return, because by then the only evidence
+                // that anything was lost has already gone past.
+                this.caller.markLost(peer)
                 // Anything stood up for that peer starts its grace. Cancelled if it comes back,
                 // which a reloading browser and a flapping MQTT presence both do.
                 this.rpc.peerLifetime(peer, false)
             })
         transport.on(TransportEvent.peerOnline, (peer: string) => this.rpc.peerLifetime(peer, true))
+        // Forwarded inward only. It is already emitted to the application by the presence loop at
+        // the end, and putting it in the list below would emit it twice - but the context resolver
+        // needs it, because a hop whose peer restarted is repaired by re-opening that hop and by
+        // nothing else.
+        transport.on(TransportEvent.peerOnline, (peer: string) => this.componentLifecycle.emit(TransportEvent.peerOnline, peer))
         for (const event of [TransportEvent.disconnected, TransportEvent.peerGone, TransportEvent.peerDisplaced, TransportEvent.connected])
             transport.on(event, (payload: unknown) => {
                 this.componentLifecycle.emit(event, payload)
@@ -491,7 +510,7 @@ export class RpcServerBase extends EventEmitter implements IManageRpc {
      */
     async component<T extends RpcComponentLike>(name: string, target?: string, options?: RpcComponentOptions): Promise<RpcComponentProxy<T>> {
         await this.ready()
-        this.componentChannels ??= new ComponentChannels(this.caller, this.componentLifecycle)
+        this.componentChannels ??= new ComponentChannels(this.caller, this.componentLifecycle, this.options.components)
         const channel = await this.componentChannels.open(name, target, options?.paths)
         return componentFacade(channel, channel.inner) as RpcComponentProxy<T>
     }

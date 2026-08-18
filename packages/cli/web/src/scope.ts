@@ -61,7 +61,7 @@ export interface ScopeLeaf {
  * than imported.
  */
 export const isProcessValueType = (type: TypeNode | undefined) =>
-    type?.kind === 'object' && 'value' in type.fields && ('quality' in type.fields || 'unit' in type.fields || 'forced' in type.fields)
+    type?.kind === 'object' && 'value' in type.fields && ('quality' in type.fields || 'unit' in type.fields || 'forced' in type.fields || 'at' in type.fields)
 
 /**
  * Whether the contract enumerates this thing's members, which is the whole test for a tree node.

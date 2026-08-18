@@ -1252,6 +1252,10 @@ export const startMcp = async (options: McpOptions) => {
                             epoch: view.epoch,
                             revision: view.revision,
                             receivedAt: new Date(view.receivedAt).toISOString(),
+                            // Reported beside it rather than instead of it: a model asked "is this
+                            // current" needs to know the feed spoke, and asked "how old is this
+                            // reading" needs to know it did not move. One number cannot answer both.
+                            confirmedAt: new Date(view.confirmedAt).toISOString(),
                             ...(view.staleSince ? { staleSince: new Date(view.staleSince).toISOString() } : {}),
                             props: view.props,
                             state: view.state

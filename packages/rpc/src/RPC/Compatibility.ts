@@ -254,6 +254,24 @@ export const namespaceProblems = (caller: NamespaceSchema, current: NamespaceSch
     if (caller.component) {
         if (!current.component) problems.push({ where: 'component', reason: 'is no longer served, so an observer would wait forever for a snapshot' })
         else {
+            // The snapshot envelope's own version, which nothing compared until somebody checked
+            // whether anything did: a component could move from 1 to 2 and `check`, `check --peer`
+            // and `conform` would all report no breaking changes. A false "safe" is the expensive
+            // direction, which is the argument this whole file is written around.
+            //
+            // Read widened on purpose. The authoring type pins the literal, so a comparison against
+            // it is vacuous to the compiler - but the side being checked is usually a contract
+            // parsed off disk, where the number is whatever was committed, and that is exactly the
+            // case this exists for.
+            const served: number = current.component.snapshot
+            const built: number = caller.component.snapshot
+            // Both directions. This number says the layout *around* props and state is different,
+            // and an observer that parses one layout cannot parse another whichever side moved.
+            if (served !== built)
+                problems.push({
+                    where: 'component snapshot',
+                    reason: `is version ${served} where the observer was built against ${built}, so the frame carrying props and state is not the one it reads`
+                })
             if (!assignable(current.component.props, caller.component.props, types))
                 problems.push({ where: 'component props', reason: 'widened, so a snapshot this contract may serve is not one the observer expects' })
             if (!assignable(current.component.state, caller.component.state, types))

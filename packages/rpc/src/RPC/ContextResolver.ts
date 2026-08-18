@@ -117,6 +117,9 @@ export class ContextResolver {
         lifecycle.on(TransportEvent.connected, () => {
             for (const chain of this.chains.values()) chain.reconnect()
         })
+        lifecycle.on(TransportEvent.peerOnline, (back: unknown) => {
+            for (const chain of this.chains.values()) chain.peerReturned(String(back))
+        })
     }
 
     /** One chain per local node, shared by every token asked of it - the dedup that matters. */
@@ -287,6 +290,24 @@ class NodeChain {
         for (const axis of ['physical', 'logical'] as const)
             for (const hop of this.hops[axis])
                 if (hop.stale && !hop.retired) {
+                    this.reasons[axis] = 'reconnect'
+                    void this.open(hop)
+                }
+    }
+
+    /**
+     * One peer came back rather than the whole link. The repair is the same - re-open the hops it
+     * serves, and register-then-snapshot makes the answer the repair - but the trigger is not: a
+     * chain crossing a bus loses a hop when that peer restarts without this peer's link so much as
+     * flinching, so `reconnect` above never runs and the hop stays stale with nothing trying.
+     *
+     * Narrowed to that peer's hops on purpose. Re-opening a hop whose peer never went costs a
+     * subscribe and a snapshot per hop, and a chain is several hops long.
+     */
+    peerReturned(peer: string) {
+        for (const axis of ['physical', 'logical'] as const)
+            for (const hop of this.hops[axis])
+                if (hop.peer === peer && hop.stale && !hop.retired) {
                     this.reasons[axis] = 'reconnect'
                     void this.open(hop)
                 }

@@ -13,6 +13,9 @@ export * from './Transports/SocketIoClientTransport.js'
 // with, observe one - which is exactly what the console's component panel does.
 export * from './RPC/Component.js'
 export * from './RPC/ComponentClient.js'
+// Web only, deliberately: it touches `document`, and the interface it satisfies is injectable so a
+// Node peer - or a kiosk that knows better than the document does - supplies its own.
+export * from './RPC/Activity.js'
 // The DataProvider verb, and `matchesFilter` with it. A page holds part of a set already - the
 // typed leaves it subscribes to - and filters those itself while the collection beside them is
 // filtered on the peer, so it needs the same matcher rather than a second version of it.

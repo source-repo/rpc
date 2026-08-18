@@ -4,7 +4,7 @@ import { MessageSigner, type TrustedCertificateAuthority } from './RPC/Auth.js'
 import { RpcSchema } from './RPC/Schema.js'
 import { defaultWebSocketPort, IManageRpc } from './RPC/Rpc.js'
 import { defaultCallTimeout, RpcClientHandler, type WithOptions } from './RPC/RpcClientHandler.js'
-import { ComponentChannels, componentFacade, type RpcComponentLike, type RpcComponentOptions, type RpcComponentProxy } from './RPC/ComponentClient.js'
+import { ComponentChannels, componentFacade, type RpcComponentChannelOptions, type RpcComponentLike, type RpcComponentOptions, type RpcComponentProxy } from './RPC/ComponentClient.js'
 import { contextNamespace, type ContextWireSnapshot } from './RPC/Context.js'
 import type { RemoteSurface } from './RPC/Invocation.js'
 import type { IClientOptions } from 'mqtt'
@@ -38,6 +38,12 @@ export interface RpcClientOptions {
     readyTimeout: number
     /** Reject in-flight calls as soon as the link drops instead of waiting out their timeouts. */
     failCallsOnDisconnect: boolean
+    /**
+     * How this client's component channels behave beyond being open: whether to stop listening
+     * while the peer is inactive, and how long to hold a channel after its last observer leaves.
+     * Both off by default - see `RpcComponentChannelOptions`.
+     */
+    components?: RpcComponentChannelOptions
     /**
      * Credentials presented when connecting to a server that authenticates. Passed to socket.io as
      * the handshake `auth` payload, and to MQTT as broker connect options. When the server
@@ -209,10 +215,22 @@ export class RpcClient extends EventEmitter {
                 // Not 'error': an EventEmitter throws on an unhandled 'error' event.
                 .catch((e) => this.emit('resubscribeError', e))
         })
+        // The other return, and the one nothing used to answer. Behind a bus an observed peer can
+        // restart without this link being touched, so `connected` above never fires and its replay
+        // never runs: the revived peer holds no subscription, and every channel watching it sits
+        // `stale` for ever with a pre-restart value. Noting the loss and replaying on the return
+        // costs one subscribe and one targeted snapshot per component, which is the repair.
+        for (const event of [TransportEvent.peerGone, TransportEvent.peerDisplaced]) transport.on(event, (peer: string) => this.rpcClient?.markLost(peer))
+        transport.on(TransportEvent.peerOnline, (peer: string) => {
+            // Not 'error': an EventEmitter throws on an unhandled 'error' event.
+            void this.rpcClient?.resubscribe(peer).catch((e) => this.emit('resubscribeError', e))
+        })
         // Forwarded so a consumer aimed at one named peer can tell "the link is up but that peer is
         // gone" from "the whole link is down" - connected/disconnected alone cannot say which, and
         // the difference is what separates a stale view of a device from a dead network. peerShape
         // rides along for the caches: a peer that changed surface is worth re-describing on next use.
+        // Registered after the recovery above, so an application reacting to a peer's return finds
+        // the replay already issued rather than a view still marked stale.
         for (const event of [TransportEvent.peerOnline, TransportEvent.peerGone, TransportEvent.peerDisplaced, TransportEvent.peerShape])
             transport.on(event, (...args: unknown[]) => this.emit(event, ...args))
     }
@@ -275,7 +293,7 @@ export class RpcClient extends EventEmitter {
         if (!this.rpcClient) throw new Error(`RpcClient '${this.options.name}': ready, but no handler - this is a bug in the library`)
         // Wired to this client's own forwarded lifecycle, which is what turns "the link is up but
         // that peer is gone" into a stale channel instead of a frozen number.
-        this.componentChannels ??= new ComponentChannels(this.rpcClient, this)
+        this.componentChannels ??= new ComponentChannels(this.rpcClient, this, this.options.components)
         const channel = await this.componentChannels.open(name, target ? target : this.options.defaultTarget, options?.paths)
         return componentFacade(channel, channel.inner) as RpcComponentProxy<T>
     }

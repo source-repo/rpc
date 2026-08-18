@@ -277,6 +277,12 @@ Anything still on a `ProjectReference` into `packages/signalr/csharp/` is pointi
 
 ## What is not here yet
 
+**Observable components are absent entirely**, and this is the largest gap on the list — large enough that a reader who took the opening claim about speaking the same protocol at face value would assume it closed. There is no `RpcComponent`, so no `$snapshot` event, no epoch or revision discipline, no `$acquire`/`$release` authority, no projections and no `$data`. A .NET peer calls methods and subscribes to ordinary events; it neither hosts a component nor observes one.
+
+The two halves are very different sizes and should not be conflated. **Observing** one is a client-side cache with the acceptance rules on it, and it is what a .NET process needs before a query cache there could ever hold "confirmed current" rather than merely "fetched recently". **Hosting** one is a snapshot publisher, the epoch and revision discipline, authority leases, projection evaluation and a DataProvider — a genuinely large piece of work, and one nobody should start by accident because the observing half sounded adjacent. Which of them is wanted, if either, is an open decision rather than a plan; what is settled is that it is written down here rather than discovered.
+
+Nothing in the TypeScript component work depends on this. Snapshots ride as opaque `body` on an ordinary event frame, so neither wire spec mentions them and no parity is broken by their absence — which is exactly why the gap could sit here unstated for as long as it did.
+
 **Shared subscriptions** (`$share/<group>/…`), which is how MQTT replicas load-balance requests.
 
 **A C# peer cannot be a bridge.** There is no `carrying`/`shape` advertisement here, so a .NET process joins a network as a leaf. Nothing depends on it today; it is the reason a C# node cannot sit between two segments.

@@ -372,21 +372,32 @@ export class SocketIoClientTransport extends GenericModule<Message, unknown, Mes
     }
 
     /**
-     * The link, or an error saying there is none.
+     * The link, or an error saying there is none - where "there is none" includes a socket that
+     * exists but is not currently connected.
      *
      * Sending went through `this.socket?.emit(...)`, which is a no-op once the transport is closed -
      * so an outgoing call was discarded without a word and its caller waited out the full timeout
      * for a frame that was never going to be sent.
+     *
+     * The connected check is the second half of the same idea and was the more expensive omission.
+     * socket.io buffers an emit made while disconnected and flushes the whole buffer on reconnect,
+     * which reads like resilience and is not: by then the call has failed on its own timeout, its
+     * caller has been told so and acted on it, and the frame is delivered anyway. Measured at nine
+     * and a half seconds past the caller's deadline on a two-second timeout, with the command
+     * running at the far end. The server's own deadline re-read cannot catch it either, because
+     * that budget is measured from the moment a frame *arrives* and this one arrives untouched.
      */
     private requireSocket() {
         if (!this.socket) throw new Error(`SocketIoClientTransport '${this.name}': not connected to ${this.url ?? 'the default url'}`)
+        if (!this.socket.connected) throw new Error(`SocketIoClientTransport '${this.name}': the link to ${this.url ?? 'the default url'} is down`)
         return this.socket
     }
 
     override async receive(message: Message, source: string, target: string) {
-        // No blind sleep while disconnected: socket.io already buffers outgoing frames and flushes
-        // them on reconnect, so sleeping only delayed every send during a blip without helping.
-        // If the link never comes back the call fails on its own timeout.
+        // Refused while the link is down rather than waited out or handed over - see requireSocket.
+        // The rule this replaces was "let socket.io buffer it, and if the link never comes back the
+        // call fails on its own timeout", which is true and is not the whole story: when the link
+        // *does* come back, the buffered frame is delivered to a caller that gave up long ago.
         this.emitFrame(this.requireSocket(), message, source, target)
     }
 

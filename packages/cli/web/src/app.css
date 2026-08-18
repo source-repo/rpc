@@ -1138,6 +1138,12 @@ textarea.control {
     color: var(--bad);
 }
 
+/* When the source read it. Not a grade at all, so it stays in the muted default rather than
+   borrowing any of the three palettes above - a timestamp is information, not a warning. */
+.quality.at {
+    font-variant-numeric: tabular-nums;
+}
+
 /* Forced is not a quality grade, so it does not borrow the stale palette: visibly its own thing. */
 .quality.forced {
     border-color: #c792ea;

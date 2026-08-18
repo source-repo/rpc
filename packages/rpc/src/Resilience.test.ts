@@ -184,6 +184,50 @@ test('a command whose caller has already given up is refused instead of run late
     await server.close()
 })
 
+test('a command issued while the link is down is refused, never buffered and run when it returns', async (t) => {
+    // The other half of the test above, and the half it could not see. That one proves the *server*
+    // refuses a command whose caller has given up. This one is about the client's own transport:
+    // socket.io buffers an emit made while disconnected and flushes the buffer on reconnect, so the
+    // frame was delivered after the caller had been told `Timeout` - and the server's deadline
+    // re-read could not catch it, because that budget starts when a frame arrives and this one
+    // arrived with its ttl untouched. Reproduced at nine and a half seconds past the deadline, with
+    // the command running. mqtt.js does the same thing one level lower, from its outgoing store;
+    // SignalR has always refused, so the same program got three different answers.
+    let started = 0
+    class Gate extends EventEmitter {
+        async startPump(batch: string) {
+            started++
+            return batch
+        }
+    }
+    const server = new RpcServer({ name: peer('plant3816'), transports: [{ port: 3816 }] })
+    await server.ready()
+    server.exposeClassInstance(new Gate(), 'gate')
+
+    const client = new RpcClient('http://localhost:3816', { name: peer('operator3816'), defaultTarget: peer('plant3816'), callTimeout: 2000 })
+    await client.ready()
+    const gate = await client.proxy<Gate>('gate')
+    t.is(await gate.startPump('B-41'), 'B-41', 'the link works to begin with')
+
+    const socket = (client.options.transport as { socket?: { connected: boolean; disconnect(): void; connect(): void } }).socket!
+    const reconnected = new Promise<void>((resolve) => client.once(TransportEvent.connected, () => resolve()))
+    socket.disconnect()
+    await waitFor(() => !socket.connected)
+
+    // Certainly did not run, which is what TransportError means and what it now has to keep meaning.
+    await t.throwsAsync(gate.startPump('B-42'), { message: /TransportError/ }, 'a frame handed to a link that cannot send it')
+    t.is(started, 1, 'the refused command must not have run at all')
+
+    socket.connect()
+    await reconnected
+    // Long enough for a buffered frame to have been flushed and executed, had one been parked.
+    await new Promise((resolve) => setTimeout(resolve, 500))
+    t.is(started, 1, 'the refused command ran anyway once the link came back')
+
+    await client.close()
+    await server.close()
+})
+
 test('a request for a peer the far end cannot reach is answered, not dropped', async (t) => {
     // The other half of the switch fix, and the last of the three silent drops. A sender whose own
     // switch has no route now fails at once; a sender whose route ends at a peer that cannot carry

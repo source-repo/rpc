@@ -12,6 +12,8 @@ npm install @source-repo/rpc
 
 For a conventional web app — one browser talking to one backend — [tRPC](https://trpc.io), typically with TanStack Query, is today the more battle-tested choice, and we recommend it for that shape.
 
+tRPC: the browser calls an application. Source RPC: the browser joins a system.
+
 Source RPC is for systems: peers on both sides of the browser boundary, components with live observable state, multiple addressable services, and AI/MCP participation across the network. Come here when the shape is different — when your app is, or is becoming, a distributed, MCP-enabled topology:
 
 - devices on an MQTT broker and operator screens on a WebSocket, calling each other without either end knowing which transport the other is on

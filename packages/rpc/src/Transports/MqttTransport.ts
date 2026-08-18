@@ -355,6 +355,15 @@ export class MqttTransport extends GenericModule<Message, unknown, Message, unkn
      */
     private requireClient() {
         if (!this.client) throw new Error(`MqttTransport '${this.name}': no connection to ${this.url}`)
+        // And not to a client that cannot send it now. mqtt.js stores a publish made while
+        // disconnected and replays it verbatim on reconnect - including the message expiry it was
+        // given, whose clock only starts when the broker finally receives it. So a command
+        // published into a dead link arrives later carrying a full budget, long after its caller
+        // was told the call had failed, and `remainingTtl` cannot help: it accounts for the
+        // broker's queue, never for this client's own. Refusing here is what keeps
+        // `TransportError` meaning what it says, and keeps all three transports answering the same
+        // question the same way - SignalR has always refused.
+        if (!this.client.connected) throw new Error(`MqttTransport '${this.name}': the connection to ${this.url} is down`)
         return this.client
     }
 

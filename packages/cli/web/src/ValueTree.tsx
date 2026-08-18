@@ -218,7 +218,8 @@ const Row = ({
     edit,
     unit,
     quality,
-    forced
+    forced,
+    at
 }: {
     name: string
     value: unknown
@@ -228,6 +229,7 @@ const Row = ({
     unit?: unknown
     quality?: unknown
     forced?: boolean
+    at?: unknown
 }) => {
     const [editing, setEditing] = useState(false)
     const key = path.join('.')
@@ -252,6 +254,17 @@ const Row = ({
                         this console is exactly who must not mistake it for a measurement. */}
                     {forced && <span className="quality forced">forced</span>}
                     {typeof quality === 'string' && <span className={`quality q-${quality}`}>{quality}</span>}
+                    {/* When the *source* last produced this, which is a different fact from when the
+                        snapshot carrying it arrived - and the one the channel's own status cannot
+                        answer, because `live` is about the link. Drawn as a clock time rather than
+                        an age, deliberately: an age is only true at the moment it is rendered, and a
+                        row for a value that has stopped changing stops re-rendering, so "3 s ago"
+                        would sit there being wrong. A time is true whenever it is read. */}
+                    {typeof at === 'number' && Number.isFinite(at) && (
+                        <span className="quality at" title="when the source last read this value">
+                            {new Date(at).toLocaleTimeString()}
+                        </span>
+                    )}
                     {/* Named, because what happens is a call and not an assignment. Which method it
                         is comes from the contract - some method declared it sets this path - and
                         the operator commits that call rather than a value. */}
@@ -282,6 +295,7 @@ const ProcessLeaf = ({ source, name, path, type }: { source: ValueSource; name: 
         unit={useValueAt(source, [...path, 'unit'])}
         quality={useValueAt(source, [...path, 'quality'])}
         forced={useValueAt(source, [...path, 'forced']) === true}
+        at={useValueAt(source, [...path, 'at'])}
         type={type}
         path={path}
     />

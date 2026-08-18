@@ -111,6 +111,36 @@ export interface FailedResubscription {
     error: unknown
 }
 
+/** One remote subscription this client holds, and what is known about restoring it. */
+export interface HeldSubscription {
+    remote?: string
+    instanceName: string
+    event: string
+    projection?: unknown
+    /** The peer serving it was reported gone. Cleared when a replay is accepted. */
+    lost?: boolean
+    /** Nothing is trying any more - see `resubscribeAbandoned`. Cleared by any fresh trigger. */
+    abandoned?: boolean
+}
+
+/**
+ * Refusals that will not change by being asked again, so asking again is only noise.
+ *
+ * `Forbidden` and `Unauthorized` are `authorize()` having ruled: a peer that retried them would be
+ * repeatedly asking for what it has already been told it may not have, and every attempt lands in
+ * somebody's audit log. `ClassNotFound` is a peer that no longer serves the namespace, which is a
+ * decision about what it is rather than a moment it is having.
+ *
+ * Everything else is timing - a peer still booting, a broker that would not take the publish, a
+ * mailbox that was full - and timing is exactly what a retry is for. Terminal *in kind*, not in
+ * severity: this says nothing about how bad the refusal was, only about whether repeating the
+ * question could produce a different answer.
+ */
+const terminalRefusal = (error: unknown) => {
+    const code = (error as { code?: RpcErrorCode } | undefined)?.code
+    return code === 'Forbidden' || code === 'Unauthorized' || code === 'ClassNotFound'
+}
+
 export class RpcClientHandler extends MessageModule<Message<RpcMessage>, RpcMessage, Message<RpcMessage>, RpcMessage> implements RpcClientEmitter {
     responsePromiseMap = new Map<string, PromiseResolver<unknown>>()
     /** Tickets this peer is waiting on, and the rule about who may answer one. See Ticket.ts. */
@@ -201,8 +231,37 @@ export class RpcClientHandler extends MessageModule<Message<RpcMessage>, RpcMess
         }
     }
 
-    /** Remote subscriptions held by this client, replayed by resubscribe() after a reconnect. */
-    subscriptions = new Map<string, { remote?: string; instanceName: string; event: string; projection?: unknown }>()
+    /**
+     * Remote subscriptions held by this client, replayed by resubscribe() after a reconnect.
+     *
+     * `lost` is set when the peer serving one was reported gone and cleared when a replay is
+     * accepted, so a peer coming back knows which subscriptions to re-issue - and, more to the
+     * point, which not to. MQTT emits `peerOnline` for every retained presence message rather than
+     * on a transition, so this peer's own reconnect re-announces every peer it has ever seen;
+     * without the flag that burst would replay every subscription a second time, and every replay
+     * is answered with a full snapshot on the link least able to carry one.
+     */
+    subscriptions = new Map<string, HeldSubscription>()
+    /**
+     * Replays in flight, so a returning peer and a returning link do not both re-issue the same
+     * subscribe. A skipped replay answers 0 rather than waiting for the one already running: the
+     * count is what was restored by *this* call, and the caller that matters for it is the link.
+     */
+    private replayingAll = false
+    private readonly replayingPeers = new Set<string>()
+    /** Retry timers by subscription key, so one can be cancelled when its subscription goes. */
+    private readonly retrying = new Map<string, NodeJS.Timeout>()
+    /**
+     * How hard to keep trying to restore a subscription a replay could not, before saying so and
+     * stopping.
+     *
+     * A bound rather than forever, because a subscription that will never come back is otherwise a
+     * permanent low-rate call loop against a peer that has done nothing wrong. Roughly two minutes
+     * at these numbers, which covers the cases this exists for - a peer still booting when the
+     * replay went out, and a gone/online pair a hub coalesced so no `peerOnline` ever fired - and
+     * gives up on the ones it does not.
+     */
+    resubscribeRetry = { attempts: 8, baseMs: 1000, capMs: 30000 }
     eventEmitter: { [index: string]: unknown } = new EventEmitter() as unknown as { [index: string]: unknown }
     constructor(
         name: string,
@@ -310,27 +369,156 @@ export class RpcClientHandler extends MessageModule<Message<RpcMessage>, RpcMess
     }
 
     /**
-     * Re-issue every remote subscription this client holds. Called after the transport reconnects:
-     * if the server kept its state the calls are no-ops on its side, and if the server restarted
-     * they rebuild it. Either way the outgoing frames re-identify this client to the server, which
-     * is what makes server-pushed events addressable again.
+     * Mark a peer's subscriptions as no longer served, because that peer has gone or been
+     * displaced. Nothing is re-issued here - the peer is not there to answer - and the flag is
+     * what tells a later `peerOnline` that these are the ones worth replaying.
      */
-    async resubscribe() {
-        const held = [...this.subscriptions.values()]
-        const results = await Promise.allSettled(
-            held.map((subscription) =>
-                subscription.projection === undefined
-                    ? this.call(subscription.remote, subscription.instanceName, 'on', subscription.event)
-                    : this.call(subscription.remote, subscription.instanceName, 'on', subscription.event, subscription.projection)
-            )
-        )
-        const failed: FailedResubscription[] = results.flatMap((result, index) =>
-            result.status === 'rejected'
-                ? [{ peer: held[index].remote, namespace: held[index].instanceName, event: held[index].event, error: result.reason }]
-                : []
-        )
+    markLost(peer: string) {
+        for (const [key, subscription] of this.subscriptions) {
+            if (subscription.remote !== peer) continue
+            subscription.lost = true
+            // Whatever a retry chain was in the middle of, it was asking a peer that has since
+            // gone. Its return is the trigger that matters now, and that replays these itself.
+            this.stopRetrying(key)
+        }
+    }
+
+    /**
+     * Re-issue remote subscriptions this client holds. Called on two different returns, and the
+     * difference between them is the whole reason this takes an argument.
+     *
+     * **The link returns.** Called with no peer: everything is replayed. If the server kept its
+     * state the calls are no-ops on its side, and if it restarted they rebuild it; either way the
+     * outgoing frames re-identify this client, which is what makes server-pushed events
+     * addressable again.
+     *
+     * **A peer returns.** Called with its name, and this is the case that used to have no answer
+     * at all. Behind a bus the observed peer can restart without the observer's link being touched
+     * - no `disconnected`, no `connected` - so nothing replayed, the revived peer held no
+     * subscription, and the channel sat `stale` for ever holding a pre-restart value while
+     * `peerOnline` went past with nothing keyed to it. Only subscriptions `markLost` flagged are
+     * re-issued, because a replay is answered with a full snapshot and re-sending one nobody lost
+     * spends the link for nothing.
+     *
+     * The residual hole, worth knowing about rather than discovering: `peerOnline` is a transition
+     * on socket.io and SignalR, so a gone/online pair a hub coalesces produces no event and nothing
+     * here fires. That case belongs to a retry over `resubscribeFailed`, not to this.
+     */
+    async resubscribe(peer?: string) {
+        if (peer === undefined) {
+            if (this.replayingAll) return 0
+            this.replayingAll = true
+            try {
+                return await this.replay(undefined)
+            } finally {
+                this.replayingAll = false
+            }
+        }
+        // The link-wide replay covers every peer, so a burst arriving underneath it has nothing to add.
+        if (this.replayingAll || this.replayingPeers.has(peer)) return 0
+        this.replayingPeers.add(peer)
+        try {
+            return await this.replay(peer)
+        } finally {
+            this.replayingPeers.delete(peer)
+        }
+    }
+
+    private async replay(peer: string | undefined) {
+        const held = [...this.subscriptions.entries()].filter(([, subscription]) => peer === undefined || (subscription.remote === peer && subscription.lost))
+        if (!held.length) return 0
+        // A link back or a peer back is a fresh reason to ask, so anything a retry chain had given
+        // up on is in scope again, and any chain still running is superseded by this pass.
+        // Abandonment means "this peer stopped asking on its own", never "never again": a restarted
+        // peer is a new incarnation, and the refusal may have gone with the process that made it.
+        for (const [key, subscription] of held) {
+            subscription.abandoned = false
+            this.stopRetrying(key)
+        }
+        const results = await Promise.allSettled(held.map(([, subscription]) => this.issue(subscription)))
+        const failed: FailedResubscription[] = []
+        results.forEach((result, index) => {
+            const [key, subscription] = held[index]
+            // Accepted, so it is being served again. A refusal leaves the flag set, which is what
+            // lets a retry find it later without having to remember anything of its own.
+            if (result.status === 'fulfilled') {
+                subscription.lost = false
+                return
+            }
+            failed.push(this.describeFailure(subscription, result.reason))
+            this.afterFailure(key, subscription, result.reason, 0)
+        })
         if (failed.length) this.emit('resubscribeFailed', failed)
         return results.length - failed.length
+    }
+
+    /** The subscribe frame itself, carrying the projection when there is one. One shape, two callers. */
+    private issue(subscription: HeldSubscription) {
+        return subscription.projection === undefined
+            ? this.call(subscription.remote, subscription.instanceName, 'on', subscription.event)
+            : this.call(subscription.remote, subscription.instanceName, 'on', subscription.event, subscription.projection)
+    }
+
+    private describeFailure(subscription: HeldSubscription, error: unknown): FailedResubscription {
+        return { peer: subscription.remote, namespace: subscription.instanceName, event: subscription.event, error }
+    }
+
+    /** Terminal in kind gives up now; anything else is timing, and timing is what a retry is for. */
+    private afterFailure(key: string, subscription: HeldSubscription, error: unknown, attempt: number) {
+        if (terminalRefusal(error)) this.abandon(key, subscription, error)
+        else this.scheduleRetry(key, subscription, attempt)
+    }
+
+    private scheduleRetry(key: string, subscription: HeldSubscription, attempt: number) {
+        const { attempts, baseMs, capMs } = this.resubscribeRetry
+        if (attempt >= attempts) {
+            this.abandon(key, subscription, new RpcError('TransportError', `gave up restoring ${subscription.instanceName}.${subscription.event} after ${attempts} attempts`))
+            return
+        }
+        const window = Math.min(baseMs * 2 ** attempt, capMs)
+        // Half fixed and half random: a hundred observers of one peer would otherwise ask again in
+        // the same millisecond, which is the herd a replay already risks without help.
+        const timer = setTimeout(() => void this.retry(key, subscription, attempt), Math.round(window / 2 + Math.random() * (window / 2)))
+        timer.unref?.()
+        this.retrying.set(key, timer)
+    }
+
+    private async retry(key: string, subscription: HeldSubscription, attempt: number) {
+        this.retrying.delete(key)
+        // Dropped while this waited - off(), close(), or a refused subscribe unwinding - so there
+        // is nothing to restore and nobody left to restore it for.
+        if (this.subscriptions.get(key) !== subscription) return
+        try {
+            await this.issue(subscription)
+            subscription.lost = false
+        } catch (error) {
+            // Deliberately quiet between the first failure and giving up. `resubscribeFailed`
+            // already named this subscription and a consumer has already marked its values stale;
+            // eight more of the same event would say nothing it does not know, and the fact worth
+            // reporting is the one at the end.
+            this.afterFailure(key, subscription, error, attempt + 1)
+        }
+    }
+
+    /**
+     * Stop trying, and say so. `stale` means the freshness is unknown; this means nobody is
+     * working on it any more, and collapsing those two into one status would leave an operator
+     * waiting for a repair that is not coming.
+     */
+    private abandon(key: string, subscription: HeldSubscription, error: unknown) {
+        this.stopRetrying(key)
+        subscription.abandoned = true
+        // A list of one, so a consumer can handle this with the same code as `resubscribeFailed` -
+        // and for that event's own reason: what a shadow copy needs is which subscriptions, never
+        // how many.
+        this.emit('resubscribeAbandoned', [this.describeFailure(subscription, error)])
+    }
+
+    private stopRetrying(key: string) {
+        const timer = this.retrying.get(key)
+        if (timer === undefined) return
+        clearTimeout(timer)
+        this.retrying.delete(key)
     }
 
     /**
@@ -410,6 +598,13 @@ export class RpcClientHandler extends MessageModule<Message<RpcMessage>, RpcMess
             // The same number that arms the timer below, so what the far end is told is exactly
             // what this caller is going to do. A request carrying no ttl is one with no deadline,
             // which is what a caller that has disabled its timeout is asking for.
+            //
+            // Which makes zero a dangerous number for anything that ever *computes* what is left of
+            // a budget rather than reading what a caller declared. Nothing does today, and this is
+            // the line where that would break: a remaining budget spent down to zero would travel
+            // as no deadline at all, so the call with no time left becomes the one that may run for
+            // ever - the exact inversion of the rule it was trying to keep. Such a thing has to
+            // floor above zero and fail locally instead.
             ttl: timeoutMs > 0 ? timeoutMs : undefined,
             ...(options.idempotencyKey ? { idempotencyKey: options.idempotencyKey } : {}),
             ...(options.ownerEpoch ? { fence: { ownerEpoch: options.ownerEpoch } } : {})
@@ -480,6 +675,13 @@ export class RpcClientHandler extends MessageModule<Message<RpcMessage>, RpcMess
                     } else if (isEventFunction(prop)) {
                         target[prop] = (...args: unknown[]) => {
                             const event = args[0]
+                            // Set for `on` only: undoes the local half when the far end refuses the
+                            // subscribe. Both halves go on *before* the call, deliberately - the
+                            // server attaches its listener before answering with a snapshot, so a
+                            // handler registered after the reply could miss an update that landed
+                            // between them - which leaves rolling back as the only way to keep a
+                            // refused subscribe from leaving one behind.
+                            let unwind: (() => void) | undefined
                             if (typeof event === 'string') {
                                 // Registered against this peer and this namespace, so a name shared
                                 // with another instance does not deliver to both.
@@ -491,8 +693,18 @@ export class RpcClientHandler extends MessageModule<Message<RpcMessage>, RpcMess
                                 // same narrowing. Replaying without it would quietly restore the
                                 // whole snapshot on the one link that cannot carry it, and nothing
                                 // would report the widening - the values would simply all be there.
-                                if (prop === 'on') this.subscriptions.set(key, { remote, instanceName: name, event, projection: args[2] })
-                                else if (prop === 'off' || prop === 'removeListener') {
+                                if (prop === 'on') {
+                                    this.subscriptions.set(key, { remote, instanceName: name, event, projection: args[2] })
+                                    unwind = () => {
+                                        const emitter = this.eventEmitter as unknown as EventEmitter
+                                        emitter.removeListener(key, args[1] as (...handled: unknown[]) => void)
+                                        // Only when nothing local is left. A second observer's
+                                        // refused subscribe must not delete the entry the first
+                                        // one's live subscription is replayed from - the same
+                                        // reference count `off` reads, for the same reason.
+                                        if (emitter.listenerCount(key) === 0) this.subscriptions.delete(key)
+                                    }
+                                } else if (prop === 'off' || prop === 'removeListener') {
                                     // The remote subscription is one per key; the local emitter may
                                     // hold several handlers under it. The emitter's own listener
                                     // count is the reference count, so removing one handler while
@@ -502,6 +714,9 @@ export class RpcClientHandler extends MessageModule<Message<RpcMessage>, RpcMess
                                     const emitter = this.eventEmitter as unknown as EventEmitter
                                     if (emitter.listenerCount(key) > 0) return Promise.resolve('ok - other local handlers remain')
                                     this.subscriptions.delete(key)
+                                    // Nothing wants it any more, so a retry chain still working on
+                                    // it is asking on behalf of nobody.
+                                    this.stopRetrying(key)
                                 }
                             } else {
                                 // removeAllListeners, setMaxListeners and friends take no event.
@@ -509,7 +724,13 @@ export class RpcClientHandler extends MessageModule<Message<RpcMessage>, RpcMess
                             }
                             // args[2] is the component projection, when the caller named one. The
                             // handler at args[1] is local and never travels.
-                            return prop === 'on' && args[2] !== undefined ? this.call(remote, name, prop, args[0], args[2]) : this.call(remote, name, prop, args[0])
+                            const issued = prop === 'on' && args[2] !== undefined ? this.call(remote, name, prop, args[0], args[2]) : this.call(remote, name, prop, args[0])
+                            const rollback = unwind
+                            if (!rollback) return issued
+                            return issued.catch((error: unknown) => {
+                                rollback()
+                                throw error
+                            })
                         }
                     } else {
                         target[prop] = (...args: unknown[]) => this.callWith(options, remote, name, prop as string, ...args)

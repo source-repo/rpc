@@ -530,6 +530,8 @@ test('resubscribeFailed names each subscription the reconnect could not restore'
 
     const failures: FailedResubscription[][] = []
     client.rpcClient!.on('resubscribeFailed', (failed) => void failures.push(failed as unknown as FailedResubscription[]))
+    const abandoned: FailedResubscription[][] = []
+    client.rpcClient!.on('resubscribeAbandoned', (given) => void abandoned.push(given as unknown as FailedResubscription[]))
 
     // A restart that comes back smaller: alpha survives, beta is simply no longer served. The
     // replay must restore one and name the other - a count could not say which values went stale.
@@ -543,6 +545,16 @@ test('resubscribeFailed names each subscription the reconnect could not restore'
     t.is(failures[0].length, 1, 'only the subscription that vanished should be named')
     t.like(failures[0][0], { peer: 'revenant-3857', namespace: 'beta', event: 'ping' })
     t.truthy(failures[0][0].error, 'the reason travels with the identity')
+
+    // And it is given up on rather than retried, because the refusal is terminal in kind: a peer
+    // that no longer serves a namespace has made a decision about what it is, not had a bad moment,
+    // and asking again for two minutes would only fill somebody's log. Said out loud, because
+    // `stale` means the freshness is unknown and this means nobody is working on it any more -
+    // leaving the two collapsed would have an operator waiting for a repair that is not coming.
+    t.is((failures[0][0].error as RpcError).code, 'ClassNotFound')
+    await waitFor(() => abandoned.length > 0, 10000)
+    t.is(abandoned[0].length, 1)
+    t.like(abandoned[0][0], { peer: 'revenant-3857', namespace: 'beta', event: 'ping' })
 
     // The partial half of partial failure: the surviving subscription really was re-established.
     revivedAlpha.fire('after the restart')
