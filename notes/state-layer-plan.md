@@ -1,0 +1,230 @@
+# A plan for the state layer
+
+What to build after [the TanStack Query comparison](tanstack-query-comparison.md) and [the review of it](tanstack-query-comparison-review.md). Ordered by what has to be true before the next thing is worth building, not by what is most interesting.
+
+Three of the comparison's own proposals were put to an adversary with the repository open and did not survive. That is recorded here rather than quietly dropped, because the reasons are the useful part: two of them turned out to be pointing at defects rather than at missing features, and the third turned out to be the wrong operation under the right name.
+
+**The headline is not on the original list.** A command already runs after its caller has been told it timed out, on two of the three transports, today. Everything else here waits behind that.
+
+## Phase 0 — make the ground true
+
+Nothing below this line is worth building on a channel that reports the opposite of what happened, and two of the four items here are prerequisites for features further down rather than merely urgent on their own.
+
+### 0.1 Start MongoDB in CI
+
+`ci.yml` sets `SOURCE_RPC_REQUIRE_MONGO=1` against a server nothing starts, so `packages/document`'s `test.before` throws on the runner. Until that is fixed every pull request in this plan gets a red run it did not cause, and the honest reading of a red run — which is the whole reason the three `REQUIRE` guards exist — stops being available. A `mongo:8.0` service with the credentials `MSGRPC_TEST_MONGO` already names, a healthcheck in the shape of the Postgres one, and a `wait-for-port` step. Hours, and it is prerequisite work rather than part of the plan.
+
+The document suite has never actually run in CI, so turning it on may surface real failures that somebody then owns.
+
+**Done.** A `mongo:8.0` service mirroring the compose one, with a `ping` health check — which is answerable before authentication, so it works against a server that has root credentials configured. No wait step: the runner already withholds the job until a health check answers, which is why EMQX has one and the other three do not.
+
+### 0.2 A confirmation must clear `stale`
+
+`accept()` discards a same-epoch frame that is not strictly newer. A targeted snapshot answering a resubscribe *is* that frame whenever the component has not committed since — so a component that survives a link blip without changing stays `stale` for ever behind a perfectly healthy subscription.
+
+The status is the load-bearing claim of the whole component channel, and this is the status saying the opposite of what just happened. It is also silent: nothing distinguishes it from a peer that really has gone quiet.
+
+Split the guard. A same-epoch, not-newer frame keeps revision, props, state, authority **and their identities** and sets `status: 'live'`, clears `staleSince`, settles `first` and notifies. Only a strictly newer revision replaces values. The reasoning is already written down one file over, for the context resolver's own hop: a frame arriving is evidence the feed is current, and refusing it because it carries no news leaves the view lying.
+
+Hours. It is also a precondition for **0.3**, **2.2** and **3.x** — each of which repairs a channel by re-subscribing, and each of which is silently broken by a repair whose snapshot is then dropped.
+
+**Done.** The decision inside it went to two fields rather than one: `receivedAt` keeps meaning *when these values arrived* and a new `confirmedAt` means *when the feed last proved it is current*, because moving `receivedAt` on a confirmation would make a screen say a value had been updated when only the connection had — the same conflation one level down. The console prints both where they differ and one where they do not, the MCP `read_state` tool reports both, and sparkplug is deliberately left stamping from `receivedAt`: a confirmation is not a new measurement. The regression test was checked against the old behaviour and fails on it.
+
+### 0.3 Recover a subscription when the peer returns, not only when the link does
+
+Confirmed by running it rather than by reading it, on both transports. Over a socket.io hub and over MQTT alike: the observed peer restarts, the observer's link is never touched — no `disconnected`, no `connected` — the channel goes `stale` on `peerGone` and stays there with the pre-restart value, the revived peer holds **zero** subscriptions, and `peerOnline` arrives with nothing keyed to it. An ungraceful kill behaves the same; the will still produces `peerGone`, so the view is at least marked rather than frozen while reading `live`.
+
+A bare `resubscribe()` was the complete repair in both runs — the view went `live` with the new epoch and the post-restart value, the peer's proxy count went to one, and it kept pushing. So the work is small because the library already holds everything it needs:
+
+- `resubscribe(peer?)`, a peer filter over the subscriptions already keyed by remote, wired to `peerOnline` in the two places `connected` is already wired.
+- A per-subscription `lost` flag set by `peerGone`/`peerDisplaced` and cleared on a successful subscribe — the shape `ContextResolver` already uses for `hop.stale`. This is not tidiness: MQTT emits `peerOnline` for every retained presence message with no transition gate, unlike socket.io and SignalR, so without it the observer's own reconnect replays every subscription a second time and pays a second snapshot for each on the link least able to carry it.
+- A bounded backoff retry for `resubscribeFailed`, which today is named once and never retried. This is what covers what `peerOnline` cannot: on socket.io and SignalR it is a transition rather than a heartbeat, so a gone/online pair the hub coalesces produces no event at all.
+- Stop a failed subscribe leaving a phantom: the subscription entry and the local emitter handler are both registered before the call is issued and neither is unwound when it rejects, so a failed `component()` leaves an entry that every future replay chases. Dormant today; a slow leak with a network cost once the retry above exists.
+- The fixture that makes any of this testable: `Component.test.ts` has no topology where the observer's link survives the observed peer's death — `pair()` puts the client on the server it watches. A `bus()` helper of the shape `Discovery.test.ts` already uses, and the MQTT twin behind the usual guard.
+
+`ContextResolver` has the identical defect and is worth doing in the same change: `reconnect()` is keyed to `connected`, `peerLost()` only marks hops stale, and its subscriptions are method-registered so `resubscribe()` cannot replay them at all.
+
+Days. It is a defect fix, so it should not go behind a flag nobody sets.
+
+**Done.** `resubscribe(peer?)` with the `lost` gate, wired to `peerOnline` on both `RpcClient` and `RpcServer`; a guard so a link-wide replay and a peer's return cannot double up; the phantom unwind; `peerReturned` on the context chains with `peerOnline` forwarded to the resolver; a bounded backoff retry with `Forbidden`/`Unauthorized` and `ClassNotFound` terminal and a new `resubscribeAbandoned` for the give-up, since `stale` and "nobody is trying" are different facts; and the `bus()` fixture with two regression tests, both checked against the unfixed build.
+
+One correction to what this plan said, because it changes where the remaining hole belongs. **The retry does not cover a coalesced gone/online pair.** If a hub reports neither, nothing marks the subscription lost and nothing attempts a replay — so there is no failure for a retry to work from, and the channel goes on reporting `live` while holding a value from a process that no longer exists. That is 0.5's missing publish-cadence liveness rather than a gap in recovery, and it is the same hole from a different direction. What the retry does cover is a replay that was made and failed: a peer still booting when it went out.
+
+### 0.4 A frame is never handed to a transport that cannot send it
+
+**The finding that reorders this plan.** A `non-repeatable-command` was issued while the socket.io link was down, its caller was told `Timeout: no response to pump.start within 2000 ms`, and it then **executed 11,766 ms after issue — 9,766 ms after its caller had been told it failed.** The frame sat in socket.io's `sendBuffer` and flushed on reconnect. Nothing refused it, because `expiredBy` measures the ttl from `arrived`, stamped at the server on receipt, and the frame arrived after the outage with its original 2000 ms intact.
+
+That contradicts a committed claim, verbatim, in two places: *"A call that timed out will not run afterwards… for `start pump` is a machine moving when nobody expects it to."* The existing regression test covers only the in-process wait — server up, authorizer slow, caller gives up — and never the client's own transport buffer, which is why it survived.
+
+mqtt.js does the same one level lower: `_storePacket` while disconnected, replayed verbatim from `outgoingStore` on connect, **including the original `messageExpiryInterval`**, so the broker's expiry clock starts only when the broker finally receives it. SignalR is the only one of the three that refuses. The same program gets three different answers about the most safety-relevant question the library claims to have an opinion on.
+
+The fix is small and the consequences are not: consult link state before enqueueing and refuse with `TransportError` — the signal already exists as `readyFlag` on `Transport`, set by both transports, and `RpcClient` already wires both events. No transport change, no frame change.
+
+Fix the deadline inversion beside it: `ttl: timeoutMs > 0 ? timeoutMs : undefined` means a budget spent down to zero travels as **no ttl at all**, and a missing ttl is what tells the server there is no deadline. The call that has run out of time becomes the call that may run for ever.
+
+This is a behaviour change on two transports — a call that used to survive a two-second blip by being buffered now fails — so it wants a release note and probably a major. It narrows the race rather than closing it (`readyFlag` can be true at the check and false a moment later) and the comment must say so rather than implying a guarantee. And it leaves one residual case to decide: a PUBLISH written but not yet acknowledged is reported `TransportError` today while mqtt.js will re-send it, so either the sent line moves on MQTT or the transport is asked to drop rather than replay.
+
+**Done, and Phase 0 with it.** Both client transports refuse while disconnected, in the same `require*` helper that already refused a missing socket or client and for the same recorded reason, so the three transports finally answer this question the same way. The regression test is the client-side twin of the existing "a command whose caller has already given up" test, and it fails against the unguarded build — not by running the command late, but by never failing fast at all, which is the same defect seen from the caller's end. The ttl inversion turned out **not to be reachable** without a park: nothing computes a remaining budget today, `0` means *no deadline* by deliberate design, and changing that would break the documented meaning. The line carries a comment saying what would break if anything ever did compute one, which is where the guard belongs.
+
+The residual MQTT case is unchanged and still wants a decision, but it is narrower than it looked: with hand-off gated on a live connection, the only remaining window is a PUBLISH written and not yet acknowledged when the link drops — and the caller is told `UnknownOutcome` there, which is already the true answer, while the redelivery is exactly what an idempotency store exists to absorb.
+
+### 0.5 Booked, not scheduled
+
+Three more that the same passes turned up. Each is real, none is on the critical path, and writing them down is how they stop being rediscovered:
+
+- **A component that stops publishing stays `live` for ever.** `markStale()` has three callers in the library and all three are driven by the observer's own transport lifecycle. There is no publish-cadence liveness anywhere.
+- **Nothing on the client consumes `$retired`.** The server emits it; `ComponentChannel` registers a handler for the snapshot event and nothing else. An observer of a retired namespace keeps a `live` view of something that no longer exists.
+- **An application can narrow a shared channel's feed with one line.** `remote.on('$snapshot', handler, paths)` goes through the ordinary event surface to the same subscription key the channel's own handler uses; the server answers `ok - reprojected` and re-projects **the channel's own feed**, live, and the client's replay entry is rewritten with it. Demonstrated with `status: 'live'` throughout. `ComponentChannels` goes to some length to refuse two observers asking for different projections, and this walks straight past it.
+
+## Phase 1 — say what the status means, and give freshness a home
+
+The comparison's headline design item was a freshness section on the snapshot. **It does not survive, and the reason is better than the proposal was.**
+
+Six independent counts, of which two are decisive. The three-hundred-tag case is *never in a snapshot*: the console's own scope walker stops at any record and reports it as one collection leaf, the subscription projection excludes collections, and a three-hundred-tag record is drawn through `$data getList` — whose result type has no freshness field and whose filter grammar reaches inside a row only. The motivating screen is rendered through a path a snapshot field cannot reach, and the operator question — *which three of three hundred are quiet* — stays unaskable. And the narrowing rule has no third option: carried through a projection unnarrowed it claims knowledge of paths the frame does not hold, which is the fabrication the `projection` field exists to prevent; narrowed, an empty exception list reads as an all-clear, and on a `limit: 0` counting slice it reads as "all healthy" while three hundred sources are dead.
+
+Add to that: each transition costs a **whole** snapshot — measured at 13,694 msgpack bytes for a 300-tag component, about 91 seconds at the 1200-baud figure this feature area was designed around — because the snapshot travels whole and `minPublishIntervalMs` defaults to 0. It would be the first author-written snapshot content that no schema describes, no validator checks and the compatibility checker provably cannot compare. And the one in-repo consumer with a real per-metric quality concept, `@source-repo/sparkplug`, cannot read a snapshot sibling by declaration, by resolver or by view copy — it has already shipped the other answer.
+
+**The problem statement survives and relocates.** Freshness is data about a reading, so it belongs where this repository already puts data about a reading: inside `props`/`state`, where the schema describes it, `extract` publishes it, the compatibility checker rules on it, `validateComponentSnapshots` checks it, a projection narrows it for free and `$data` can filter, sort and page it. That is not a workaround — it is what three shipped packages already do: `DockerState.checkedAt` is documented as *"when the counts were last taken, so a stale screen says so"*, `ContainerRow.state`/`status` is the per-thing version, and `RelationalState.lastRequestMs` is the same shape a third time.
+
+So Phase 1 is four small things and one that is not small:
+
+- **1.1 Name the collapse in the guide.** `docs/guide/components.md`'s *"The status tells the truth"* section currently invites exactly the misreading: it says a dropped link marks the picture stale and says nothing about the picture being wrong while the link is fine. Say that `status` is a fact about the link and never about the values, and that a component which stops polling its devices publishes `live` for ever.
+- **1.2 Make the house shape a shape.** Export `RpcSourcedValue<T> = { value: T; at: number; quality?: 'good' | 'bad' | 'stale'; unit?: string; forced?: boolean }` as a named type. It is already the de facto contract — sparkplug's `qualityPath` is constrained to it and the console duck-types it — so the work is admitting it rather than inventing it. Widen the console's process-value predicate to accept `at`, and draw an age badge beside `forced` and `quality`, or a `{ value, at }` reading renders as an expandable branch instead of a row.
+- **1.3 Document the branch case as a pattern.** *These fifty tags are behind one gateway that went quiet* is `state.sources: { modbus1: { reachable, checkedAt, problem? } }` — `DockerService` generalised. It rides the author's existing poll-cycle `setState`, so one commit covers all fifty, and it is projectable and filterable by mechanisms that exist.
+- **1.4 Teach the compatibility checker about the component section it does not read.** It compares `component.props` and `component.state` and nothing else, so a component can change its snapshot version from 1 to 2 today and `check`, `check --peer` and `conform` all report no breaking changes. That is the silent false-safe the file's own doc comment says it exists to avoid, and it has to be closed before any snapshot field is ever contemplated again.
+- **1.5 State the .NET gap.** `packages/csharp` implements no components at all — no `RpcComponent`, no snapshot, no `$acquire`, no projections, no `$data`. The README's *"what is not here yet"* does not say so, and it is the largest single gap in the .NET surface. One paragraph, plus a recorded decision about whether a C# peer will ever host a component or only observe one.
+
+**Done.** 1.1 in `docs/guide/components.md` under a new *What the status is not*; 1.2 as an exported `RpcSourcedValue<T>` in `Component.ts` plus the console accepting `at` and drawing it as a clock time rather than an age; 1.3 as the `state.sources` pattern with `DockerService` named as the worked example; 1.4 as a `component.snapshot` comparison in `namespaceProblems`, tested in both directions; 1.5 as a paragraph in the .NET README that separates *observing* a component from *hosting* one, since they are very different sizes and only the first gates the C# query cache.
+
+If the branch case later proves pressing enough to want a library field after all, the defensible carrier is `RpcGetListResult` — a per-page or per-row freshness stamp on the `$data` answer, which is where the question is actually asked. That is a different proposal with a conformance column and the store-backed nodes as its first implementers.
+
+## Phase 2 — the client-side cache mechanics
+
+### 2.1 Replace-equal-deep, and a selector, together
+
+The proposal was refuted **as worded**, and the wording is the defect: in this repository "merge" already has a stated meaning and it is the forbidden one — *"a cache merging them would be inventing"*. The operation wanted is TanStack's `replaceEqualDeep`: the result is always deep-equal to the frame that arrived, and only identities change. Write that invariant into the comment, because the union reading is one careless implementation away and it fabricates rather than losing.
+
+The epoch guard is required — not for values but for meaning, since an epoch is the statement that this is a different object under the same name, and handing a memoizing consumer *nothing changed under zones* across that boundary collapses two facts. Compare plain objects and arrays by walking with a bounded depth, `Date` by `getTime`, and everything else — typed arrays above all — by reference, and say in the comment that a component carrying binary in state gets no sharing on the path from that value to the root.
+
+Do **not** freeze what the merge rebuilds. It is impossible on a non-empty typed array (it throws), ineffective on `Date` and `Map` (both still mutate), and the danger it was proposed to contain does not exist for a value-identical operation: a consumer's mutation costs one frame of sharing rather than a retained value.
+
+**The changed-path set is killed outright**, not narrowed. It reports deletions the publisher never made — demonstrated: a slice window over sorted keys carried `tag.2, tag.3, tag.4`, one tag was *added*, the next frame carried `tag.0, tag.2, tag.3` with a byte-identical `projection`, and a structural diff says `tag.4` was deleted while the publisher still holds it. It cannot tell deleted from empty from never-populated, since all three produce an absent record. It differs per codec — a `Uint8Array` survives msgpack and arrives as an object map over JSON — so two observers of one component get two answers. And it is paid by every observer on a shared channel whether or not anyone wanted it.
+
+Ship it **with `store.select`, or not at all**: on its own it retires about forty lines of console code and moves nothing else. The selector takes the *view* rather than the state, so `status` and `staleSince` stay selectable — a pane bound to a selector must not lose the one thing this library has that a pull cache does not, and selecting `state.pressure` alone must still re-render when the channel goes live→stale. The derived store caches its value, because a selector returning a fresh object per `getSnapshot` is React's cached-snapshot infinite loop, and that single hazard is most of the argument for this living in the library.
+
+Days, client-only, no wire and no contract.
+
+**Done.** `replaceEqualDeep` exported from `ComponentClient.ts` with the invariant written into its comment, applied to props, state, authority and slices within one epoch; `store.select(fn, isEqual?)` and `store.at(path)` on top of it, the latter carrying `status` and `staleSince` and deliberately not the two timestamps that move every frame. Three tests: a pure one pinning the sharing rules including the same-key-count trap and the frame-is-reproduced rule, and two integration ones — both of which fail when sharing is removed, and the selector one also fails when the status is taken out of the bundle. No freeze, no `changed` set, no projection guard: the operation cannot retain what the frame does not carry, so the guard would have been insurance against a word rather than a behaviour.
+
+### 2.2 One suspend/resume primitive, serving keep-warm and activity
+
+Keeping the cache while dropping the subscription, and pausing while the tab is hidden, are the same primitive twice. Build `suspend()`/`resume()` on the channel once: `suspend` issues `off` — which also deletes the replay entry, so a later reconnect does not resurrect it — and keeps epoch, revision, props and state while setting `stale`; `resume` re-subscribes with the same projection and one targeted snapshot repairs it.
+
+Both opt-in, and the argument for that is stronger than the wall panel: a page hosting the Sparkplug projection runner turns a non-live status into a device **DEATH**, so an edge node would go offline because somebody switched tabs. The activity signal is injected rather than read from the DOM, since `ComponentClient` is exported from the web build and the Node one both, with a `visibilityActivity()` helper from the web entry point only — which also generalises for free to a screensaver, a kiosk on another page, or a locked screen. It needs a grace period in seconds: every resume costs a full targeted snapshot, so an operator alt-tabbing would otherwise pay a 12 kB snapshot per switch on the link this exists to protect.
+
+**Done, and the shape changed with the decision that `component()` keeps meaning "confirmed current".** Under that rule a cold cache pays for nothing — nobody may read it without weakening the promise — so keep-warm became a **deferred teardown** instead: the last `close()` starts a window rather than unsubscribing, and a reopen inside it costs nothing at all because the subscription never went. That also dissolves the cold-handle problem below, since the channel never stops being live. What it does introduce, and the guide says so, is that a handle whose owner already closed keeps being notified until the window ends.
+
+The activity half is the one with the real bandwidth argument and it needed no API change: the consumer already holds its store across the pause. Signal injected, browser helper web-only, grace in seconds, paused views go stale, and a failed resume retries with a bound.
+
+The rules below were written for the cold-cache design and are kept because they are what a future cold cache would still have to answer.
+
+Two rules that are not obvious. A reopen naming a *different* projection must evict the cold channel and open fresh rather than taking the existing refusal path — that refusal exists because two live observers would share one subscription, and a cold channel has no observer to serve wrongly. And going cold must clear the listener set while a reopen mints a fresh store handle, or the same store object springs back to life under a consumer that closed it.
+
+### 2.3 Reload persistence — after the four above
+
+Restore as `stale`, never `live`, keeping the original `receivedAt` and setting `staleSince` to when the record was *written*. Key on own peer name, target, namespace and a fingerprint of the projection, or a reload with different paths restores something claiming a shape it does not have. `sessionStorage` by default, because it is per tab and per profile and it is already where the page's peer name lives, so the cache and the authorization it was served under stay matched.
+
+Do **not** restore `authority`. A lease carries an expiry stamped on a server clock, and restoring *you hold control* across a reload is the optimistic-write failure this repository refuses, wearing a different hat: values are honest as last-known-with-an-age, arbitration is not.
+
+It is last because its failure mode is drawing stale plant state as current, and because without **0.2** it is broken in its most common case and broken silently.
+
+## Phase 3 — the pull half
+
+The comparison's claim that a component revision invalidates a `$data` page *exactly* is overstated, as the review said — and the grounding found a sharper reason than the review gave. It is deterministic and **component-scoped**, and it is actively wrong for the declared resources of Relational, Document and Queue: those bump their revision **on reads** and on a metrics timer, so wiring the rule to them turns the cache into a poll with no period. The exclusion has to be structural rather than a policy note.
+
+**And the genuinely novel thing is the inverse of invalidation.** A page drawn at the revision the channel currently holds is *confirmed current* — the publisher has said nothing since it was drawn. That is the state the comparison correctly says no pull cache has ever been able to hold, and it is worth more than the invalidation framing it was buried in.
+
+Staged:
+
+1. **One canonical encoder.** Lift the existing private stamp canonicaliser into an exported function and build the cache key on it, so one encoder serves the row stamp and the cache key and neither can drift. Gate it with a test that pins the stamp's exact bytes, because a one-character change makes every stamp a caller holds answer *conflict*. It also retires the `JSON.stringify` comparison in `sameProjection`, which has the same latent bug.
+2. **The adapter, over `@tanstack/query-core`** — see 3.7, the mechanics are not ours to write. What we supply is the key, and the three behaviours then come from knobs that already exist: dedup per key is stampede protection the cache does by construction, the previous answer surviving a failure is `placeholderData` plus the rule that an error annotates rather than clears, and the age window is `staleTime`. What we do **not** turn on is `refetchInterval`: the period stays the caller's, which is the whole reason `$data` is a call.
+3. **Freshness from the channel**, as three states and never two: `current`, `possibly-changed`, `unknown`. A different epoch drops every entry for the pair. A lower revision on an arriving answer files it possibly-changed rather than publishing it as fresh, which closes the reordering race the review named. `unknown` is first-class, because the signal is silently absent whenever no channel is open — which the console does routinely.
+4. **`sets`-narrowed invalidation** after a call settles, as a narrowing on top of the revision compare and never a trigger on its own — `sets` declares intent, not outcome, and carries no compatibility rule, so it must degrade to *invalidate nothing extra*.
+5. **The console adopts it and `usePolled` is deleted** — along with the panel's `settled` counter, which today re-asks every collection in the pane after any successful edit. What stays is React rather than protocol: the ticking waited-seconds, the debounce, the pager, the period selector.
+6. **A resource stamp for store-backed nodes**, separately, as the one wire-changing item: an optional stamp on the list and getMany results, moved only by a write the node served and never by a read, with its question added as a column in `packages/conformance` — *does a write through the write namespace move this resource's stamp, and does a read leave it alone* — asked of SQLite, Postgres, MySQL and Mongo alike. It must be documented as covering writes **this node served**, because a node publishing a stamp that does not move when the database moves is worse than one publishing none.
+
+### 3.7 The decision: TanStack for the mechanics, the contract for the facts
+
+The review's build-versus-integrate fork is settled in favour of integrating, and the line falls in a place worth stating precisely, because it is the same line in both languages.
+
+**Theirs:** dedup, storage, eviction, backoff timers, stale-while-revalidate, persistence adapters, devtools. None of it is interesting, all of it is fiddly, and rebuilding it would be rebuilding it twice.
+
+**Ours, and unobtainable from any cache library:** that a page drawn at the revision the channel currently holds is *confirmed current*; that `semantics` decides whether a retry is safe at all; that a deadline is a budget the caller declared rather than a per-attempt timeout; and the key that makes two questions the same question.
+
+**It works between services, not only in browsers.** `@tanstack/query-core` is framework-agnostic and dependency-free — it is what the Vue, Svelte and server-side prefetching bindings all sit on. `QueryObserver` is the subscription primitive without React: construct one, subscribe to it, and it is the same `getSnapshot`/`subscribe` shape the component store already exposes; `fetchQuery` and `ensureQueryData` are the one-shot form with dedup and cache. Everything that matters here — the cache, `staleTime`, `gcTime`, structural sharing, retry, cancellation — is in core and runs in Node.
+
+The two browser-shaped pieces are inert on a server, and that is the opening rather than the problem. `focusManager` and `onlineManager` both accept an injected event source, so `onlineManager` wires to `TransportEvent.connected`/`disconnected` and to `peerOnline`/`peerGone` — which makes `networkMode` pausing key on *the actual link and the actual peer* rather than on `navigator.onLine`, and does so identically in Node and in a browser. That is strictly better than the browser default, and it is the same activity signal Phase 2.2 already needs.
+
+Two hazards, both defaults, both ours to override:
+
+- **Queries are retried three times by default.** That is right only because `query` means safe to repeat — and `semantics` is optional, so absent means *does not say*, never *is a query*. `rpcQueryOptions` derives `retry` from the declared semantics and defaults to none when nothing is declared. The mutation default of no-retry is correct by accident; do not rely on the accident.
+- **Both a retry and a resume will happily re-issue a call whose deadline has passed.** The ttl is a budget the caller declared, so every attempt recomputes what remains rather than restarting from the original. This is the same arithmetic that killed command parking, arriving through a different door.
+
+Two more caveats for a plant box rather than a tab: `gcTime` bounds by time and not by count or bytes, so a process that runs for months over a wide key space needs a bound of its own; and an observer that is never unsubscribed keeps its entry for ever, so observers minted per request leak. Both are ordinary and both belong in the guide.
+
+**Where it lives** follows from this: not in `@source-repo/rpc`, which would put a query cache in the bundle of every peer that never pulls. Its own package, depending only on the public API — `RpcComponentStore` and `proxy.$data` are both already public and both in the browser build — which is the `queue` precedent, and which makes it the second consumer proving the compatibility policy rather than a seventh member of the lockstep set.
+
+## Phase 4 — operations visibility
+
+**The tray survives; the park does not.**
+
+`client.operations`, in the shape `RpcComponentStore` already defines, holding one frozen entry per call: id, target, namespace, method, semantics where known, idempotency key, deadline, issued/sent/settled times, and a status of `issued | sent | deferred | succeeded | failed | unknown-outcome`. Hooked in exactly one place — `callWith` is already the single funnel for every call a client, a server-as-caller or a component channel makes — so a server gets the same registry with no second implementation. No wire change, no contract change.
+
+`unknown-outcome` is a first-class status rather than an error string, because it is the one the tray must not let scroll away. Arguments and results are **not** retained by default and the documentation should say why rather than that it is off: an `untap(token)` argument is a bearer capability and a `$data` answer is a page of plant rows, so a client-wide store holding either hands everything a read surface that `authorize()` was protecting.
+
+Precondition, and it is hours: **the web console does not attach idempotency keys.** The CLI does, with `--idempotency-key`; the thing an operator actually presses does not. A tray's *retry* is a second command until this exists.
+
+**Do not build command parking.** The review's correction — queueability is not implied by idempotency — is right, and the grounding makes it worse: the client *already* parks on two of three transports, unbounded and deadline-blind, so the honest question was never *should we park* but *which of the two parks do we implement*. Then each proposed gate fails on its own terms. Semantics cannot gate it, because the client handler holds no schema and the server's own rule says the running class beats the schema for exactly this question — a client-side gate would decide whether to delay a command against a plant using the source the server declares untrustworthy for it, and `semantics` is optional anyway. An idempotency key gates nothing unless the target holds a durable store, which the library deliberately does not ship and `describe()` does not advertise, so the rule would read as a safeguard while being inert. And the deadline arithmetic inverts at both ends: a budget spent to zero travels as *no deadline*, while making a park long enough to survive a real outage requires a caller who declared a four-minute deadline, which is the same declaration that authorises the server to run a start four minutes late.
+
+The harm case that survives every proposed rule is the grant boundary. An HMI holds the oven's lease and decides `setMode('manual')`. The link drops, the lease expires, nobody is in control, the link returns, the application re-acquires, and the parked command passes the authority check cleanly — because that check asks *does this source hold it now*, never *is this the same grant the operator decided under*. The fence that would catch it is not on the wire: a call carries the topology owner epoch and nothing else, while the component epoch and the authority generation are on every snapshot and on no call.
+
+If a park is ever built, it is `query` only, per-call opt-in, bounded by the remaining budget with a floor above zero, expiring as `TransportError` rather than `Timeout`, refused outright on anything requiring authority, and visible in the tray with a `withdraw()`. That is *a client may re-issue a read it could not send*, which is a small true claim. Anything wanting a command to outlive its caller wants `@source-repo/queue`, not a queue in a browser tab.
+
+## The .NET lane, in parallel
+
+The same split, with the halves supplied by two libraries instead of one, and with one dependency that has to be honoured rather than worked around.
+
+**Polly v8 is the resilience half.** Retry, circuit-breaker, fallback, hedging, timeout and rate limiter — and deliberately **no cache**: the v7 cache policy is gone and the project defers to caching libraries, which is why this lane needs two of them rather than one. Two of its pieces map onto rules this plan has already had to state in the abstract. A `ResiliencePipeline` carrying an outer total timeout with inner per-attempt timeouts *is* "the deadline is absolute across retries", expressed in a type rather than in a comment. And `ShouldHandle` is where the error vocabulary finally buys something mechanical: `TransportError` — certainly did not run — is retryable, and `UnknownOutcome` must never be, because it is precisely the one a person goes and looks at. A predicate that treats them alike turns the library's headline distinction back into a spinner.
+
+**FusionCache is the cache half**, and its feature list reads as though it had been written against this problem. Stampede protection is the in-flight dedup. Fail-safe — reuse an expired entry as a temporary fallback — is `polled.ts`'s rule that a failure annotates the previous answer rather than clearing it, which this repository arrived at independently and wrote a paragraph of reasoning for. Soft timeouts are answer-stale-while-refreshing. Tagging with bulk expiry is the `sets`-narrowed invalidation. L1/L2 and auto-recovery are the multi-node story a plant eventually wants. The in-box alternative is .NET 9's `HybridCache`, which is narrower — stampede protection, two levels, tagging — and is the right choice if the dependency budget is the deciding factor rather than the feature list.
+
+**The backplane is the interesting part, and it is also the blocker.** FusionCache's backplane is Redis pub/sub: whichever node wrote last tells the others. The component channel is a better one, because a snapshot revision is authored by the peer that *owns* the data rather than by whoever happened to write it. But `packages/csharp` implements no components at all — no `RpcComponent`, no `$snapshot`, no epoch or revision, no `$acquire`, no projections, no `$data`. So on the .NET side the pull half can be built today and the push-driven half cannot, and `confirmed current` is unavailable there until a C# peer can at least *observe* a component.
+
+That gives the lane a shape and an order:
+
+1. **State the gap** (Phase 1.5) before anything is built on an assumption about it.
+2. **The pull half now**: the shared key encoder and the semantics-to-retry mapping ported from the TypeScript specification, over Polly and FusionCache or `HybridCache`. This is useful on its own — dedup, fail-safe and tag invalidation are most of the value on a link that is slow whichever language is holding it.
+3. **A component client** — observe only, not host — which is what unlocks revision-driven invalidation and the confirmed-current state in C#. Hosting a component from .NET is a much larger piece of work (snapshot publisher, epoch and revision discipline, authority leases, projection evaluation, a DataProvider) and should not be started by accident because the observing half sounded adjacent.
+
+**Neither library goes into `SourceRpc` itself.** The .NET core claims to depend on nothing but the BCL, and taking FusionCache or Polly into it would end that claim — so this is an adapter assembly beside it, which is the same answer, for the same reason, as the TypeScript package in 3.7.
+
+What is specified once and implemented twice stays small, which is the whole point of drawing the line here: the canonical key encoder, the freshness state machine including the late-lower-revision rule, the semantics-to-retry-safety mapping, and the deadline arithmetic. Everything under those four can differ per language without the two drifting, because none of it is a fact about the network.
+
+## What is not being done, and why
+
+- **A freshness or quality section beside props and state** — killed on six counts; freshness lives inside `props`/`state`. See Phase 1.
+- **A changed-path set on the view** — killed; the diff is not derivable from projected frames without inventing deletions.
+- **Command parking** — killed; fix the accidental one instead. See Phase 4.
+- **Polling a healthy subscription** — still refused as the normal freshness mechanism. The review's narrowing is accepted: targeted reconciliation for liveness or an event gap is a different thing and is not forbidden.
+- **Optimistic writes over observed plant state** — still refused. The review's narrowing is accepted here too: a draft name, a layout or an unsaved form is not plant state, and the rule is that an optimistic value is never presented as observed or accepted.
+- **Cross-tab connection sharing** — worth wanting, unscheduled. TanStack's own is experimental and this repository's version is harder, because the link carries identity and authority rather than only data.
+
+## Decisions that gate the work
+
+1. ~~Does 0.4 warrant a major?~~ **Decided: a major, and the whole lockstep set moves with it.** A call that used to survive a blip by being buffered will fail `TransportError`, which is a safety-relevant behaviour change on two of the three transports, and a version that did not say so would be the release workflow's rule bent for exactly the change it exists to catch. Everything else in Phase 0 rides in the same major.
+2. **Is CI expected to be green today?** If it has been red on `packages/document` for a while, that changes what a red run means for every change in this plan.
+3. ~~Where does the pull cache live?~~ **Settled in 3.7**: its own package, over `@tanstack/query-core`, depending only on the public API. What remains is the narrower half of it — does that package version **independently**, as `queue` does and for the same reason, or does it join the lockstep set? Letting a package out of the versions-together rule is a deliberate act, and this one would be starting outside it rather than being released from it.
+4. **Does `await component()` still mean "confirmed current"** once a warm cache can answer it? Every existing caller reads the resolution as live, including the MCP `read_state` tool, and there is no compile error behind a change.
+5. **Is per-value freshness settled as "inside `state`"?** The exceptions-on-the-snapshot design remains the fallback if the branch case turns out to be pressing, and the `$data` carrier is the escalation after that.
+6. **Should `describe()` advertise that a peer holds a durable idempotency store?** It is the one fact that decides whether an idempotency key means anything, a caller cannot discover it, and several rules here are currently written as though the caller knew.
+7. **Does C# get a component client?** Narrowed by the .NET lane, and now two questions rather than one. *Observing* a component is what unlocks revision-driven invalidation and `confirmed current` on that side, and without it the .NET cache is dedup and fail-safe and nothing this library contributes. *Hosting* one is the larger question, and it is the one that decides whether every future snapshot field carries a second implementation cost or none. The first can be answered now; the second does not have to be.
