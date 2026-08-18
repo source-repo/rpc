@@ -35,6 +35,9 @@ public sealed class RpcDispatcher
     private readonly ISourceRpcResponder? _responder;
     private readonly IRpcOwnership? _ownership;
     private readonly IRpcIdempotencyStore? _idempotency;
+
+    /// <summary>How many calls may run at once, so a burst is refused rather than absorbed.</summary>
+    private readonly SemaphoreSlim _running;
     private readonly SubscriptionTable _subscriptions;
     private readonly SourceRpcOptions _options;
     private readonly SourceRpcTelemetry _telemetry;
@@ -57,6 +60,7 @@ public sealed class RpcDispatcher
         _telemetry = telemetry;
         _responder = responder;
         _log = log ?? NullLogger.Instance;
+        _running = new SemaphoreSlim(options.Limits.MaxConcurrentCalls, options.Limits.MaxConcurrentCalls);
         telemetry.Subscriptions = () => _subscriptions.Count;
     }
 
@@ -83,12 +87,52 @@ public sealed class RpcDispatcher
     {
         _telemetry.FrameReceived(frame.Kind);
 
+        // Checked before anything acts on the frame, because the cheapest place to refuse a frame
+        // that is out of bounds is before it has cost anything.
+        if (Exceeds(frame) is { } broken)
+        {
+            _log.LogWarning("SourceRpc refused a frame from {Source}: {Reason}", frame.Src, broken);
+            _telemetry.FrameRejected(broken);
+            return frame.Reply("error", Error(broken), RpcErrorCode.LimitExceeded);
+        }
+
         return frame.Kind switch
         {
             "call" => await DispatchAsync(frame, caller),
             "subscribe" or "unsubscribe" => Watch(frame, caller),
             _ => frame.Reply("error", Error($"this peer does not handle '{frame.Kind}' frames"), RpcErrorCode.MethodNotFound)
         };
+    }
+
+    /// <summary>
+    /// Why this frame is outside what this peer accepts, or null when it is within them.
+    ///
+    /// The hop count is the one that matters most in an ordinary network: a hub increments it when
+    /// it relays, and two peers each relaying for the other will otherwise pass one frame between
+    /// them for as long as the process lives - a loop nobody configured and nothing reports.
+    /// </summary>
+    private string? Exceeds(RpcFrame frame)
+    {
+        var limits = _options.Limits;
+        if (frame.Hops is { } hops && hops > limits.MaxHops)
+            return $"the frame has passed through {hops} relays, and this peer accepts {limits.MaxHops}";
+        if (frame.Path is { Length: > 0 } path && path.Length > limits.MaxIdentifierLength)
+            return "the path is longer than this peer accepts";
+        if (frame.Method is { Length: > 0 } method && method.Length > limits.MaxIdentifierLength)
+            return "the method name is longer than this peer accepts";
+        if (frame.Corr is { Length: > 0 } corr && corr.Length > limits.MaxIdentifierLength)
+            return "the correlation is longer than this peer accepts";
+        if (frame.Batch is { } batch)
+        {
+            if (batch.Length > limits.MaxBatchItems)
+                return $"the batch carries {batch.Length} frames, and this peer accepts {limits.MaxBatchItems}";
+            // Depth is checked by refusing a batch inside a batch rather than by recursing, which
+            // is the point: unpacking to find out how deep something goes is the thing being
+            // guarded against.
+            if (limits.MaxBatchDepth <= 1 && batch.Any(carried => carried.Batch is not null))
+                return "a batch may not carry another batch";
+        }
+        return null;
     }
 
     /// <summary>
@@ -192,6 +236,20 @@ public sealed class RpcDispatcher
             }
         }
 
+        // Refused rather than queued, and refused *before* the claim would be taken. Transports
+        // deliberately do not await dispatch - a responder must be able to call out and receive the
+        // reply - so without a gate here a burst becomes as many concurrent invocations as arrive,
+        // and the first sign of trouble is memory rather than a message anybody can act on.
+        if (!_running.Wait(0))
+        {
+            _log.LogWarning("SourceRpc refused {Path}.{Method}: already running {Limit} calls", path, method, _options.Limits.MaxConcurrentCalls);
+            _telemetry.FrameRejected("at the concurrent call limit");
+            if (claimed && frame.Idem is { Length: > 0 } busyKey && _idempotency is not null)
+                // The claim goes back, because this certainly did not run.
+                await _idempotency.AbandonAsync(busyKey, CancellationToken.None);
+            return frame.Reply("error", Error("this peer is already running as many calls as it will run at once"), RpcErrorCode.Busy);
+        }
+
         var started = Stopwatch.GetTimestamp();
         RpcErrorCode? failure = null;
         try
@@ -259,6 +317,7 @@ public sealed class RpcDispatcher
         }
         finally
         {
+            _running.Release();
             var elapsed = Stopwatch.GetElapsedTime(started).TotalMilliseconds;
             _telemetry.CallCompleted(path, method, elapsed, failure);
             activity?.SetStatus(failure is null ? ActivityStatusCode.Ok : ActivityStatusCode.Error);

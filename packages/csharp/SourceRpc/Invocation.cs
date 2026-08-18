@@ -110,6 +110,20 @@ public sealed class RpcInvocation
     /// </summary>
     public T? Arg<T>(int index) => Frame.Arg<T>(index);
 
+    /// <summary>
+    /// The argument at <paramref name="index"/>, or <see cref="RpcErrorCode.InvalidParams"/> saying
+    /// what could not be read.
+    ///
+    /// Reach for this rather than <see cref="Arg{T}"/> for anything the method acts on. `Arg` is
+    /// lenient by design and answers <c>default</c> when a value will not convert - which turns a
+    /// malformed setpoint into `0` and a malformed flag into `false`, and a machine will act on
+    /// both. Refusing is the answer a caller can do something about.
+    /// </summary>
+    public T? RequiredArg<T>(int index) => Frame.RequiredArg<T>(index);
+
+    /// <summary>The argument at <paramref name="index"/>, saying whether it could be read.</summary>
+    public bool TryGetArg<T>(int index, out T? value) => Frame.TryGetArg(index, out value);
+
     /// <summary>How many arguments the call carried, for a method that takes a variable number.</summary>
     public int ArgCount => Frame.ArgCount;
 
@@ -186,6 +200,18 @@ public enum RpcErrorCode
     /// but its outcome could not be written down.
     /// </summary>
     UnknownOutcome,
+
+    /// <summary>
+    /// This peer is already running as many calls as it will run at once, so this one was refused
+    /// before it could queue. It certainly did not run, and retrying later is reasonable.
+    /// </summary>
+    Busy,
+
+    /// <summary>
+    /// The frame broke one of this peer's protocol limits - too many hops, too large a batch, an
+    /// identifier longer than anything legitimate. It certainly did not run.
+    /// </summary>
+    LimitExceeded,
 
     /// <summary>
     /// The call carried an idempotency key and this process has no store to enforce it with.

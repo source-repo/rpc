@@ -66,4 +66,10 @@ public sealed class SourceRpcOptions
     /// the middle of being migrated, where refusing every keyed call at once is worse.
     /// </summary>
     public bool AllowUnenforcedIdempotencyKeys { get; set; }
+
+    /// <summary>
+    /// The bounds this peer puts on what arrives, so hostile traffic and an accidental loop are both
+    /// refused rather than absorbed.
+    /// </summary>
+    public RpcLimits Limits { get; set; } = new();
 }

@@ -51,7 +51,62 @@ public sealed class SourceRpcClient : IAsyncDisposable
     }
 
     /// <summary>Bring the link up. The transport keeps it up from there.</summary>
+    /// <summary>
+    /// Bring the link up and keep it up. **Returns before there is a connection.**
+    ///
+    /// That is deliberate - a peer may start before the thing it connects to, and blocking startup
+    /// on something minutes away is worse than starting - but it means this is not readiness, and
+    /// `await StartAsync(); await CallAsync(...)` fails with `TransportError` rather than waiting.
+    /// Use <see cref="WaitUntilConnectedAsync"/> when the next thing needs a link.
+    ///
+    /// The token here is the transport's **lifetime**: cancelling it stops reconnecting for good.
+    /// Pass the host's stopping token, not a startup timeout - a startup timeout belongs to
+    /// <see cref="WaitUntilConnectedAsync"/>, where giving up waiting does not also give up trying.
+    /// </summary>
     public Task StartAsync(CancellationToken cancellationToken = default) => _transport.StartAsync(cancellationToken);
+
+    /// <summary>
+    /// Wait until the link is up, or until the caller stops waiting.
+    ///
+    /// Cancelling this abandons the wait and nothing else: the transport goes on trying, so a
+    /// startup timeout does not turn a slow server into a peer that never reconnects. Returns true
+    /// if the link came up, false if the wait was abandoned first.
+    /// </summary>
+    public async Task<bool> WaitUntilConnectedAsync(CancellationToken cancellationToken = default)
+    {
+        if (_transport.Connected)
+            return true;
+
+        var connected = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        Task Established()
+        {
+            connected.TrySetResult();
+            return Task.CompletedTask;
+        }
+
+        _transport.LinkEstablished += Established;
+        try
+        {
+            // Re-checked after subscribing, because the link may have come up in between - and a
+            // wait that missed its own signal would run to the caller's timeout for no reason.
+            if (_transport.Connected)
+                return true;
+            using var give_up = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            await using (give_up.Token.Register(() => connected.TrySetCanceled()))
+            {
+                await connected.Task;
+                return true;
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            return false;
+        }
+        finally
+        {
+            _transport.LinkEstablished -= Established;
+        }
+    }
 
     /// <summary>
     /// Call a method on another peer and wait for its answer.
@@ -60,22 +115,35 @@ public sealed class SourceRpcClient : IAsyncDisposable
     /// than doing it for a caller that has stopped waiting - and the local timer is armed with the
     /// same number, so what the far end is told is exactly what this caller is going to do.
     /// </summary>
-    public async Task<T?> CallAsync<T>(string target, string path, string method, object?[]? args = null, CancellationToken cancellationToken = default)
+    public async Task<T?> CallAsync<T>(
+        string target,
+        string path,
+        string method,
+        object?[]? args = null,
+        RpcCallOptions? options = null,
+        CancellationToken cancellationToken = default)
     {
-        var frame = await CallFrameAsync(target, path, method, args, cancellationToken);
-        return Convert<T>(frame.Body);
+        var frame = await CallFrameAsync(target, path, method, args, options, cancellationToken);
+        return ConvertResult<T>(frame.Body, path, method);
     }
 
     /// <summary>As <see cref="CallAsync{T}"/>, for a method whose answer is not wanted typed.</summary>
-    public async Task<object?> CallAsync(string target, string path, string method, object?[]? args = null, CancellationToken cancellationToken = default)
+    public async Task<object?> CallAsync(
+        string target,
+        string path,
+        string method,
+        object?[]? args = null,
+        RpcCallOptions? options = null,
+        CancellationToken cancellationToken = default)
     {
-        var frame = await CallFrameAsync(target, path, method, args, cancellationToken);
+        var frame = await CallFrameAsync(target, path, method, args, options, cancellationToken);
         return frame.Body;
     }
 
-    private async Task<RpcFrame> CallFrameAsync(string target, string path, string method, object?[]? args, CancellationToken cancellationToken)
+    private Task<RpcFrame> CallFrameAsync(string target, string path, string method, object?[]? args, RpcCallOptions? options, CancellationToken cancellationToken)
     {
         var correlation = Guid.NewGuid().ToString("N");
+        var timeout = options?.Timeout ?? _options.CallTimeout;
         var frame = new RpcFrame
         {
             Src = _options.Name,
@@ -84,10 +152,13 @@ public sealed class SourceRpcClient : IAsyncDisposable
             Corr = correlation,
             Path = path,
             Method = method,
-            Ttl = (long)_options.CallTimeout.TotalMilliseconds,
+            Ttl = (long)timeout.TotalMilliseconds,
+            Idem = options?.IdempotencyKey,
+            Fence = options?.OwnerFence,
+            Ver = options?.ContractVersion,
             Body = args ?? []
         };
-        return await ExchangeAsync(frame, correlation, cancellationToken);
+        return ExchangeAsync(frame, correlation, cancellationToken, timeout);
     }
 
     /// <summary>
@@ -103,6 +174,7 @@ public sealed class SourceRpcClient : IAsyncDisposable
         string path,
         string method,
         object?[]? args = null,
+        RpcCallOptions? options = null,
         CancellationToken cancellationToken = default)
     {
         var correlation = Guid.NewGuid().ToString("N");
@@ -114,7 +186,10 @@ public sealed class SourceRpcClient : IAsyncDisposable
             Corr = correlation,
             Path = path,
             Method = method,
-            Ttl = (long)_options.CallTimeout.TotalMilliseconds,
+            Ttl = (long)(options?.Timeout ?? _options.CallTimeout).TotalMilliseconds,
+            Idem = options?.IdempotencyKey,
+            Fence = options?.OwnerFence,
+            Ver = options?.ContractVersion,
             Body = args ?? []
         };
 
@@ -124,10 +199,10 @@ public sealed class SourceRpcClient : IAsyncDisposable
         _tickets[correlation] = sink;
         try
         {
-            var answer = await ExchangeAsync(frame, correlation, cancellationToken);
+            var answer = await ExchangeAsync(frame, correlation, cancellationToken, options?.Timeout);
             if (answer.Deferred == true && answer.Body is not null)
             {
-                var receipt = Convert<RpcTicketReceipt>(answer.Body);
+                var receipt = RpcConversion.Optional<RpcTicketReceipt>(answer.Body);
                 // Opening replays whatever arrived while there was no ticket to put it on, and says
                 // whether that already settled the thing - in which case there is nothing left to
                 // track and holding the correlation would only leak it.
@@ -246,7 +321,7 @@ public sealed class SourceRpcClient : IAsyncDisposable
         }
     }
 
-    private async Task<RpcFrame> ExchangeAsync(RpcFrame frame, string correlation, CancellationToken cancellationToken)
+    private async Task<RpcFrame> ExchangeAsync(RpcFrame frame, string correlation, CancellationToken cancellationToken, TimeSpan? timeout = null)
     {
         if (!_transport.Connected)
             // Thrown rather than queued. A call discarded in silence leaves its caller waiting out
@@ -263,9 +338,12 @@ public sealed class SourceRpcClient : IAsyncDisposable
             _telemetry.FrameSent(frame.Kind);
 
             using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            deadline.CancelAfter(_options.CallTimeout);
+            // The same number the frame carried, so the local timer and what the far end was
+            // told cannot disagree about when this caller stops waiting.
+            var waitFor = timeout ?? _options.CallTimeout;
+            deadline.CancelAfter(waitFor);
             await using (deadline.Token.Register(() =>
-                waiting.TrySetException(new SourceRpcException(RpcErrorCode.Timeout, $"{frame.Path}.{frame.Method} did not answer within {_options.CallTimeout}"))))
+                waiting.TrySetException(new SourceRpcException(RpcErrorCode.Timeout, $"{frame.Path}.{frame.Method} did not answer within {waitFor}"))))
             {
                 var answer = await waiting.Task;
                 if (answer.Kind == "error")
@@ -420,22 +498,19 @@ public sealed class SourceRpcClient : IAsyncDisposable
             _ => body.ToString() ?? "the call failed"
         };
 
-    private static T? Convert<T>(object? value)
+    /// <summary>
+    /// A result as the type the caller asked for, or a refusal.
+    ///
+    /// Returning `default` here was the quiet version of the same mistake the argument side made:
+    /// a result that could not be read became `0`, `false` or `null`, and a caller acted on it as
+    /// though the far end had said so. `UnknownOutcome` would be wrong - the command certainly ran -
+    /// so this is an ordinary failure naming the value that could not be read.
+    /// </summary>
+    private static T? ConvertResult<T>(object? value, string path, string method)
     {
-        if (value is null)
-            return default;
-        if (value is T typed)
-            return typed;
-        if (value is JsonElement element)
-            return element.Deserialize<T>();
-        try
-        {
-            return (T)System.Convert.ChangeType(value, Nullable.GetUnderlyingType(typeof(T)) ?? typeof(T), System.Globalization.CultureInfo.InvariantCulture);
-        }
-        catch (Exception e) when (e is InvalidCastException or FormatException or OverflowException)
-        {
-            return default;
-        }
+        if (RpcConversion.TryConvert<T>(value, out var converted, out var why))
+            return converted;
+        throw new SourceRpcException(RpcErrorCode.InvalidParams, $"the answer from {path}.{method} could not be read as {typeof(T).Name}: {why}");
     }
 
     /// <summary>
@@ -557,7 +632,12 @@ public sealed class SourceRpcClient : IAsyncDisposable
                     return true;
                 default:
                     _settled = true;
-                    ticket.Resolve(Convert<T>(body)!);
+                    // A ticket's answer gets the same treatment as a call's: a value that cannot be
+                    // read rejects the ticket rather than resolving it with a plausible default.
+                    if (RpcConversion.TryConvert<T>(body, out var resolved, out var why))
+                        ticket.Resolve(resolved!);
+                    else
+                        ticket.Reject(new SourceRpcException(RpcErrorCode.InvalidParams, $"the deferred answer could not be read as {typeof(T).Name}: {why}"));
                     return true;
             }
         }
