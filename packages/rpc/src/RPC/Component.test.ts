@@ -2,7 +2,8 @@ import test from 'ava'
 import { randomUUID } from 'crypto'
 import { RpcClient, RpcServer, SCHEMA_VERSION, rpc, rpcNamespace, type RpcSchema } from '../index.js'
 import { RpcComponent, componentHost } from './Component.js'
-import { replaceEqualDeep, rpcComponent, type RpcActivitySignal } from './ComponentClient.js'
+import { replaceEqualDeep, rpcComponent, type RpcComponentChannelOptions } from './ComponentClient.js'
+import type { RpcPersistedSnapshot } from './Snapshots.js'
 import type { SocketIoClientTransport } from '../Transports/SocketIoClientTransport.js'
 import { TransportEvent } from './Core.js'
 
@@ -78,6 +79,23 @@ class Ordinary {
     }
 }
 
+/** The store is injected for exactly this: the behaviour is testable without a browser. */
+const memoryStore = () => {
+    const held = new Map<string, RpcPersistedSnapshot>()
+    return {
+        held,
+        read: (key: string) => Promise.resolve(held.get(key)),
+        write: (key: string, snapshot: RpcPersistedSnapshot) => {
+            held.set(key, snapshot)
+            return Promise.resolve()
+        },
+        remove: (key: string) => {
+            held.delete(key)
+            return Promise.resolve()
+        }
+    }
+}
+
 /** An activity signal a test can drive, which is the whole reason the real one is injected. */
 const controllable = () => {
     let active = true
@@ -97,7 +115,7 @@ const controllable = () => {
     }
 }
 
-const pair = async (port: number, client?: Partial<{ components: { activity?: RpcActivitySignal; activityGraceMs?: number; keepAliveMs?: number } }>) => {
+const pair = async (port: number, client?: Partial<{ components: RpcComponentChannelOptions }>) => {
     const server = new RpcServer({ name: peer(`host${port}`), transports: [{ port }] })
     await server.ready()
     const oven = new Oven()
@@ -476,6 +494,58 @@ test('an inactive peer stops listening, and coming back is one snapshot rather t
     t.is(remote.state.mode, 'heating', 'and the resume is repaired by one targeted snapshot, not a replay')
 
     await store.close()
+    await dispose()
+})
+
+test('a reload comes back with last known values and their age, never with a live claim', async (t) => {
+    const store = memoryStore()
+    const { client, dispose } = await pair(3878, { components: { persistence: { store, scope: 'operator@site-a', maxAgeMs: 60_000, writeEveryMs: 0 } } })
+    const remote = await client.component<Oven>('oven')
+    t.is(await remote.setMode('heating'), 'heating')
+    await waitFor(() => remote.state.mode === 'heating')
+    const view = remote[rpcComponent].getSnapshot()
+
+    // Written on the way past rather than on demand: the page that needs it is not running yet.
+    t.is(store.held.size, 1)
+    const record = [...store.held.values()][0]
+    t.is((record.state as OvenState).mode, 'heating')
+    // A lease carries an expiry stamped on somebody else's clock, and the plant may have been handed
+    // to another panel while this page was not running. Values keep; arbitration does not.
+    t.false('authority' in record, 'a held lease must not survive a reload')
+
+    const back = await client.lastKnown<Oven>('oven')
+    t.is(back?.status, 'stale', 'a restored view is never live')
+    t.is(back?.state.mode, 'heating')
+    t.is(back?.receivedAt, view.receivedAt, 'the values keep the age they actually had')
+    t.is(back?.staleSince, record.writtenAt, 'stale since it was written, not since the page started')
+
+    // A different projection is a different question, and answering it from this record would be
+    // handing back something claiming a shape it does not have.
+    t.is(await client.lastKnown<Oven>('oven', undefined, { paths: [['state', 'mode']] }), undefined)
+
+    await remote[rpcComponent].close()
+    await dispose()
+})
+
+test('a record too old, or from a clock that ran backwards, is not drawn at all', async (t) => {
+    const store = memoryStore()
+    const { client, dispose } = await pair(3879, { components: { persistence: { store, scope: 'operator@site-a', maxAgeMs: 60_000, writeEveryMs: 0 } } })
+    const remote = await client.component<Oven>('oven')
+    await waitFor(() => store.held.size === 1)
+    const key = [...store.held.keys()][0]
+    const record = store.held.get(key)!
+
+    // Older than the deployment says is worth showing.
+    store.held.set(key, { ...record, writtenAt: Date.now() - 120_000 })
+    t.is(await client.lastKnown<Oven>('oven'), undefined)
+    t.is(store.held.size, 0, 'and dropped on the way past rather than refused again on every reload')
+
+    // From the future. A clock that moved backwards is not evidence about a plant, and a value
+    // whose age nobody can reason about is worse than no value.
+    store.held.set(key, { ...record, writtenAt: Date.now() + 120_000 })
+    t.is(await client.lastKnown<Oven>('oven'), undefined)
+
+    await remote[rpcComponent].close()
     await dispose()
 })
 

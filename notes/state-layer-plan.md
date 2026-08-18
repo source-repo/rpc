@@ -138,6 +138,8 @@ Do **not** restore `authority`. A lease carries an expiry stamped on a server cl
 
 It is last because its failure mode is drawing stale plant state as current, and because without **0.2** it is broken in its most common case and broken silently.
 
+**Done, with `localStorage` chosen and the consequence taken on rather than hidden.** Under the rule that `component()` means live, a restored snapshot needs its own door, so it got one: `client.lastKnown()` answers a plain view marked stale and no proxy at all. `scope` is required and has no default — with `localStorage` the values are at rest for whatever opens that origin next, and the scope is the only thing keeping one operator's screen from being drawn for another. It is deliberately not the peer's own name: a console page's name is random and lives in `sessionStorage`, so keying on it would orphan every record at exactly the restart `localStorage` was picked for, which is the trap this would have fallen into by following the earlier sketch. Guards on age and on a backwards clock, projection in the key, `authority` never written, and the age/future test fails when either guard is removed.
+
 ## Phase 3 — the pull half
 
 The comparison's claim that a component revision invalidates a `$data` page *exactly* is overstated, as the review said — and the grounding found a sharper reason than the review gave. It is deterministic and **component-scoped**, and it is actively wrong for the declared resources of Relational, Document and Queue: those bump their revision **on reads** and on a metrics timer, so wiring the rule to them turns the cache into a poll with no period. The exclusion has to be structural rather than a policy note.

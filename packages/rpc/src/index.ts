@@ -37,6 +37,7 @@ export * from './RPC/Signing.js'
 export * from './RPC/Idempotency.js'
 export * from './RPC/Component.js'
 export * from './RPC/ComponentClient.js'
+export * from './RPC/Snapshots.js'
 export * from './RPC/DataProvider.js'
 // The words a store-backed node accepts writes with, and no verb that performs one: there is no
 // `$write` beside `$data`, because a write is a method call. See RPC/DataWrites.ts.

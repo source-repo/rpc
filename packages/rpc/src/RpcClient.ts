@@ -4,7 +4,18 @@ import { MessageSigner, type TrustedCertificateAuthority } from './RPC/Auth.js'
 import { RpcSchema } from './RPC/Schema.js'
 import { defaultWebSocketPort, IManageRpc } from './RPC/Rpc.js'
 import { defaultCallTimeout, RpcClientHandler, type WithOptions } from './RPC/RpcClientHandler.js'
-import { ComponentChannels, componentFacade, type RpcComponentChannelOptions, type RpcComponentLike, type RpcComponentOptions, type RpcComponentProxy } from './RPC/ComponentClient.js'
+import {
+    ComponentChannels,
+    componentFacade,
+    type ComponentProps,
+    type ComponentState,
+    type RpcComponentChannelOptions,
+    type RpcComponentLike,
+    type RpcComponentOptions,
+    type RpcComponentProxy,
+    type RpcComponentView
+} from './RPC/ComponentClient.js'
+import { restorable, snapshotKey } from './RPC/Snapshots.js'
 import { contextNamespace, type ContextWireSnapshot } from './RPC/Context.js'
 import type { RemoteSurface } from './RPC/Invocation.js'
 import type { IClientOptions } from 'mqtt'
@@ -296,6 +307,57 @@ export class RpcClient extends EventEmitter {
         this.componentChannels ??= new ComponentChannels(this.rpcClient, this, this.options.components)
         const channel = await this.componentChannels.open(name, target ? target : this.options.defaultTarget, options?.paths)
         return componentFacade(channel, channel.inner) as RpcComponentProxy<T>
+    }
+
+    /**
+     * The last snapshot this page saw of a component, from before it was reloaded - values, and the
+     * age they carry, drawn while the live one is still on its way.
+     *
+     * A separate call rather than a mode on `component()`, deliberately. `component()` resolves only
+     * on an accepted snapshot and that promise is worth keeping, so this hands back a plain view and
+     * no proxy at all: nothing on it can be called, nothing about it can be mistaken for current.
+     * The status is **always** `stale`, `receivedAt` is the age the values actually had, and
+     * `staleSince` is when the record was written rather than when this page started - "stale since
+     * I reloaded" would understate it by however long the machine was off.
+     *
+     * Answers `undefined` when there is nothing kept, when the record is older than the deployment's
+     * `maxAgeMs`, or when it claims to have been written in the future - a clock that moved
+     * backwards is not evidence about a plant, and a value with an age nobody can reason about is
+     * worse than no value. A record refused for age is removed on the way past.
+     *
+     * Nothing is checked against the peer here, because nothing has been asked of it yet: the epoch
+     * this returns is whatever was current last time, and the first accepted snapshot is what
+     * replaces or retires it.
+     */
+    async lastKnown<T extends RpcComponentLike>(
+        name: string,
+        target?: string,
+        options?: RpcComponentOptions
+    ): Promise<RpcComponentView<ComponentProps<T>, ComponentState<T>> | undefined> {
+        const persistence = this.options.components?.persistence
+        if (!persistence) return undefined
+        // Spelled exactly as component() spells it, or the key would not be the one that was written.
+        const key = snapshotKey(persistence.scope, target ? target : this.options.defaultTarget, name, options?.paths)
+        const record = await persistence.store.read(key).catch(() => undefined)
+        if (!record) return undefined
+        if (!restorable(record, persistence.maxAgeMs, Date.now())) {
+            await persistence.store.remove(key).catch(() => undefined)
+            return undefined
+        }
+        return {
+            epoch: record.epoch,
+            revision: record.revision,
+            props: record.props,
+            state: record.state,
+            ...(record.slices === undefined ? {} : { slices: record.slices }),
+            ...(record.projection === undefined ? {} : { projection: record.projection }),
+            status: 'stale',
+            receivedAt: record.receivedAt,
+            // The record was written from a live view, so that is when the feed last proved itself
+            // as far as anything this page can still know.
+            confirmedAt: record.writtenAt,
+            staleSince: record.writtenAt
+        } as RpcComponentView<ComponentProps<T>, ComponentState<T>>
     }
 
     /**

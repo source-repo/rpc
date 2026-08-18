@@ -97,6 +97,29 @@ It is off by default, and the argument is stronger than the wall panel it is usu
 
 `keepAliveMs` holds a channel for a while after its last observer leaves, so a pane closed and reopened inside the window costs nothing on the wire and is still `live` when it comes back — the subscription never went, so there is nothing to restore. It deliberately stops there rather than going on to hold a *cold* cache: `component()` resolves only on an accepted snapshot, and a cache nobody may read without weakening that promise would be dead weight. What it buys is the round trip, not a stale read. The cost, since it is invisible otherwise: inside the window the channel is still live, so a store handle whose owner already called `close()` goes on being notified until the window ends.
 
+### Coming back after a reload
+
+A dropped link keeps its values and puts an age on them; a reload threw them away and came back `initializing`, which on a link where the first snapshot is eighty seconds off is eighty seconds of blank screen. Persistence closes that one place the rule was not honoured:
+
+```typescript
+const client = new RpcClient(url, {
+    components: {
+        persistence: { store: localStorageSnapshots(), scope: `${user.id}@${site}`, maxAgeMs: 3_600_000 }
+    }
+})
+
+const known = await client.lastKnown<Oven>('oven', 'ovenServer')   // stale, or undefined
+const oven = await client.component<Oven>('oven', 'ovenServer')    // live, as it always was
+```
+
+**`lastKnown()` is a separate call and not a mode on `component()`.** `component()` still resolves only on an accepted snapshot, so nothing here can hand back a stale view where a live one was asked for; what this answers is a plain view with no proxy at all, so nothing on it can be called and nothing about it can be mistaken for current. Its status is **always** `stale`, `receivedAt` is the age the values actually had, and `staleSince` is when the record was written rather than when the page started — *stale since I reloaded* would understate it by however long the machine was off.
+
+It answers `undefined` when there is nothing kept, when the record is older than the deployment's `maxAgeMs`, or when it claims to have been written in the future: a clock that moved backwards is not evidence about a plant, and a value whose age nobody can reason about is worse than no value. A record refused for age is removed on the way past rather than refused again on every reload.
+
+**`scope` has no default, and that is the security of the feature.** With `localStorage` — the right choice for a kiosk or a panel that must survive a power cut — plant values sit at rest, unencrypted, for whatever opens that origin next. The scope is what keeps one operator's screen from being drawn for another, so it must encode whatever identity the deployment has and must change when that changes. `sessionStorage` is the narrower alternative: per tab, per profile, surviving a reload but not a restart. It is also deliberately not derived from this peer's own name — a console page's name is random and lives in `sessionStorage`, so keying on it would orphan every record at exactly the restart `localStorage` was chosen for.
+
+**`authority` is never written.** A lease carries an expiry stamped on a server's clock, and the plant may have been handed to another panel while this page was not running. Values keep; arbitration does not — restoring "you hold control" is the optimistic-write failure this library refuses, wearing a different hat.
+
 ## What the status is not
 
 **`status` is a fact about the link, never about the values.** `live` means snapshots are arriving from that peer. It does not mean the numbers inside one are current, and the difference is not academic: a component that has stopped polling its devices goes on publishing `live` for ever, because nothing here watches a publishing cadence. A gateway fronting fifty devices with three of them unreachable is `live`, `rev 4471`, and twenty numbers of which seventeen are current and three are from 14:03.

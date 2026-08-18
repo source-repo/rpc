@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+### A reload comes back with what was last known, and says how old it is
+
+A dropped link keeps its values and puts an age on them, because last-known-with-an-age beats a blank. A reload threw them away and came back `initializing` — the one place that rule was not honoured, and on a link where the first snapshot is eighty seconds off it is eighty seconds of blank screen in front of an operator.
+
+`components.persistence` writes each accepted snapshot where a reload can find it, and **`client.lastKnown()`** reads it back. That is a separate call rather than a mode on `component()`, deliberately: `component()` still resolves only on an accepted snapshot, so nothing here can hand a caller a stale view where it asked for a live one. What comes back is a plain view and no proxy at all — nothing on it can be called, and nothing about it can be mistaken for current. Its status is always `stale`, `receivedAt` is the age the values actually had, and `staleSince` is when the record was written rather than when the page started, because *stale since I reloaded* would understate it by however long the machine was off.
+
+Three refusals, and skipping any one of them would draw last-known as current with nothing on screen to say so: nothing kept, older than the deployment's `maxAgeMs`, or written in the future — a clock that ran backwards is not evidence about a plant. A record refused for age is removed on the way past rather than refused again on every reload. The projection is part of the key, not just the record, so a page that comes back asking for different paths is never handed something claiming a shape it does not have.
+
+**`scope` has no default, and that is the security of the feature.** With `localStorage` — the right choice for a kiosk or a panel that must survive a power cut — plant values sit at rest, unencrypted, for whatever opens that origin next, so the scope is what keeps one operator's screen from being drawn for another. It is deliberately not derived from this peer's own name: a console page's name is random and lives in `sessionStorage`, so keying on it would orphan every record at exactly the browser restart `localStorage` was chosen for. `localStorageSnapshots()` is the browser adapter, exported from the web build; the store is an interface, so a deployment wanting fidelity for `Date` or binary supplies IndexedDB and structured clone instead of JSON.
+
+**`authority` is never written.** A lease carries an expiry stamped on a server's clock, and the plant may have been handed to another panel while this page was not running. Values keep; arbitration does not.
+
 ### A channel can stop listening while nobody is looking, and hold on briefly after they leave
 
 Two options on `components`, both off by default, both built on one new primitive: a channel that drops its remote subscription and keeps everything else — the values, the listeners, the epoch.

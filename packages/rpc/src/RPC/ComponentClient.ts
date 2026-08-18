@@ -10,6 +10,7 @@ import {
 } from './Component.js'
 import type { RpcGetListParams, RpcGetListResult, RpcGetManyParams, RpcGetManyReferenceParams, RpcGetManyResult } from './DataProvider.js'
 import type { RpcCallOptions, RpcClientHandler, WithOptions } from './RpcClientHandler.js'
+import { snapshotKey, type RpcSnapshotPersistence } from './Snapshots.js'
 
 /**
  * The client side of an observable component: one shared channel per (target, namespace), a cached
@@ -160,6 +161,16 @@ export interface RpcComponentChannelOptions {
      * the window ends.
      */
     keepAliveMs?: number
+    /**
+     * Keep the last accepted snapshot somewhere it survives a reload, so a page comes back with
+     * values and their age instead of a blank. Off unless supplied; see `RpcSnapshotPersistence`,
+     * and read what it says about `scope` before turning it on.
+     *
+     * Reading it back is `client.lastKnown()`, deliberately a separate call: `component()` still
+     * resolves only on an accepted snapshot, so nothing here can hand a caller a stale view where
+     * it asked for a live one.
+     */
+    persistence?: RpcSnapshotPersistence
 }
 
 /** What a caller may ask for beyond the component itself. */
@@ -377,7 +388,8 @@ class ComponentChannel {
         private readonly release: () => void,
         /** What this channel asked for, when it asked for less than everything. */
         readonly projection?: readonly RpcProjectionEntry[],
-        private readonly keepAliveMs = 0
+        private readonly keepAliveMs = 0,
+        private readonly persistence?: RpcSnapshotPersistence
     ) {
         this.inner = client.proxy<object>(namespace, target)
         this.first = new Promise((resolve) => (this.settleFirst = resolve))
@@ -442,6 +454,40 @@ class ComponentChannel {
             : { ...snapshot, status: 'live', receivedAt: at, confirmedAt: at }
         this.settleFirst()
         this.notify()
+        this.persist()
+    }
+
+    private lastWrite = 0
+
+    /**
+     * Write the view where a reload can find it, at most once per interval.
+     *
+     * `authority` is deliberately never written. A lease carries an expiry stamped on a server's
+     * clock, and restoring "you hold control" across a reload is the optimistic-write failure this
+     * repository refuses, wearing a different hat: last-known values with an age on them are
+     * honest, and last-known *arbitration* is not - the plant may have been handed to somebody else
+     * while this page was not running.
+     */
+    private persist(force = false) {
+        const persistence = this.persistence
+        if (!persistence || this.view.status === 'initializing') return
+        const now = Date.now()
+        if (!force && now - this.lastWrite < (persistence.writeEveryMs ?? 5000)) return
+        this.lastWrite = now
+        // Fire and forget, and swallow: a page that cannot cache draws a blank on its next reload,
+        // which is not a reason to fail the frame that has just arrived.
+        void persistence.store
+            .write(snapshotKey(persistence.scope, this.target, this.namespace, this.projection), {
+                epoch: this.view.epoch,
+                revision: this.view.revision,
+                props: this.view.props,
+                state: this.view.state,
+                ...(this.view.slices === undefined ? {} : { slices: this.view.slices }),
+                ...(this.view.projection === undefined ? {} : { projection: this.view.projection }),
+                receivedAt: this.view.receivedAt,
+                writtenAt: now
+            })
+            .catch(() => undefined)
     }
 
     /**
@@ -509,6 +555,8 @@ class ComponentChannel {
         if (this.paused || this.view.status === 'closed') return
         this.paused = true
         this.clearTimers()
+        // The last moment worth recording: a tab going hidden is often a tab about to be closed.
+        this.persist(true)
         await (this.inner as Subscribable).off(componentSnapshotEvent, this.handler).catch(() => undefined)
         // Never `live` while paused. Nothing is arriving, so the freshness is unknown - and a
         // paused channel reporting `live` would be this library's own fake in miniature.
@@ -656,7 +704,7 @@ export class ComponentChannels {
             )
         if (channel) channel.reclaim()
         if (!channel) {
-            channel = new ComponentChannel(this.handler, namespace, target, () => void this.channels.delete(key), projection, this.options.keepAliveMs ?? 0)
+            channel = new ComponentChannel(this.handler, namespace, target, () => void this.channels.delete(key), projection, this.options.keepAliveMs ?? 0, this.options.persistence)
             this.channels.set(key, channel)
             try {
                 await channel.open()
