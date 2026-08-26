@@ -5,6 +5,10 @@
     be pointed at something real. The reference itself is the project beside this one.
   -->
   <PropertyGroup>
+    <!-- Not packable, so nothing consumes its XML - and generating it fails here anyway: this file
+         uses top-level statements, where a /// comment on a local function is CS1587. The comments
+         are worth more than the file nobody reads. -->
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
     <TargetFramework>net8.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
