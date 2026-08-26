@@ -1,6 +1,6 @@
 # @source-repo/continuity
 
-What a component keeps when the process implementing it is replaced: versioned state snapshots, adjacent forward migrations with reviewed defaults, the work a running activation was holding, and a record of every value that moved.
+What a component keeps when the process implementing it is replaced: versioned state snapshots, adjacent forward migrations with reviewed defaults, the work a running activation was holding, a record of every value that moved — and the replacement itself, under a fence.
 
 ```
 npm install @source-repo/continuity
@@ -14,6 +14,10 @@ npm install @source-repo/continuity
 - **A barrier, and one instant** — `holdExecution` queues arriving calls rather than rejecting them, and `captureAtBarrier` takes the values and the outstanding work in the same held breath or refuses.
 - **Every obligation gets a disposition** — a timer, a call in flight, a lease or a subscription the successor says nothing about is `unhonourable`, never assumed; a timer has no default policy because every policy is catastrophic somewhere.
 - **The plan is proved twice** — once while preparing, once against the snapshot actually taken at the barrier, because a component that took on work in between is owed a different set of things.
-- **It does not run the successor yet** — shadow activation and the fence that makes exactly one activation authoritative are Phase 3. A proved plan is permission to hand over, not a handover.
+- **The commit point is the compare-and-swap and nothing else** — before it, abandoning is free and no caller can tell; after it, the coordinator will not put the incumbent back, because the successor may already have touched the plant.
+- **A fence has two halves** — the local one is what the activation holds, and the one at the sink is the only one that survives a partition, because it does not require the stale activation to know anything.
+- **A store says what it can guarantee** — `linearizable`, `durable`, `fencedAtTheSink`, stated rather than implied; the in-memory reference store answers `false` to all three.
+- **Callers address a name** — a resolution carries the epoch it was taken under, and that is its shelf life; holding the address without it is a destination that stops being correct silently.
+- **It does not cross languages yet** — replacing a TypeScript activation with a C# one needs a canonical contract rather than two class layouts that happen to agree. Phase 4.
 
 Full documentation: the [package README](https://github.com/source-repo/rpc/blob/main/packages/continuity/README.md). On npm: [@source-repo/continuity](https://www.npmjs.com/package/@source-repo/continuity).

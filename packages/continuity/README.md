@@ -1,8 +1,8 @@
 # @source-repo/continuity
 
-What a [Source RPC](https://github.com/source-repo/rpc) component keeps when the process implementing it is replaced: versioned state snapshots, adjacent forward migrations with reviewed defaults, the work a running activation was holding, and a record of every value that moved.
+What a [Source RPC](https://github.com/source-repo/rpc) component keeps when the process implementing it is replaced: versioned state snapshots, adjacent forward migrations with reviewed defaults, the work a running activation was holding, and a record of every value that moved — and then the replacement itself, under a fence.
 
-**Phases 1 and 2 of the online-change design.** What is here takes a component to the point where a handoff can be *proved admissible*: a barrier that makes it quiescent, a capture of state and outstanding work from one instant, and a restore plan in which every obligation the old activation held has been given a disposition somebody wrote down. What is not here is the activation itself — running the successor beside the incumbent and cutting over under a fence is Phase 3.
+**Phases 1 to 3 of the online-change design.** A component is a logical thing with a persistent address; the process implementing it is not. What is here takes one process out and puts another in while callers keep talking to the same name, or refuses and says exactly why. What is not here is doing it across languages, which needs a canonical contract rather than two class layouts that happen to agree — that is Phase 4.
 
 ## Why held state is explicit
 
@@ -117,9 +117,59 @@ Every step records its id, its approval, the fields it transformed, the values i
 
 `golden/` holds one real snapshot per released state version, retained as a file rather than built by a test. A fixture the code constructs agrees with whatever the code now does, which is the one thing a regression test must not do. A golden snapshot demonstrates a known case; it does not by itself prove a transform is total.
 
+## One logical component, two activations
+
+```typescript
+const outcome = await handOver({
+    componentId: 'mixer1',
+    store,                                   // the ownership record, and what it can guarantee
+    successor: { activationId: 'b', revisionId: 'rev-2' },
+    incumbentFence,                          // open; closed by the coordinator, after the swap
+    successorFence,                          // closed; opened by the coordinator, after the swap
+    buffer,
+    declarations,
+    clock,
+    capture, releaseBarrier, restore, deliver, returnToIncumbent
+})
+```
+
+`handOver` walks the design's five stages and every failure point has a stated result. **The commit point is the compare-and-swap and nothing else.** Before it, abandoning is free: the successor is discarded, the barrier released, what was buffered goes back to the incumbent, and no caller can tell a handoff was attempted. After it, the successor has been told it is authoritative and may already have touched the plant, so this coordinator will not put the incumbent back — a failure past that point is reported as one, with the record needed to recover forward.
+
+A capture that cannot be taken is `temporarily-blocked` and two revisions that cannot be reconciled are `refused`, because they are not degrees of one thing: the first is the plant being busy and is worth retrying in a minute, and the second is a message somebody needs to read.
+
+## Ownership is a record, and a store says what it can actually guarantee
+
+```typescript
+interface RpcActivationOwner { componentId: string; activationId: string; revisionId: string; epoch: bigint }
+```
+
+An interface-compatible replacement does not receive authority by being interface-compatible. The epoch is an ordered integer rather than the topology edge's opaque generation, because a stale write arriving at a sink needs *is this older than what I have* and only an ordered value answers that. Ownership is deliberately **not** the topology owner edge: that one rotates when somebody reparents a component, and merging them would mean a reparenting silently fenced every live activation in the plant.
+
+`RpcOwnershipCapabilities` states `linearizable`, `durable` and `fencedAtTheSink` rather than implying them. `MemoryOwnershipStore` answers `false` to all three and is the reference implementation, not a default: "at most one activation may commit" is a claim about behaviour under partition, and a `Map` in one process cannot make it — the question does not arise until there are two processes.
+
+## A fence has two halves, and only one of them survives a partition
+
+The **local** half is what an activation holds. It starts in shadow — outputs disabled, so preparation can restore it and ask whether it is ready without a second authoritative activation existing — is opened after the swap, and closes one way. A fenced activation does not come back, because coming back would mean acting after its successor already did and nobody knows what happened in between.
+
+The **sink** half is applied where the effect lands: the state store, the broker, the output gateway. It compares the epoch on the act against the epoch it has. This is the half that holds under partition, because it does not require the stale activation to know anything — and retiring A in a registry does not reach A.
+
+An epoch *ahead* of what the sink has is refused too. `<` rather than `!==` is the tempting relaxation and it is wrong in the direction that matters: accepting an epoch the sink was never told about makes the sink's own view of ownership decorative.
+
+## Callers address a name, not a process
+
+`RpcActivationDirectory` keeps registration and ownership apart. Registration is where an activation can be reached — a shadow is registered, because preparation has to talk to it. Ownership is which one may act. A resolution carries the epoch it was taken under, and that epoch is its shelf life: holding the address without it is a destination that looks correct and stops being correct silently.
+
+Deregistering is not fencing and does not pretend to be. It removes an address, which stops new callers finding it and does nothing whatever to one already talking.
+
+## What arrives while nobody is authoritative
+
+Between the barrier and the swap there is a window in which the incumbent has stopped and the successor has not started. `RpcInputBuffer` holds what lands there, which is why the change is online rather than an outage — a caller waits a few hundred milliseconds instead of being refused. It is **bounded**, because a stuck handoff behind an unbounded buffer is an outage of a different shape; it **preserves order**, so the successor is applied to exactly the sequence following the barrier; and it is **released once**, because a buffer released twice delivers a non-repeatable command twice.
+
+Abandoning a handoff returns what was held to the incumbent rather than dropping it. A failed change and a lossy one are different things, and only the second cannot be recovered.
+
 ## What is not here
 
-**Activation.** Nothing here runs the successor: shadow activation, the fence that makes exactly one activation authoritative, and the cutover itself are Phase 3. A proved plan is permission to hand over, not a handover.
+**Cross-language handoff.** Replacing a TypeScript activation with a C# one needs a canonical contract and state schema independent of either language's class layout — stable field identifiers, integer widths, absent versus null, enum evolution. Phase 4.
 
 Reverse migrations. The pre-migration snapshot is what a rollback uses, and only until the new activation has begun authoritative work — after that, restoring it would lose history and might repeat effects. A reverse chain would look like a general undo and would not be one.
 
