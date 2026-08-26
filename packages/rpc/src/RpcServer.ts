@@ -6,7 +6,7 @@ import { ComponentChannels, componentFacade, type RpcComponentChannelOptions, ty
 import { HostTopology, type HostTopologyOptions, type RpcRef } from './RPC/Topology.js'
 import { contextEvent, contextNamespace, HostContext, type RpcCapturedContext, type RpcContextProviderHandle, type RpcContextToken } from './RPC/Context.js'
 import { ContextResolver, type RpcContextStore } from './RPC/ContextResolver.js'
-import type { RpcOperations } from './RPC/Operations.js'
+import { RpcOperations } from './RPC/Operations.js'
 import { RpcAuthenticator, RpcAuthorizer, type TrustedCertificateAuthority } from './RPC/Auth.js'
 import { validateAiGrants, type RpcAiGrants } from './RPC/Grants.js'
 import { RpcSchema } from './RPC/Schema.js'
@@ -102,6 +102,14 @@ export interface RpcServerOptions {
     readyTimeout: number
     /** How long this server's own outgoing calls wait. See proxy(). */
     callTimeout?: number
+    /**
+     * Where this server's outward calls are written down.
+     *
+     * Supplied by whoever wants an identity that exists before the server does - a page's tray binds
+     * to it while the link is still being built. Made here otherwise, and it is the same object
+     * either way: `callWith` is the only thing that writes to it.
+     */
+    operations?: RpcOperations
     /**
      * Send calls issued in one tick as one frame instead of one frame each. **On by default.**
      *
@@ -244,7 +252,7 @@ export class RpcServerBase extends EventEmitter implements IManageRpc {
         // transports be imported on demand, so a browser bundle carrying RpcServer does not carry
         // socket.io's server and the MQTT client to reach a hub it dials.
         this.rpc = new RpcServerHandler(this.options.name)
-        this.caller = new RpcClientHandler(this.options.name, [], this.options.callTimeout ?? defaultCallTimeout)
+        this.caller = new RpcClientHandler(this.options.name, [], this.options.callTimeout ?? defaultCallTimeout, this.options.operations)
         this.caller.batchCalls = this.options.batchCalls ?? true
         this.switch = new Switch([this.rpc, this.caller])
         // One registry for this server's modules only. The transports record which peer they saw a

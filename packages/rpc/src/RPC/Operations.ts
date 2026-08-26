@@ -1,3 +1,4 @@
+import { v4 as uuidv4 } from 'uuid'
 import type { RpcDerivedStore } from './ComponentClient.js'
 import type { RpcErrorCode, RpcMethodSemantics } from './Messages.js'
 
@@ -79,6 +80,27 @@ export interface RpcOperation {
     readonly code?: RpcErrorCode
     /** The far end's sentence about the failure. Never an argument and never a result. */
     readonly message?: string
+    /**
+     * The peer this went *through*, where it did not go direct.
+     *
+     * Present only on an entry recorded by `relayed`. It matters on a screen because a relayed
+     * operation has two places to fail and they are different facts: the relay not answering says
+     * nothing about the plant, and the relay answering *with* an uncertain outcome says the command
+     * reached the plant and nobody knows what it did.
+     */
+    readonly via?: string
+}
+
+/** An operation performed through another peer. See `RpcOperations.relayed`. */
+export interface RpcRelayedOperation {
+    /** The peer that made the call on this one's behalf. */
+    readonly via: string
+    /** The peer it was ultimately for. */
+    readonly target?: string
+    readonly namespace: string
+    readonly method: string
+    readonly semantics?: RpcMethodSemantics
+    readonly idempotencyKey?: string
 }
 
 export interface RpcOperationsOptions {
@@ -218,6 +240,47 @@ export class RpcOperations {
             next = [...next.slice(0, drop), ...next.slice(drop + 1)]
         }
         this.publish(next)
+    }
+
+    /**
+     * Write down an operation this peer performed **through** another peer.
+     *
+     * The one thing here not hooked at `callWith`, and it is not a second implementation - it is the
+     * case `callWith` structurally cannot see. A console page does not call the plant: it asks the
+     * console to, and the console reports the plant's answer *as a value* rather than by failing. So
+     * the page's own entry for that call says `succeeded` - correctly, the relay worked - while the
+     * command it was about may have been left in the air. A tray built only on what `callWith` saw
+     * would show the one outcome an operator must never be shown wrongly.
+     *
+     * The relayed outcome has to reach this as a **rejection**, because that is the only shape
+     * `mayHaveRun` can classify - a caller turning a reported failure back into an error is doing
+     * the same translation the transport does for a direct call.
+     *
+     * There is no `sent` here, deliberately. That status means *this* peer's transport accepted the
+     * frame, which is the line between certainly-did-not-run and may-have; for a relay this peer
+     * never sent it and cannot vouch for that line. What carries it instead is the relayed code.
+     */
+    async relayed<T>(what: RpcRelayedOperation, act: () => Promise<T>): Promise<T> {
+        const id = uuidv4()
+        this.record({
+            id,
+            ...(what.target !== undefined ? { target: what.target } : {}),
+            namespace: what.namespace,
+            method: what.method,
+            ...(what.semantics !== undefined ? { semantics: what.semantics } : {}),
+            ...(what.idempotencyKey ? { idempotencyKey: what.idempotencyKey } : {}),
+            issuedAt: Date.now(),
+            status: 'issued',
+            via: what.via
+        })
+        try {
+            const answer = await act()
+            this.advance(id, { status: 'succeeded', settledAt: Date.now() })
+            return answer
+        } catch (failure) {
+            this.rejected(id, Date.now(), failure)
+            throw failure
+        }
     }
 
     /** Move one on, keeping everything already known about it. Silent for an id already evicted. */

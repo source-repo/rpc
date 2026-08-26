@@ -144,6 +144,18 @@ So the offer to try again appears **only where nobody knows what happened**, and
 
 It applies to all three ways the console commands a plant: an editor drawn from `sets`, an action offered on a row, and the method panel's **Call**. The last of those is relayed — the call to the plant is made by the console process rather than by the browser — so the key travels as an argument of the console's own `call` verb to reach the wire at all. The **repeat** button deliberately carries no key and offers no retry: it says twenty calls and means twenty, which for a command is twenty commands, and there is no single intent for a second attempt to be at.
 
+### The operations tray
+
+Every other tab in the right-hand column is about the **network**: what it carried, what it refused, who came and went. `operations` is about **this page** — what it asked other peers to do, and how each of those turned out — and it exists for one row: the command that was sent and never answered.
+
+The count on the tab is not a count of things to read. It is a count of commands nobody knows the outcome of, so it stays until each is dealt with rather than clearing when the tab is opened. Three views: `uncertain` (the default), `commands` — which is `semantics !== 'query'`, so it keeps the undeclared ones, because a method that says nothing about what it does must be treated as a command — and `everything`.
+
+Each row carries the peer and method, how long it took, the idempotency key the press was made under, and, where the outcome is unknown, a `dismiss` that has to be pressed on purpose. `clear settled` takes only what is over and certain: an uncertain outcome is the one row nobody may remove with a button that says something else.
+
+**A relayed command is recorded as the command it is about**, not as the relay. The method panel's calls are made by the console process, and the console reports the plant's answer as a *value* rather than by failing — so this page's own entry for `console.call` says *succeeded*, correctly, while the command may have been left in the air. The row says `oven3 · plant.writeSetpoint via console-…`, which keeps the two facts apart: the relay not answering says nothing about the plant, and the relay answering *with* an uncertain outcome says the command reached the plant and nobody knows what it did.
+
+It is this page's own registry and nothing wider — `client.operations`, which the library writes at `callWith`. A command another operator sent from another page is not in it.
+
 ### Context
 
 Each node's panel can also show what it **inherits**: the site it stands in, the work order it is running, the maintenance window that applies to it. Type a token id — `acme.site` — pick the axis, and the console watches it; what it watches is remembered per peer.

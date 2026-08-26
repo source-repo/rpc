@@ -143,6 +143,32 @@ test('a server is a caller too, and its outward calls land in the same registry'
     t.is(at(other.operations.getSnapshot(), 'readMode')!.status, 'succeeded')
 })
 
+test('a relayed command is recorded as what it is about, not as the relay', async (t) => {
+    // The case `callWith` structurally cannot see. A console page does not call the plant: it asks
+    // the console to, and the console reports the plant's answer as a *value* rather than by
+    // failing - so the page's own entry for that call says `succeeded`, correctly, while the command
+    // it was about was left in the air. A tray built only on what callWith saw would show the one
+    // outcome an operator must never be shown wrongly.
+    const operations = new RpcOperations()
+    const relay = { via: 'console-1', target: 'oven3', namespace: 'oven', method: 'startPump', semantics: 'non-repeatable-command' as const, idempotencyKey: 'press-1' }
+
+    await t.throwsAsync(
+        operations.relayed(relay, async () => {
+            throw Object.assign(new Error('the link to the oven dropped'), { code: 'UnknownOutcome' })
+        })
+    )
+    const entry = operations.getSnapshot().at(-1)!
+    t.is(entry.status, 'unknown-outcome')
+    t.is(entry.via, 'console-1', 'so a screen can tell the relay failing from the relay reporting a failure')
+    t.is(entry.target, 'oven3')
+    t.is(entry.method, 'startPump')
+    t.is(entry.idempotencyKey, 'press-1', 'and pressing again is the same command')
+    t.is(entry.sentAt, undefined, 'this peer never sent it, so it cannot vouch for the line that status draws')
+
+    t.is(await operations.relayed(relay, async () => 'ok'), 'ok')
+    t.is(operations.getSnapshot().at(-1)!.status, 'succeeded')
+})
+
 // ------------------------------------------------------------------ the bound, without a network
 
 const made = (id: string, status: RpcOperation['status']): RpcOperation => ({ id, namespace: 'gate', method: 'm', issuedAt: 1, status })

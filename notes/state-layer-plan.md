@@ -190,6 +190,8 @@ Two more caveats for a plant box rather than a tab: `gcTime` bounds by time and 
 
 The precondition is done with it, and it needed more than attaching a key: a key generated per *attempt* buys nothing, because that is what the request id already is - so the console mints one per **press**, holds it for a retry offered only where `mayHaveRun` says nobody knows, and drops it the moment anything else is committed. `console.call` gained a trailing optional `idempotencyKey`, because the method panel's calls are relayed and a key minted in a page reaches the wire only if that verb carries it. Every rule has a regression test checked against a build with the rule removed.
 
+**The tray is built**, in the console's side column, and building it turned up the one thing the plan's "hooked in exactly one place" could not cover: a **relayed** command. The method panel's calls are made by the console process, and the console reports the plant's answer as a value rather than by failing - so the page's own `console.call` entry says `succeeded` while the command may have been left in the air. `RpcOperations.relayed` is the door for that case and the entry carries `via`. Verified end to end against a fake that never answers: two presses of *try again* produce two rows under one key.
+
 **Not built, and now recorded rather than pending: command parking.** Unchanged from the argument below.
 
 **The tray survives; the park does not.**

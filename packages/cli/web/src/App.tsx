@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { RpcServer, TransportEvent, type RpcGetListParams, type RpcGetListResult, type RpcSchema } from '@source-repo/rpc'
 import { RpcDataCache, rpcOnlineFrom } from '@source-repo/query'
+import { RpcOperations } from '@source-repo/rpc'
 import { pageName } from './peerName'
 import { Chat } from './Chat'
 import { ChatMessage, ChatService } from './ChatService'
@@ -12,6 +13,7 @@ import { ComponentPanel } from './ComponentPanel'
 import { ContextPanel } from './ContextPanel'
 import { StructurePanel } from './StructurePanel'
 import { MethodPanel } from './MethodPanel'
+import { Operations } from './Operations'
 import { Traffic, TRAFFIC_KEPT } from './Traffic'
 import { Problems } from './Problems'
 import { Presence } from './Presence'
@@ -43,6 +45,8 @@ const useConsole = () => {
     const frames = useRef<((frame: TappedFrame) => void) | null>(null)
     const problems = useRef<((problem: NetworkProblem) => void) | null>(null)
     const peer = useRef<RpcServer | null>(null)
+    /** Who is relaying. The tray names it, because a relayed command has two places to fail. */
+    const [relay, setRelay] = useState('')
 
     /**
      * One cache for the page, because the questions are the page's rather than any pane's.
@@ -56,6 +60,15 @@ const useConsole = () => {
      * during a reconnect uses the link that exists then rather than one captured when the page
      * loaded.
      */
+    /**
+     * What this page has asked other peers to do, and how each turned out.
+     *
+     * Owned here rather than read off the server, so it exists before the link does: the tray mounts
+     * with the page and the server is built inside `connect()`. It is the same registry either way -
+     * `callWith` is the only thing that writes to it.
+     */
+    const operations = useMemo(() => new RpcOperations(), [])
+
     const data = useMemo(
         () =>
             new RpcDataCache({
@@ -67,7 +80,10 @@ const useConsole = () => {
                     // question with a straight face.
                     if (method !== 'getList') throw new Error(`the console asks for lists; ${method} is not wired here`)
                     const proxy = await link.proxy<DataProxy>(namespace, target)
-                    return proxy.$data('getList', resource, params as RpcGetListParams)
+                    // Declared, because it is true and because it is what keeps the operations tray
+                    // readable: `$data` reads and answers, so a page of rows is not a row an
+                    // operator has to look at twice. The claim travels nowhere and decides nothing.
+                    return proxy.$with({ semantics: 'query' }).$data('getList', resource, params as RpcGetListParams)
                 }
             }),
         []
@@ -97,6 +113,7 @@ const useConsole = () => {
                 // Ask who is serving this page before addressing it: the console's name is its own
                 // name on the network, so it differs between instances.
                 const consoleName = await fetchConsoleName()
+                setRelay(consoleName)
                 // Random per tab, kept across its reloads. See peerName: anything derived from the
                 // URL gives every browser on this console the same name, and a name is an address.
                 const name = pageName()
@@ -104,6 +121,7 @@ const useConsole = () => {
 
                 server = new RpcServer({
                     name,
+                    operations,
                     // Origin in the url, mount point in the path - see socketPath. Together they
                     // are where this page came from, so a proxied console reaches its own server.
                     transports: [{ connect: window.location.origin, path: socketPath() }],
@@ -181,7 +199,7 @@ const useConsole = () => {
         }
     }, [])
 
-    return { service, status, me, events, peerChange, said, frames, problems, peer, data }
+    return { service, status, me, events, peerChange, said, frames, problems, peer, data, operations, relay }
 }
 
 /**
@@ -202,10 +220,10 @@ const download = (rows: unknown[], filename: string) => {
 type DataProxy = { $data(method: 'getList', resource: readonly string[], params?: RpcGetListParams): Promise<RpcGetListResult> }
 
 /** Which of the side panel's three views is showing. */
-type SideTab = 'chat' | 'events' | 'traffic' | 'problems' | 'presence'
+type SideTab = 'chat' | 'events' | 'traffic' | 'problems' | 'presence' | 'operations'
 
 export const App = () => {
-    const { service, status, me, events, peerChange, said, frames, problems, peer, data } = useConsole()
+    const { service, status, me, events, peerChange, said, frames, problems, peer, data, operations, relay } = useConsole()
     const [chats, setChats] = useState<{ [peer: string]: ChatMessage[] }>({})
     /**
      * Messages that have arrived and not been looked at, per peer.
@@ -365,6 +383,15 @@ export const App = () => {
     const failed = described && 'error' in described ? described : null
     const description = described && !('error' in described) ? described : null
     const unreadTotal = Object.values(unread).reduce((total, count) => total + count, 0)
+    /**
+     * How many commands were left in the air.
+     *
+     * Through the registry's own `select` rather than by reading the whole list here: this is in the
+     * tab bar, which re-renders on everything, and a count that changed identity on every call would
+     * redraw the entire chrome once per `$data` page.
+     */
+    const uncertainCount = useMemo(() => operations.select((all) => all.filter((one) => one.status === 'unknown-outcome').length), [operations])
+    const uncertain = useSyncExternalStore(uncertainCount.subscribe, uncertainCount.getSnapshot)
 
     return (
         <div className="app">
@@ -538,6 +565,8 @@ export const App = () => {
                                         types={description.types}
                                         service={service!}
                                         network={network}
+                                        operations={operations}
+                                        relay={relay}
                                     />
                                 ))}
                                 {namespace.events.length > 0 && (
@@ -581,17 +610,23 @@ export const App = () => {
                  * where it matters most.
                  */}
                 <nav className="tabs">
-                    {(['events', 'traffic', 'problems', 'presence', 'chat'] as const).map((name) => (
+                    {(['events', 'operations', 'traffic', 'problems', 'presence', 'chat'] as const).map((name) => (
                         <button key={name} className={tab === name ? 'tab on' : 'tab'} onClick={() => setTab(name)}>
                             {name}
                             {name === 'traffic' && traffic.length > 0 && <span className="count">{traffic.length}</span>}
                             {name === 'problems' && trouble.length > 0 && <span className="count bad">{trouble.length}</span>}
+                            {/* The one badge that is not a count of things to read: it is a count of
+                                commands nobody knows the outcome of, so it stays until somebody
+                                deals with each of them rather than clearing when the tab is opened. */}
+                            {name === 'operations' && uncertain > 0 && <span className="count bad">{uncertain}</span>}
                             {name === 'chat' && unreadTotal > 0 && <span className="count">{unreadTotal}</span>}
                         </button>
                     ))}
                 </nav>
 
                 {tab === 'chat' && <Chat peer={selected} messages={selected ? (chats[selected] ?? []) : []} onSend={sendChat} />}
+
+                {tab === 'operations' && <Operations operations={operations} />}
 
                 {tab === 'problems' && <Problems problems={trouble} onClear={() => setTrouble([])} />}
 

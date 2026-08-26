@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { ArgumentField, FieldState, initialText, toValue } from './ArgumentField'
 import { Uncertain, useCommanding } from './command'
+import type { RpcMethodSemantics, RpcOperations } from '@source-repo/rpc'
 import { ConsoleService, DescribedMethod, ServerDescription, isOptional, requiredPart, typeText } from './types'
 
 /** How many times the repeat button calls. Enough for a p50 to mean something, few enough to wait for. */
@@ -70,7 +71,9 @@ export const MethodPanel = ({
     method,
     types,
     service,
-    network
+    network,
+    operations,
+    relay
 }: {
     peer: string
     namespace: string
@@ -78,6 +81,10 @@ export const MethodPanel = ({
     types: ServerDescription['types']
     service: ConsoleService
     network: { broker?: string; hub?: string; prefix?: string }
+    /** This page's own registry, so a relayed command is recorded as the command it is about. */
+    operations: RpcOperations
+    /** The console relaying it. A relayed command has two places to fail, and they differ. */
+    relay: string
 }) => {
     const params = method.params ?? []
     const names = method.paramNames ?? params.map((_, index) => `argument ${index}`)
@@ -157,7 +164,25 @@ export const MethodPanel = ({
             // commands. So it carries no key, and offers no retry: there is no single intent to be
             // another attempt at.
             if (repeat > 1) for (let attempt = 0; attempt < repeat; attempt++) await once()
-            else await commanding.run(`${namespace}.${method.name}`, (idempotencyKey) => once(idempotencyKey))
+            else
+                await commanding.run(`${namespace}.${method.name}`, (idempotencyKey) =>
+                    // Recorded as the command it is about rather than as the relay that carried it.
+                    // The console reports the plant's answer as a *value*, so this page's own entry
+                    // for `console.call` says `succeeded` - correctly, the relay worked - while the
+                    // command may have been left in the air. A tray built only on what the client
+                    // saw would show the one outcome an operator must never be shown wrongly.
+                    operations.relayed(
+                        {
+                            via: relay,
+                            target: peer,
+                            namespace,
+                            method: method.name,
+                            ...(method.semantics ? { semantics: method.semantics as RpcMethodSemantics } : {}),
+                            idempotencyKey
+                        },
+                        () => once(idempotencyKey)
+                    )
+                )
         } catch {
             // Already on screen: `once` sets the outcome before it throws, and one that fails stops
             // the repeat - twenty identical failures are one finding.

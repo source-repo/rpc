@@ -1450,6 +1450,64 @@ textarea.control {
     color: var(--muted);
 }
 
+/* The operations tray: what this page asked other peers to do.
+   Built on the problems list, which is the same shape of thing - a bounded log of rows somebody
+   reads when a call did not come back - so they look alike on purpose. */
+.operations {
+    padding: 8px 10px;
+    overflow-y: auto;
+}
+
+.operation {
+    border-left: 3px solid var(--muted);
+    padding: 6px 10px;
+    margin-bottom: 8px;
+}
+
+/* Only the uncertain one is coloured. A refusal is a fact and a success is a fact; the row that
+   needs a person is the one where there is no fact at all. */
+.operation.unknown-outcome {
+    border-left-color: var(--warn);
+    background: color-mix(in srgb, var(--warn) 8%, transparent);
+}
+
+.operation.failed {
+    border-left-color: var(--bad);
+}
+
+.operation.succeeded {
+    border-left-color: var(--ok);
+}
+
+.operation-head {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    font-size: 12px;
+    color: var(--muted);
+}
+
+.operation-head .kind {
+    color: var(--text);
+    font-weight: 600;
+}
+
+.operation-body {
+    font-size: 13px;
+}
+
+.operation-body p {
+    margin: 4px 0 0;
+}
+
+.operation-foot {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 6px;
+    font-size: 11px;
+}
+
 /* A command that was sent and never answered.
    Loud, and deliberately not the same treatment as an error: an error is a fact about the plant and
    this is the absence of one, so it stays on screen with its own buttons rather than joining the
@@ -1457,12 +1515,24 @@ textarea.control {
 .uncertain {
     display: flex;
     align-items: center;
+    /* Wrapping, because the sentence is an anonymous flex item between the label and the buttons:
+       without it a narrow pane squeezes "try again" onto two lines rather than moving the row. */
+    flex-wrap: wrap;
     gap: 8px;
     margin: 8px 0;
     padding: 8px 10px;
     border-left: 3px solid var(--warn);
     background: color-mix(in srgb, var(--warn) 8%, transparent);
     font-size: 13px;
+}
+
+.uncertain > .mono {
+    flex: none;
+}
+
+.uncertain button {
+    flex: none;
+    white-space: nowrap;
 }
 
 /* A row and what may be done to it. The buttons follow the editors' rule - present on hover or

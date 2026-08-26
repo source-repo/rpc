@@ -40,6 +40,16 @@ The bound has three tiers, each a claim about who still has business with the ro
 
 `$with({ semantics })` rides along and travels nowhere. A client holds no schema and this repository's rule is that a running class beats the schema for that question, so it decides nothing - what it buys is a tray that can say *this uncertain one was a non-repeatable command* instead of showing six identical rows.
 
+### The console has an operations tray
+
+Every other tab in the console's right-hand column is about the network. This one is about the page: what it asked other peers to do, and how each turned out. The count on the tab is not a count of things to read but of commands nobody knows the outcome of, so it stays until each is dealt with rather than clearing when the tab is opened.
+
+**A relayed command is recorded as the command it is about, not as the relay**, and that needed something the registry could not get from `callWith`. The method panel's calls are made by the console *process*, and the console reports the plant's answer as a **value** rather than by failing - so the page's own entry for `console.call` says `succeeded`, correctly, while the command it carried may have been left in the air. A tray built only on what `callWith` saw would show the one outcome an operator must never be shown wrongly. `RpcOperations.relayed` is the door for that case, and the entry carries `via`, because the relay not answering and the relay answering *with* an uncertain outcome are different facts.
+
+Three views: `uncertain` by default, `commands` - which is `semantics !== 'query'`, keeping the undeclared ones, because a method that says nothing must be treated as a command - and everything. `clear settled` takes only what is over and certain; an uncertain row is dismissed one at a time and on purpose.
+
+Verified end to end against a fake peer that never answers: two presses of *try again* produce two rows carrying **one** idempotency key, which is the whole claim - two attempts at one command rather than two commands.
+
 ### The console attaches an idempotency key to every press, and offers a safe retry
 
 The CLI attached one and the console did not, which is the wrong way round: the CLI is driven by somebody typing a command they can read back, and the console is the thing an operator actually presses. Without a key a second press after `UnknownOutcome` is a second command, which on a plant is the difference between one pump start and two.
