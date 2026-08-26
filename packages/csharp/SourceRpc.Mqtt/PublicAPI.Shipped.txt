@@ -1,0 +1,78 @@
+const SourceRpc.Mqtt.Mqtt5Frame.Code = "mr-code" -> string!
+const SourceRpc.Mqtt.Mqtt5Frame.ContractVersion = "mr-ver" -> string!
+const SourceRpc.Mqtt.Mqtt5Frame.Deferred = "mr-deferred" -> string!
+const SourceRpc.Mqtt.Mqtt5Frame.Epoch = "mr-epoch" -> string!
+const SourceRpc.Mqtt.Mqtt5Frame.Event = "mr-event" -> string!
+const SourceRpc.Mqtt.Mqtt5Frame.Fence = "mr-fence" -> string!
+const SourceRpc.Mqtt.Mqtt5Frame.FrameVersion = "3" -> string!
+const SourceRpc.Mqtt.Mqtt5Frame.IdempotencyKey = "mr-idem" -> string!
+const SourceRpc.Mqtt.Mqtt5Frame.Kind = "mr-kind" -> string!
+const SourceRpc.Mqtt.Mqtt5Frame.Method = "mr-method" -> string!
+const SourceRpc.Mqtt.Mqtt5Frame.Nonce = "mr-nonce" -> string!
+const SourceRpc.Mqtt.Mqtt5Frame.Outcome = "mr-outcome" -> string!
+const SourceRpc.Mqtt.Mqtt5Frame.Path = "mr-path" -> string!
+const SourceRpc.Mqtt.Mqtt5Frame.Seq = "mr-seq" -> string!
+const SourceRpc.Mqtt.Mqtt5Frame.Signature = "mr-sig" -> string!
+const SourceRpc.Mqtt.Mqtt5Frame.Source = "mr-src" -> string!
+const SourceRpc.Mqtt.Mqtt5Frame.Timestamp = "mr-ts" -> string!
+const SourceRpc.Mqtt.Mqtt5Frame.Ttl = "mr-ttl" -> string!
+const SourceRpc.Mqtt.Mqtt5Frame.Version = "mr-v" -> string!
+SourceRpc.Mqtt.Mqtt5Frame
+SourceRpc.Mqtt.MqttSigning
+SourceRpc.Mqtt.MqttTransport
+SourceRpc.Mqtt.MqttTransport.Connected.get -> bool
+SourceRpc.Mqtt.MqttTransport.DisposeAsync() -> System.Threading.Tasks.ValueTask
+SourceRpc.Mqtt.MqttTransport.FrameReceived -> System.Func<SourceRpc.RpcFrame!, System.Threading.Tasks.Task!>?
+SourceRpc.Mqtt.MqttTransport.LinkEstablished -> System.Func<System.Threading.Tasks.Task!>?
+SourceRpc.Mqtt.MqttTransport.MqttTransport(SourceRpc.Mqtt.MqttTransportOptions! mqtt, SourceRpc.SourceRpcOptions! options, Microsoft.Extensions.Logging.ILogger? log = null) -> void
+SourceRpc.Mqtt.MqttTransport.Name.get -> string!
+SourceRpc.Mqtt.MqttTransportOptions
+SourceRpc.Mqtt.MqttTransportOptions.AllowResponseTopic.get -> System.Func<string!, string!, bool>?
+SourceRpc.Mqtt.MqttTransportOptions.AllowResponseTopic.set -> void
+SourceRpc.Mqtt.MqttTransportOptions.BrokerUrl.get -> string!
+SourceRpc.Mqtt.MqttTransportOptions.BrokerUrl.set -> void
+SourceRpc.Mqtt.MqttTransportOptions.DefaultExpirySeconds.get -> uint
+SourceRpc.Mqtt.MqttTransportOptions.DefaultExpirySeconds.set -> void
+SourceRpc.Mqtt.MqttTransportOptions.Json.get -> bool
+SourceRpc.Mqtt.MqttTransportOptions.Json.set -> void
+SourceRpc.Mqtt.MqttTransportOptions.MaxClockSkew.get -> System.TimeSpan
+SourceRpc.Mqtt.MqttTransportOptions.MaxClockSkew.set -> void
+SourceRpc.Mqtt.MqttTransportOptions.MaxTrackedNonces.get -> int
+SourceRpc.Mqtt.MqttTransportOptions.MaxTrackedNonces.set -> void
+SourceRpc.Mqtt.MqttTransportOptions.MaxTrackedReplies.get -> int
+SourceRpc.Mqtt.MqttTransportOptions.MaxTrackedReplies.set -> void
+SourceRpc.Mqtt.MqttTransportOptions.MqttTransportOptions() -> void
+SourceRpc.Mqtt.MqttTransportOptions.Password.get -> string?
+SourceRpc.Mqtt.MqttTransportOptions.Password.set -> void
+SourceRpc.Mqtt.MqttTransportOptions.Prefix.get -> string!
+SourceRpc.Mqtt.MqttTransportOptions.Prefix.set -> void
+SourceRpc.Mqtt.MqttTransportOptions.QoS.get -> MQTTnet.Protocol.MqttQualityOfServiceLevel
+SourceRpc.Mqtt.MqttTransportOptions.QoS.set -> void
+SourceRpc.Mqtt.MqttTransportOptions.Sign.get -> System.Func<byte[]!, string!, string!>?
+SourceRpc.Mqtt.MqttTransportOptions.Sign.set -> void
+SourceRpc.Mqtt.MqttTransportOptions.Username.get -> string?
+SourceRpc.Mqtt.MqttTransportOptions.Username.set -> void
+SourceRpc.Mqtt.MqttTransportOptions.Verify.get -> System.Func<byte[]!, string!, string!, string?>?
+SourceRpc.Mqtt.MqttTransportOptions.Verify.set -> void
+SourceRpc.Mqtt.MqttTransport.PeersChanged -> System.Action<System.Collections.Generic.IReadOnlyCollection<string!>!>?
+SourceRpc.Mqtt.MqttTransport.Rejected -> System.Action<string!>?
+SourceRpc.Mqtt.MqttTransport.SendAsync(SourceRpc.RpcFrame! frame, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task!
+SourceRpc.Mqtt.MqttTransport.StartAsync(System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task!
+SourceRpc.Mqtt.ReplayGuard
+SourceRpc.Mqtt.ReplayGuard.IsFresh(long timestamp, long? now = null) -> bool
+SourceRpc.Mqtt.ReplayGuard.Remember(string! nonce, long timestamp, long? now = null) -> bool
+SourceRpc.Mqtt.ReplayGuard.ReplayGuard(System.TimeSpan? maxClockSkew = null, int maxTrackedNonces = 5000) -> void
+static SourceRpc.Mqtt.Mqtt5Frame.AddresseeOf(string! prefix, string! topic) -> string?
+static SourceRpc.Mqtt.Mqtt5Frame.Channel(string! kind) -> string!
+static SourceRpc.Mqtt.Mqtt5Frame.DecodeBody(System.ArraySegment<byte> payload, bool json) -> object?
+static SourceRpc.Mqtt.Mqtt5Frame.EncodeBody(object? body, bool json) -> byte[]!
+static SourceRpc.Mqtt.Mqtt5Frame.Headers(MQTTnet.MqttApplicationMessage! packet, string! addressee, out string? refusal) -> SourceRpc.RpcFrame?
+static SourceRpc.Mqtt.Mqtt5Frame.IsFinalReply(SourceRpc.RpcFrame! frame) -> bool
+static SourceRpc.Mqtt.Mqtt5Frame.IsRequest(string? kind) -> bool
+static SourceRpc.Mqtt.Mqtt5Frame.ToPacket(SourceRpc.RpcFrame! frame, string! topic, string? responseTopic, bool json, uint expirySeconds) -> MQTTnet.MqttApplicationMessage!
+static SourceRpc.Mqtt.Mqtt5Frame.TopicFor(string! prefix, string! channel, string! peer) -> string!
+static SourceRpc.Mqtt.Mqtt5Frame.WithBody(SourceRpc.RpcFrame! frame, MQTTnet.MqttApplicationMessage! packet, out string? refusal) -> SourceRpc.RpcFrame?
+static SourceRpc.Mqtt.MqttSigning.CanonicalBytes(string! version, string! topic, string! responseTopic, string! source, string! kind, string! path, string! methodOrEvent, string! correlation, string! contentType, string! code, string! contractVersion, string! ttl, string! idempotencyKey, string! fence, string! deferred, string! outcome, string! seq, string! epoch, long timestamp, string! nonce, System.ReadOnlySpan<byte> payload) -> byte[]!
+static SourceRpc.Mqtt.MqttSigning.CreateNonce() -> string!
+static SourceRpc.Mqtt.MqttSigning.HmacSigner(byte[]! secret) -> System.Func<byte[]!, string!, string!>!
+static SourceRpc.Mqtt.MqttSigning.HmacVerifier(System.Func<string!, byte[]?>! secretFor) -> System.Func<byte[]!, string!, string!, string?>!

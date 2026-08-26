@@ -1,0 +1,399 @@
+abstract SourceRpc.RpcIdempotencyClaim.<Clone>$() -> SourceRpc.RpcIdempotencyClaim!
+const SourceRpc.SourceRpcTelemetry.ActivitySourceName = "SourceRpc" -> string!
+const SourceRpc.SourceRpcTelemetry.MeterName = "SourceRpc" -> string!
+const SourceRpc.TransportContract.FrameName = "frame" -> string!
+const SourceRpc.TransportContract.FrameVersion = 2 -> int
+const SourceRpc.TransportContract.PresenceName = "presence" -> string!
+override sealed SourceRpc.RpcIdempotencyClaim.Acquired.Equals(SourceRpc.RpcIdempotencyClaim? other) -> bool
+override sealed SourceRpc.RpcIdempotencyClaim.Completed.Equals(SourceRpc.RpcIdempotencyClaim? other) -> bool
+override sealed SourceRpc.RpcIdempotencyClaim.InProgress.Equals(SourceRpc.RpcIdempotencyClaim? other) -> bool
+override SourceRpc.PresenceAnnouncement.Equals(object? obj) -> bool
+override SourceRpc.PresenceAnnouncement.GetHashCode() -> int
+override SourceRpc.PresenceAnnouncement.ToString() -> string!
+override SourceRpc.PresenceUpdate.Equals(object? obj) -> bool
+override SourceRpc.PresenceUpdate.GetHashCode() -> int
+override SourceRpc.PresenceUpdate.ToString() -> string!
+~override SourceRpc.RpcCaller.Equals(object obj) -> bool
+override SourceRpc.RpcCaller.GetHashCode() -> int
+~override SourceRpc.RpcCaller.ToString() -> string
+override SourceRpc.RpcCallOptions.Equals(object? obj) -> bool
+override SourceRpc.RpcCallOptions.GetHashCode() -> int
+override SourceRpc.RpcCallOptions.ToString() -> string!
+override SourceRpc.RpcFrame.Equals(object? obj) -> bool
+override SourceRpc.RpcFrame.GetHashCode() -> int
+override SourceRpc.RpcFrame.ToString() -> string!
+override SourceRpc.RpcIdempotencyClaim.Acquired.<Clone>$() -> SourceRpc.RpcIdempotencyClaim.Acquired!
+override SourceRpc.RpcIdempotencyClaim.Acquired.Equals(object? obj) -> bool
+override SourceRpc.RpcIdempotencyClaim.Acquired.GetHashCode() -> int
+override SourceRpc.RpcIdempotencyClaim.Acquired.ToString() -> string!
+override SourceRpc.RpcIdempotencyClaim.Completed.<Clone>$() -> SourceRpc.RpcIdempotencyClaim.Completed!
+override SourceRpc.RpcIdempotencyClaim.Completed.Equals(object? obj) -> bool
+override SourceRpc.RpcIdempotencyClaim.Completed.GetHashCode() -> int
+override SourceRpc.RpcIdempotencyClaim.Completed.ToString() -> string!
+override SourceRpc.RpcIdempotencyClaim.Equals(object? obj) -> bool
+override SourceRpc.RpcIdempotencyClaim.GetHashCode() -> int
+override SourceRpc.RpcIdempotencyClaim.InProgress.<Clone>$() -> SourceRpc.RpcIdempotencyClaim.InProgress!
+override SourceRpc.RpcIdempotencyClaim.InProgress.Equals(object? obj) -> bool
+override SourceRpc.RpcIdempotencyClaim.InProgress.GetHashCode() -> int
+override SourceRpc.RpcIdempotencyClaim.InProgress.ToString() -> string!
+override SourceRpc.RpcIdempotencyClaim.ToString() -> string!
+override SourceRpc.RpcLimits.Equals(object? obj) -> bool
+override SourceRpc.RpcLimits.GetHashCode() -> int
+override SourceRpc.RpcLimits.ToString() -> string!
+override SourceRpc.RpcOutcome.Equals(object? obj) -> bool
+override SourceRpc.RpcOutcome.GetHashCode() -> int
+override SourceRpc.RpcOutcome.ToString() -> string!
+override SourceRpc.RpcTicketReceipt.Equals(object? obj) -> bool
+override SourceRpc.RpcTicketReceipt.GetHashCode() -> int
+override SourceRpc.RpcTicketReceipt.ToString() -> string!
+SourceRpc.AllowAllAuthorization
+SourceRpc.AllowAllAuthorization.AllowAllAuthorization() -> void
+SourceRpc.AllowAllAuthorization.CanAnnounceAsync(System.Security.Claims.ClaimsPrincipal? principal, string! peer, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<bool>
+SourceRpc.AllowAllAuthorization.CanCarryAsync(System.Security.Claims.ClaimsPrincipal? principal, string! bridge, string! carried, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<bool>
+SourceRpc.AllowAllAuthorization.CanInvokeAsync(SourceRpc.RpcInvocation! invocation, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<bool>
+SourceRpc.AllowAllAuthorization.CanSubscribeAsync(string! caller, System.Security.Claims.ClaimsPrincipal? principal, string! path, string! eventName, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<bool>
+SourceRpc.InMemoryIdempotencyStore
+SourceRpc.InMemoryIdempotencyStore.AbandonAsync(string! key, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task!
+SourceRpc.InMemoryIdempotencyStore.BeginAsync(string! key, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<SourceRpc.RpcIdempotencyClaim!>!
+SourceRpc.InMemoryIdempotencyStore.CompleteAsync(string! key, SourceRpc.RpcOutcome! outcome, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task!
+SourceRpc.InMemoryIdempotencyStore.InMemoryIdempotencyStore() -> void
+SourceRpc.IRpcIdempotencyStore
+SourceRpc.IRpcIdempotencyStore.AbandonAsync(string! key, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task!
+SourceRpc.IRpcIdempotencyStore.BeginAsync(string! key, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<SourceRpc.RpcIdempotencyClaim!>!
+SourceRpc.IRpcIdempotencyStore.CompleteAsync(string! key, SourceRpc.RpcOutcome! outcome, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task!
+SourceRpc.IRpcOwnership
+SourceRpc.IRpcOwnership.OwnerEpochOf(string! path) -> string?
+SourceRpc.IRpcSubscription
+SourceRpc.ISourceRpcAuthorization
+SourceRpc.ISourceRpcAuthorization.CanAnnounceAsync(System.Security.Claims.ClaimsPrincipal? principal, string! peer, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<bool>
+SourceRpc.ISourceRpcAuthorization.CanCarryAsync(System.Security.Claims.ClaimsPrincipal? principal, string! bridge, string! carried, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<bool>
+SourceRpc.ISourceRpcAuthorization.CanInvokeAsync(SourceRpc.RpcInvocation! invocation, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<bool>
+SourceRpc.ISourceRpcAuthorization.CanSubscribeAsync(string! caller, System.Security.Claims.ClaimsPrincipal? principal, string! path, string! eventName, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<bool>
+SourceRpc.ISourceRpcEvents
+SourceRpc.ISourceRpcEvents.EmitAsync(string! path, string! eventName, object?[]! args, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.Task!
+SourceRpc.ISourceRpcEvents.EmitAsync(string! path, string! eventName, params object?[]! args) -> System.Threading.Tasks.Task!
+SourceRpc.ISourceRpcEvents.Epoch.get -> string!
+SourceRpc.ISourceRpcEvents.SequenceOf(string! path, string! eventName) -> long
+SourceRpc.ISourceRpcResponder
+SourceRpc.ISourceRpcResponder.InvokeAsync(SourceRpc.RpcInvocation! invocation, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<object?>
+SourceRpc.ISourceRpcTransport
+SourceRpc.ISourceRpcTransport.Connected.get -> bool
+SourceRpc.ISourceRpcTransport.FrameReceived -> System.Func<SourceRpc.RpcFrame!, System.Threading.Tasks.Task!>?
+SourceRpc.ISourceRpcTransport.LinkEstablished -> System.Func<System.Threading.Tasks.Task!>?
+SourceRpc.ISourceRpcTransport.Name.get -> string!
+SourceRpc.ISourceRpcTransport.PeersChanged -> System.Action<System.Collections.Generic.IReadOnlyCollection<string!>!>?
+SourceRpc.ISourceRpcTransport.SendAsync(SourceRpc.RpcFrame! frame, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task!
+SourceRpc.ISourceRpcTransport.StartAsync(System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task!
+SourceRpc.PresenceAnnouncement
+SourceRpc.PresenceAnnouncement.Carrying.get -> string![]?
+SourceRpc.PresenceAnnouncement.Carrying.init -> void
+SourceRpc.PresenceAnnouncement.<Clone>$() -> SourceRpc.PresenceAnnouncement!
+SourceRpc.PresenceAnnouncement.Equals(SourceRpc.PresenceAnnouncement? other) -> bool
+SourceRpc.PresenceAnnouncement.Name.get -> string!
+SourceRpc.PresenceAnnouncement.Name.init -> void
+SourceRpc.PresenceAnnouncement.PresenceAnnouncement() -> void
+SourceRpc.PresenceAnnouncement.Shape.get -> string?
+SourceRpc.PresenceAnnouncement.Shape.init -> void
+SourceRpc.PresenceAnnouncement.V.get -> int?
+SourceRpc.PresenceAnnouncement.V.init -> void
+SourceRpc.PresenceUpdate
+SourceRpc.PresenceUpdate.<Clone>$() -> SourceRpc.PresenceUpdate!
+SourceRpc.PresenceUpdate.Equals(SourceRpc.PresenceUpdate? other) -> bool
+SourceRpc.PresenceUpdate.Peer.get -> string?
+SourceRpc.PresenceUpdate.Peer.init -> void
+SourceRpc.PresenceUpdate.Peers.get -> string![]?
+SourceRpc.PresenceUpdate.Peers.init -> void
+SourceRpc.PresenceUpdate.PresenceUpdate() -> void
+SourceRpc.PresenceUpdate.Shape.get -> string?
+SourceRpc.PresenceUpdate.Shape.init -> void
+SourceRpc.PresenceUpdate.Shapes.get -> System.Collections.Generic.Dictionary<string!, string!>?
+SourceRpc.PresenceUpdate.Shapes.init -> void
+SourceRpc.PresenceUpdate.State.get -> string?
+SourceRpc.PresenceUpdate.State.init -> void
+SourceRpc.RpcCaller
+SourceRpc.RpcCaller.Cancellation.get -> System.Threading.CancellationToken
+SourceRpc.RpcCaller.Cancellation.init -> void
+SourceRpc.RpcCaller.Deconstruct(out string! Source, out System.Security.Claims.ClaimsPrincipal? User, out System.Threading.CancellationToken Cancellation, out System.Func<SourceRpc.RpcFrame!, System.Threading.Tasks.Task!>? Reply) -> void
+SourceRpc.RpcCaller.Equals(SourceRpc.RpcCaller other) -> bool
+SourceRpc.RpcCaller.Reply.get -> System.Func<SourceRpc.RpcFrame!, System.Threading.Tasks.Task!>?
+SourceRpc.RpcCaller.Reply.init -> void
+SourceRpc.RpcCaller.RpcCaller(string! Source, System.Security.Claims.ClaimsPrincipal? User = null, System.Threading.CancellationToken Cancellation = default(System.Threading.CancellationToken), System.Func<SourceRpc.RpcFrame!, System.Threading.Tasks.Task!>? Reply = null) -> void
+SourceRpc.RpcCaller.RpcCaller() -> void
+SourceRpc.RpcCaller.Source.get -> string!
+SourceRpc.RpcCaller.Source.init -> void
+SourceRpc.RpcCaller.User.get -> System.Security.Claims.ClaimsPrincipal?
+SourceRpc.RpcCaller.User.init -> void
+SourceRpc.RpcCallOptions
+SourceRpc.RpcCallOptions.<Clone>$() -> SourceRpc.RpcCallOptions!
+SourceRpc.RpcCallOptions.ContractVersion.get -> string?
+SourceRpc.RpcCallOptions.ContractVersion.init -> void
+SourceRpc.RpcCallOptions.Equals(SourceRpc.RpcCallOptions? other) -> bool
+SourceRpc.RpcCallOptions.IdempotencyKey.get -> string?
+SourceRpc.RpcCallOptions.IdempotencyKey.init -> void
+SourceRpc.RpcCallOptions.OwnerFence.get -> string?
+SourceRpc.RpcCallOptions.OwnerFence.init -> void
+SourceRpc.RpcCallOptions.RpcCallOptions() -> void
+SourceRpc.RpcCallOptions.Timeout.get -> System.TimeSpan?
+SourceRpc.RpcCallOptions.Timeout.init -> void
+SourceRpc.RpcConversion
+SourceRpc.RpcDeferred<T>
+SourceRpc.RpcDeferred<T>.ProgressAsync(object? value) -> System.Threading.Tasks.Task!
+SourceRpc.RpcDeferred<T>.Receipt.get -> SourceRpc.RpcTicketReceipt!
+SourceRpc.RpcDeferred<T>.RejectAsync(System.Exception! error) -> System.Threading.Tasks.Task!
+SourceRpc.RpcDeferred<T>.ResolveAsync(T value) -> System.Threading.Tasks.Task!
+SourceRpc.RpcDispatcher
+SourceRpc.RpcDispatcher.DropPeer(string! peer) -> void
+SourceRpc.RpcDispatcher.HandleAsync(SourceRpc.RpcFrame! frame, SourceRpc.RpcCaller caller) -> System.Threading.Tasks.Task<SourceRpc.RpcFrame?>!
+SourceRpc.RpcDispatcher.RpcDispatcher(SourceRpc.SourceRpcOptions! options, SourceRpc.SubscriptionTable! subscriptions, SourceRpc.SourceRpcTelemetry! telemetry, SourceRpc.ISourceRpcResponder? responder = null, Microsoft.Extensions.Logging.ILogger? log = null, SourceRpc.IRpcOwnership? ownership = null, SourceRpc.IRpcIdempotencyStore? idempotency = null, SourceRpc.ISourceRpcAuthorization? authorization = null) -> void
+SourceRpc.RpcDispatcher.SubscribersOf(string! path, string! eventName) -> System.Collections.Generic.IEnumerable<string!>!
+SourceRpc.RpcErrorCode
+SourceRpc.RpcErrorCode.Busy = 10 -> SourceRpc.RpcErrorCode
+SourceRpc.RpcErrorCode.ClassNotFound = 0 -> SourceRpc.RpcErrorCode
+SourceRpc.RpcErrorCode.Exception = 2 -> SourceRpc.RpcErrorCode
+SourceRpc.RpcErrorCode.Forbidden = 6 -> SourceRpc.RpcErrorCode
+SourceRpc.RpcErrorCode.IdempotencyUnavailable = 12 -> SourceRpc.RpcErrorCode
+SourceRpc.RpcErrorCode.InvalidParams = 7 -> SourceRpc.RpcErrorCode
+SourceRpc.RpcErrorCode.LimitExceeded = 11 -> SourceRpc.RpcErrorCode
+SourceRpc.RpcErrorCode.MethodNotFound = 1 -> SourceRpc.RpcErrorCode
+SourceRpc.RpcErrorCode.OwnershipChanged = 8 -> SourceRpc.RpcErrorCode
+SourceRpc.RpcErrorCode.Timeout = 3 -> SourceRpc.RpcErrorCode
+SourceRpc.RpcErrorCode.TransportError = 4 -> SourceRpc.RpcErrorCode
+SourceRpc.RpcErrorCode.Unauthorized = 5 -> SourceRpc.RpcErrorCode
+SourceRpc.RpcErrorCode.UnknownOutcome = 9 -> SourceRpc.RpcErrorCode
+SourceRpc.RpcFrame
+SourceRpc.RpcFrame.ArgCount.get -> int
+SourceRpc.RpcFrame.Arg<T>(int index) -> T?
+SourceRpc.RpcFrame.Batch.get -> SourceRpc.RpcFrame![]?
+SourceRpc.RpcFrame.Batch.init -> void
+SourceRpc.RpcFrame.Body.get -> object?
+SourceRpc.RpcFrame.Body.init -> void
+SourceRpc.RpcFrame.<Clone>$() -> SourceRpc.RpcFrame!
+SourceRpc.RpcFrame.Code.get -> string?
+SourceRpc.RpcFrame.Code.init -> void
+SourceRpc.RpcFrame.Corr.get -> string?
+SourceRpc.RpcFrame.Corr.init -> void
+SourceRpc.RpcFrame.Deferred.get -> bool?
+SourceRpc.RpcFrame.Deferred.init -> void
+SourceRpc.RpcFrame.Epoch.get -> string?
+SourceRpc.RpcFrame.Epoch.init -> void
+SourceRpc.RpcFrame.Equals(SourceRpc.RpcFrame? other) -> bool
+SourceRpc.RpcFrame.Event.get -> string?
+SourceRpc.RpcFrame.Event.init -> void
+SourceRpc.RpcFrame.Fence.get -> string?
+SourceRpc.RpcFrame.Fence.init -> void
+SourceRpc.RpcFrame.Hops.get -> int?
+SourceRpc.RpcFrame.Hops.init -> void
+SourceRpc.RpcFrame.Idem.get -> string?
+SourceRpc.RpcFrame.Idem.init -> void
+SourceRpc.RpcFrame.Kind.get -> string!
+SourceRpc.RpcFrame.Kind.init -> void
+SourceRpc.RpcFrame.Method.get -> string?
+SourceRpc.RpcFrame.Method.init -> void
+SourceRpc.RpcFrame.Outcome.get -> string?
+SourceRpc.RpcFrame.Outcome.init -> void
+SourceRpc.RpcFrame.Path.get -> string?
+SourceRpc.RpcFrame.Path.init -> void
+SourceRpc.RpcFrame.Reply(string! kind, object? body = null, string? code = null) -> SourceRpc.RpcFrame!
+SourceRpc.RpcFrame.Reply(string! kind, object? body, SourceRpc.RpcErrorCode code) -> SourceRpc.RpcFrame!
+SourceRpc.RpcFrame.RequiredArg<T>(int index) -> T?
+SourceRpc.RpcFrame.RpcFrame() -> void
+SourceRpc.RpcFrame.Seq.get -> long?
+SourceRpc.RpcFrame.Seq.init -> void
+SourceRpc.RpcFrame.Src.get -> string!
+SourceRpc.RpcFrame.Src.init -> void
+SourceRpc.RpcFrame.Tgt.get -> string!
+SourceRpc.RpcFrame.Tgt.init -> void
+SourceRpc.RpcFrame.TryGetArg<T>(int index, out T? value) -> bool
+SourceRpc.RpcFrame.Ttl.get -> long?
+SourceRpc.RpcFrame.Ttl.init -> void
+SourceRpc.RpcFrame.Ver.get -> string?
+SourceRpc.RpcFrame.Ver.init -> void
+SourceRpc.RpcFrame.V.get -> int
+SourceRpc.RpcFrame.V.init -> void
+SourceRpc.RpcIdempotencyClaim
+SourceRpc.RpcIdempotencyClaim.Acquired
+SourceRpc.RpcIdempotencyClaim.Acquired.Acquired() -> void
+SourceRpc.RpcIdempotencyClaim.Acquired.Equals(SourceRpc.RpcIdempotencyClaim.Acquired? other) -> bool
+SourceRpc.RpcIdempotencyClaim.Completed
+SourceRpc.RpcIdempotencyClaim.Completed.Completed(SourceRpc.RpcOutcome! Outcome) -> void
+SourceRpc.RpcIdempotencyClaim.Completed.Deconstruct(out SourceRpc.RpcOutcome! Outcome) -> void
+SourceRpc.RpcIdempotencyClaim.Completed.Equals(SourceRpc.RpcIdempotencyClaim.Completed? other) -> bool
+SourceRpc.RpcIdempotencyClaim.Completed.Outcome.get -> SourceRpc.RpcOutcome!
+SourceRpc.RpcIdempotencyClaim.Completed.Outcome.init -> void
+SourceRpc.RpcIdempotencyClaim.InProgress
+SourceRpc.RpcIdempotencyClaim.InProgress.Equals(SourceRpc.RpcIdempotencyClaim.InProgress? other) -> bool
+SourceRpc.RpcIdempotencyClaim.InProgress.InProgress() -> void
+SourceRpc.RpcIdempotencyClaim.RpcIdempotencyClaim(SourceRpc.RpcIdempotencyClaim! original) -> void
+SourceRpc.RpcInvocation
+SourceRpc.RpcInvocation.ArgCount.get -> int
+SourceRpc.RpcInvocation.Arg<T>(int index) -> T?
+SourceRpc.RpcInvocation.Deadline.get -> System.DateTimeOffset?
+SourceRpc.RpcInvocation.Deadline.init -> void
+SourceRpc.RpcInvocation.Defer<T>(System.TimeSpan? expiresIn = null) -> SourceRpc.RpcDeferred<T>!
+SourceRpc.RpcInvocation.Expired.get -> bool
+SourceRpc.RpcInvocation.Fence.get -> string?
+SourceRpc.RpcInvocation.Fence.init -> void
+SourceRpc.RpcInvocation.Frame.get -> SourceRpc.RpcFrame!
+SourceRpc.RpcInvocation.Frame.init -> void
+SourceRpc.RpcInvocation.IdempotencyKey.get -> string?
+SourceRpc.RpcInvocation.IdempotencyKey.init -> void
+SourceRpc.RpcInvocation.Method.get -> string!
+SourceRpc.RpcInvocation.Method.init -> void
+SourceRpc.RpcInvocation.Path.get -> string!
+SourceRpc.RpcInvocation.Path.init -> void
+SourceRpc.RpcInvocation.RequiredArg<T>(int index) -> T?
+SourceRpc.RpcInvocation.RpcInvocation() -> void
+SourceRpc.RpcInvocation.Source.get -> string!
+SourceRpc.RpcInvocation.Source.init -> void
+SourceRpc.RpcInvocation.Target.get -> string!
+SourceRpc.RpcInvocation.Target.init -> void
+SourceRpc.RpcInvocation.TryGetArg<T>(int index, out T? value) -> bool
+SourceRpc.RpcInvocation.User.get -> System.Security.Claims.ClaimsPrincipal?
+SourceRpc.RpcInvocation.User.init -> void
+SourceRpc.RpcLimits
+SourceRpc.RpcLimits.<Clone>$() -> SourceRpc.RpcLimits!
+SourceRpc.RpcLimits.Equals(SourceRpc.RpcLimits? other) -> bool
+SourceRpc.RpcLimits.MaxBatchDepth.get -> int
+SourceRpc.RpcLimits.MaxBatchDepth.set -> void
+SourceRpc.RpcLimits.MaxBatchItems.get -> int
+SourceRpc.RpcLimits.MaxBatchItems.set -> void
+SourceRpc.RpcLimits.MaxConcurrentCalls.get -> int
+SourceRpc.RpcLimits.MaxConcurrentCalls.set -> void
+SourceRpc.RpcLimits.MaxHops.get -> int
+SourceRpc.RpcLimits.MaxHops.set -> void
+SourceRpc.RpcLimits.MaxIdentifierLength.get -> int
+SourceRpc.RpcLimits.MaxIdentifierLength.set -> void
+SourceRpc.RpcLimits.RpcLimits() -> void
+SourceRpc.RpcOutcome
+SourceRpc.RpcOutcome.<Clone>$() -> SourceRpc.RpcOutcome!
+SourceRpc.RpcOutcome.Code.get -> string?
+SourceRpc.RpcOutcome.Code.init -> void
+SourceRpc.RpcOutcome.Deconstruct(out bool Failed, out object? Value, out string? Code, out string? Message) -> void
+SourceRpc.RpcOutcome.Equals(SourceRpc.RpcOutcome? other) -> bool
+SourceRpc.RpcOutcome.Failed.get -> bool
+SourceRpc.RpcOutcome.Failed.init -> void
+SourceRpc.RpcOutcome.Message.get -> string?
+SourceRpc.RpcOutcome.Message.init -> void
+SourceRpc.RpcOutcome.RpcOutcome(bool Failed, object? Value = null, string? Code = null, string? Message = null) -> void
+SourceRpc.RpcOutcome.Value.get -> object?
+SourceRpc.RpcOutcome.Value.init -> void
+SourceRpc.RpcRouter
+SourceRpc.RpcRouter.Announce(string! name, string! connectionId, string? shape) -> void
+SourceRpc.RpcRouter.ConnectionFor(string! name) -> string?
+SourceRpc.RpcRouter.MayOriginate(string! connectionId, string! name) -> bool
+SourceRpc.RpcRouter.Names() -> System.Collections.Generic.IEnumerable<string!>!
+SourceRpc.RpcRouter.Remove(string! connectionId) -> System.Collections.Generic.IReadOnlyCollection<string!>!
+SourceRpc.RpcRouter.RpcRouter() -> void
+SourceRpc.RpcRouter.SetCarried(string! connectionId, string! announcer, System.Collections.Generic.IReadOnlyCollection<string!>! carrying, int maximum) -> void
+SourceRpc.RpcRouter.ShapesFor(System.Collections.Generic.IEnumerable<string!>! names) -> System.Collections.Generic.Dictionary<string!, string!>!
+SourceRpc.RpcTicketReceipt
+SourceRpc.RpcTicketReceipt.<Clone>$() -> SourceRpc.RpcTicketReceipt!
+SourceRpc.RpcTicketReceipt.Equals(SourceRpc.RpcTicketReceipt? other) -> bool
+SourceRpc.RpcTicketReceipt.ExpiresAt.get -> long
+SourceRpc.RpcTicketReceipt.ExpiresAt.init -> void
+SourceRpc.RpcTicketReceipt.Id.get -> string!
+SourceRpc.RpcTicketReceipt.Id.init -> void
+SourceRpc.RpcTicketReceipt.RpcTicketReceipt() -> void
+SourceRpc.RpcTicket<T>
+SourceRpc.RpcTicket<T>.ExpiresAt.get -> System.DateTimeOffset
+SourceRpc.RpcTicket<T>.Id.get -> string!
+SourceRpc.RpcTicket<T>.Progress -> System.Action<object?>?
+SourceRpc.RpcTicket<T>.Result.get -> System.Threading.Tasks.Task<T>!
+SourceRpc.SourceRpcClient
+SourceRpc.SourceRpcClient.CallAsync(string! target, string! path, string! method, object?[]? args = null, SourceRpc.RpcCallOptions? options = null, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<object?>!
+SourceRpc.SourceRpcClient.CallAsync<T>(string! target, string! path, string! method, object?[]? args = null, SourceRpc.RpcCallOptions? options = null, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<T?>!
+SourceRpc.SourceRpcClient.CallDeferredAsync<T>(string! target, string! path, string! method, object?[]? args = null, SourceRpc.RpcCallOptions? options = null, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<SourceRpc.RpcTicket<T>!>!
+SourceRpc.SourceRpcClient.DisposeAsync() -> System.Threading.Tasks.ValueTask
+SourceRpc.SourceRpcClient.SourceRpcClient(SourceRpc.ISourceRpcTransport! transport, SourceRpc.SourceRpcOptions! options, SourceRpc.SourceRpcTelemetry! telemetry, SourceRpc.RpcDispatcher? dispatcher = null, Microsoft.Extensions.Logging.ILogger? log = null) -> void
+SourceRpc.SourceRpcClient.StartAsync(System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task!
+SourceRpc.SourceRpcClient.SubscribeAsync(string! target, string! path, string! eventName, System.Action<object?[]!>! handler, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<SourceRpc.IRpcSubscription!>!
+SourceRpc.SourceRpcClient.WaitUntilConnectedAsync(System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<bool>!
+SourceRpc.SourceRpcException
+SourceRpc.SourceRpcException.Code.get -> SourceRpc.RpcErrorCode
+SourceRpc.SourceRpcException.SourceRpcException(SourceRpc.RpcErrorCode code, string! message, System.Exception? inner = null) -> void
+SourceRpc.SourceRpcOptions
+SourceRpc.SourceRpcOptions.AllowUnenforcedIdempotencyKeys.get -> bool
+SourceRpc.SourceRpcOptions.AllowUnenforcedIdempotencyKeys.set -> void
+SourceRpc.SourceRpcOptions.CallTimeout.get -> System.TimeSpan
+SourceRpc.SourceRpcOptions.CallTimeout.set -> void
+SourceRpc.SourceRpcOptions.IncludeExceptionDetail.get -> bool
+SourceRpc.SourceRpcOptions.IncludeExceptionDetail.set -> void
+SourceRpc.SourceRpcOptions.Limits.get -> SourceRpc.RpcLimits!
+SourceRpc.SourceRpcOptions.Limits.set -> void
+SourceRpc.SourceRpcOptions.MaximumCarriedPeers.get -> int
+SourceRpc.SourceRpcOptions.MaximumCarriedPeers.set -> void
+SourceRpc.SourceRpcOptions.Name.get -> string!
+SourceRpc.SourceRpcOptions.Name.set -> void
+SourceRpc.SourceRpcOptions.PinSourceToAuthenticatedIdentity.get -> bool
+SourceRpc.SourceRpcOptions.PinSourceToAuthenticatedIdentity.set -> void
+SourceRpc.SourceRpcOptions.ReconnectDelaysMs.get -> int[]!
+SourceRpc.SourceRpcOptions.ReconnectDelaysMs.set -> void
+SourceRpc.SourceRpcOptions.RequireAuthenticatedPeers.get -> bool
+SourceRpc.SourceRpcOptions.RequireAuthenticatedPeers.set -> void
+SourceRpc.SourceRpcOptions.SourceRpcOptions() -> void
+SourceRpc.SourceRpcOptions.UseMessagePack.get -> bool
+SourceRpc.SourceRpcOptions.UseMessagePack.set -> void
+SourceRpc.SourceRpcTelemetry
+SourceRpc.SourceRpcTelemetry.CallCompleted(string! path, string! method, double milliseconds, SourceRpc.RpcErrorCode? failure) -> void
+SourceRpc.SourceRpcTelemetry.ConnectionClosed() -> void
+SourceRpc.SourceRpcTelemetry.ConnectionOpened() -> void
+SourceRpc.SourceRpcTelemetry.Dispose() -> void
+SourceRpc.SourceRpcTelemetry.FrameReceived(string! kind) -> void
+SourceRpc.SourceRpcTelemetry.FrameRejected(string! reason) -> void
+SourceRpc.SourceRpcTelemetry.FrameSent(string! kind) -> void
+SourceRpc.SourceRpcTelemetry.RoutingFailed() -> void
+SourceRpc.SourceRpcTelemetry.SourceRpcTelemetry() -> void
+SourceRpc.SourceRpcTelemetry.Subscriptions.get -> System.Func<int>!
+SourceRpc.SourceRpcTelemetry.Subscriptions.set -> void
+SourceRpc.SubscriptionTable
+SourceRpc.SubscriptionTable.Add(string! path, string! ev, string! peer) -> bool
+SourceRpc.SubscriptionTable.Count.get -> int
+SourceRpc.SubscriptionTable.RemovePeer(string! peer) -> void
+SourceRpc.SubscriptionTable.Remove(string! path, string! ev, string! peer) -> bool
+SourceRpc.SubscriptionTable.SubscribersOf(string! path, string! ev) -> System.Collections.Generic.IEnumerable<string!>!
+SourceRpc.SubscriptionTable.SubscriptionTable() -> void
+SourceRpc.TransportContract
+SourceRpc.TransportEvents
+SourceRpc.TransportEvents.Bind(SourceRpc.RpcDispatcher! dispatcher) -> void
+SourceRpc.TransportEvents.EmitAsync(string! path, string! eventName, object?[]! args, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.Task!
+SourceRpc.TransportEvents.EmitAsync(string! path, string! eventName, params object?[]! args) -> System.Threading.Tasks.Task!
+SourceRpc.TransportEvents.Epoch.get -> string!
+SourceRpc.TransportEvents.SequenceOf(string! path, string! eventName) -> long
+SourceRpc.TransportEvents.TransportEvents(SourceRpc.ISourceRpcTransport! transport, SourceRpc.SourceRpcOptions! options, Microsoft.Extensions.Logging.ILogger? log = null) -> void
+static readonly SourceRpc.RpcIdempotencyClaim.Acquired.Instance -> SourceRpc.RpcIdempotencyClaim.Acquired!
+static readonly SourceRpc.RpcIdempotencyClaim.InProgress.Instance -> SourceRpc.RpcIdempotencyClaim.InProgress!
+static readonly SourceRpc.SourceRpcTelemetry.Source -> System.Diagnostics.ActivitySource!
+static SourceRpc.PresenceAnnouncement.operator !=(SourceRpc.PresenceAnnouncement? left, SourceRpc.PresenceAnnouncement? right) -> bool
+static SourceRpc.PresenceAnnouncement.operator ==(SourceRpc.PresenceAnnouncement? left, SourceRpc.PresenceAnnouncement? right) -> bool
+static SourceRpc.PresenceUpdate.operator !=(SourceRpc.PresenceUpdate? left, SourceRpc.PresenceUpdate? right) -> bool
+static SourceRpc.PresenceUpdate.operator ==(SourceRpc.PresenceUpdate? left, SourceRpc.PresenceUpdate? right) -> bool
+static SourceRpc.RpcCaller.operator !=(SourceRpc.RpcCaller left, SourceRpc.RpcCaller right) -> bool
+static SourceRpc.RpcCaller.operator ==(SourceRpc.RpcCaller left, SourceRpc.RpcCaller right) -> bool
+static SourceRpc.RpcCallOptions.operator !=(SourceRpc.RpcCallOptions? left, SourceRpc.RpcCallOptions? right) -> bool
+static SourceRpc.RpcCallOptions.operator ==(SourceRpc.RpcCallOptions? left, SourceRpc.RpcCallOptions? right) -> bool
+static SourceRpc.RpcConversion.Optional<T>(object? value) -> T?
+static SourceRpc.RpcConversion.Required<T>(object? value, string! what) -> T?
+static SourceRpc.RpcConversion.TryConvert<T>(object? value, out T? converted, out string! why) -> bool
+static SourceRpc.RpcFrame.operator !=(SourceRpc.RpcFrame? left, SourceRpc.RpcFrame? right) -> bool
+static SourceRpc.RpcFrame.operator ==(SourceRpc.RpcFrame? left, SourceRpc.RpcFrame? right) -> bool
+static SourceRpc.RpcIdempotencyClaim.Acquired.operator !=(SourceRpc.RpcIdempotencyClaim.Acquired? left, SourceRpc.RpcIdempotencyClaim.Acquired? right) -> bool
+static SourceRpc.RpcIdempotencyClaim.Acquired.operator ==(SourceRpc.RpcIdempotencyClaim.Acquired? left, SourceRpc.RpcIdempotencyClaim.Acquired? right) -> bool
+static SourceRpc.RpcIdempotencyClaim.Completed.operator !=(SourceRpc.RpcIdempotencyClaim.Completed? left, SourceRpc.RpcIdempotencyClaim.Completed? right) -> bool
+static SourceRpc.RpcIdempotencyClaim.Completed.operator ==(SourceRpc.RpcIdempotencyClaim.Completed? left, SourceRpc.RpcIdempotencyClaim.Completed? right) -> bool
+static SourceRpc.RpcIdempotencyClaim.InProgress.operator !=(SourceRpc.RpcIdempotencyClaim.InProgress? left, SourceRpc.RpcIdempotencyClaim.InProgress? right) -> bool
+static SourceRpc.RpcIdempotencyClaim.InProgress.operator ==(SourceRpc.RpcIdempotencyClaim.InProgress? left, SourceRpc.RpcIdempotencyClaim.InProgress? right) -> bool
+static SourceRpc.RpcIdempotencyClaim.operator !=(SourceRpc.RpcIdempotencyClaim? left, SourceRpc.RpcIdempotencyClaim? right) -> bool
+static SourceRpc.RpcIdempotencyClaim.operator ==(SourceRpc.RpcIdempotencyClaim? left, SourceRpc.RpcIdempotencyClaim? right) -> bool
+static SourceRpc.RpcLimits.operator !=(SourceRpc.RpcLimits? left, SourceRpc.RpcLimits? right) -> bool
+static SourceRpc.RpcLimits.operator ==(SourceRpc.RpcLimits? left, SourceRpc.RpcLimits? right) -> bool
+static SourceRpc.RpcOutcome.operator !=(SourceRpc.RpcOutcome? left, SourceRpc.RpcOutcome? right) -> bool
+static SourceRpc.RpcOutcome.operator ==(SourceRpc.RpcOutcome? left, SourceRpc.RpcOutcome? right) -> bool
+static SourceRpc.RpcTicketReceipt.operator !=(SourceRpc.RpcTicketReceipt? left, SourceRpc.RpcTicketReceipt? right) -> bool
+static SourceRpc.RpcTicketReceipt.operator ==(SourceRpc.RpcTicketReceipt? left, SourceRpc.RpcTicketReceipt? right) -> bool
+static SourceRpc.SourceRpcException.Forbidden(string! message) -> SourceRpc.SourceRpcException!
+static SourceRpc.SourceRpcException.InvalidParams(string! message) -> SourceRpc.SourceRpcException!
+static SourceRpc.SourceRpcException.NoSuchMethod(string! path, string! method) -> SourceRpc.SourceRpcException!
+static SourceRpc.SourceRpcException.NotFound(string! path) -> SourceRpc.SourceRpcException!
+virtual SourceRpc.RpcIdempotencyClaim.EqualityContract.get -> System.Type!
+virtual SourceRpc.RpcIdempotencyClaim.Equals(SourceRpc.RpcIdempotencyClaim? other) -> bool
+virtual SourceRpc.RpcIdempotencyClaim.PrintMembers(System.Text.StringBuilder! builder) -> bool

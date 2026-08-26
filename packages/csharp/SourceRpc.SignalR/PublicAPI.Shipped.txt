@@ -1,0 +1,27 @@
+override SourceRpc.SignalR.RpcHub.OnConnectedAsync() -> System.Threading.Tasks.Task!
+override SourceRpc.SignalR.RpcHub.OnDisconnectedAsync(System.Exception? exception) -> System.Threading.Tasks.Task!
+SourceRpc.SignalR.RpcHub
+SourceRpc.SignalR.RpcHub.Frame(SourceRpc.RpcFrame! frame) -> System.Threading.Tasks.Task!
+SourceRpc.SignalR.RpcHub.Presence(SourceRpc.PresenceAnnouncement! who) -> System.Threading.Tasks.Task!
+SourceRpc.SignalR.RpcHub.RpcHub(SourceRpc.RpcRouter! peers, SourceRpc.RpcDispatcher! dispatcher, Microsoft.Extensions.Options.IOptions<SourceRpc.SourceRpcOptions!>! options, SourceRpc.SourceRpcTelemetry! telemetry, Microsoft.Extensions.Logging.ILogger<SourceRpc.SignalR.RpcHub!>! log, Microsoft.AspNetCore.SignalR.IHubContext<SourceRpc.SignalR.RpcHub!>! context, SourceRpc.ISourceRpcAuthorization? authorization = null) -> void
+SourceRpc.SignalR.SignalRClientTransport
+SourceRpc.SignalR.SignalRClientTransport.Connected.get -> bool
+SourceRpc.SignalR.SignalRClientTransport.DisposeAsync() -> System.Threading.Tasks.ValueTask
+SourceRpc.SignalR.SignalRClientTransport.FrameReceived -> System.Func<SourceRpc.RpcFrame!, System.Threading.Tasks.Task!>?
+SourceRpc.SignalR.SignalRClientTransport.LinkEstablished -> System.Func<System.Threading.Tasks.Task!>?
+SourceRpc.SignalR.SignalRClientTransport.Name.get -> string!
+SourceRpc.SignalR.SignalRClientTransport.PeersChanged -> System.Action<System.Collections.Generic.IReadOnlyCollection<string!>!>?
+SourceRpc.SignalR.SignalRClientTransport.SendAsync(SourceRpc.RpcFrame! frame, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task!
+SourceRpc.SignalR.SignalRClientTransport.SignalRClientTransport(SourceRpc.SourceRpcOptions! options, System.Func<Microsoft.AspNetCore.SignalR.Client.HubConnection!>! build, Microsoft.Extensions.Logging.ILogger? log = null) -> void
+SourceRpc.SignalR.SignalRClientTransport.SignalRClientTransport(string! url, SourceRpc.SourceRpcOptions! options, Microsoft.Extensions.Logging.ILogger? log = null) -> void
+SourceRpc.SignalR.SignalRClientTransport.StartAsync(System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task!
+SourceRpc.SignalR.SourceRpcBuilder
+SourceRpc.SignalR.SourceRpcBuilder.AddIdempotencyStore<T>() -> SourceRpc.SignalR.SourceRpcBuilder!
+SourceRpc.SignalR.SourceRpcBuilder.AddOwnership<T>() -> SourceRpc.SignalR.SourceRpcBuilder!
+SourceRpc.SignalR.SourceRpcBuilder.AddResponder(SourceRpc.ISourceRpcResponder! responder) -> SourceRpc.SignalR.SourceRpcBuilder!
+SourceRpc.SignalR.SourceRpcBuilder.AddResponder<T>() -> SourceRpc.SignalR.SourceRpcBuilder!
+SourceRpc.SignalR.SourceRpcBuilder.Services.get -> Microsoft.Extensions.DependencyInjection.IServiceCollection!
+SourceRpc.SignalR.SourceRpcEndpointRouteBuilderExtensions
+SourceRpc.SignalR.SourceRpcServiceCollectionExtensions
+static SourceRpc.SignalR.SourceRpcEndpointRouteBuilderExtensions.MapSourceRpc(this Microsoft.AspNetCore.Routing.IEndpointRouteBuilder! endpoints, string! pattern = "/rpc") -> Microsoft.AspNetCore.Builder.HubEndpointConventionBuilder!
+static SourceRpc.SignalR.SourceRpcServiceCollectionExtensions.AddSourceRpc(this Microsoft.Extensions.DependencyInjection.IServiceCollection! services, System.Action<SourceRpc.SourceRpcOptions!>! configure) -> SourceRpc.SignalR.SourceRpcBuilder!

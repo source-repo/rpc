@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+### The public surface of the C# packages cannot move by accident
+
+The last item on the review's release list. Nothing failed a build when a public signature changed, so a breaking change reached a package as somebody else's compile error after they upgraded - and the first anyone knew of it was that.
+
+Each packable project now carries a committed `PublicAPI.Shipped.txt`, and `Microsoft.CodeAnalysis.PublicApiAnalyzers` fails the build when the real surface differs from it. In either direction: `RS0016` for something public that is not written down, `RS0017` for something written down that is no longer public. The second matters as much as the first - a member quietly made `internal` is a breaking change that would otherwise leave no trace at all.
+
+Both directions were checked by making the change and watching the build fail: adding a property produced RS0016 naming it, and demoting `MaxHops` to internal produced RS0017. The baseline is 535 entries across the four packages, generated from the analyzer's own diagnostics rather than written by hand.
+
+`API-BASELINE.md` explains what to do when it fires, and the three cases are genuinely different: an API you meant to add is a line in `PublicAPI.Unshipped.txt`, an API you meant to change needs a major version, and an API you never meant to expose should be `internal` - which is what most of them are.
+
+The analyzer is a build-time dependency and does not appear in the packages; verified by reading the nuspec rather than assuming `PrivateAssets` did its job.
+
+## Unreleased
+
 ### NuGet publishing is automated, and the C# tests now run in CI
 
 A version tag already published the npm packages and the CLI image; the four .NET packages were still built by hand and pushed to a folder on one workstation. They now ride the same tag.
