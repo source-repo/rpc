@@ -164,6 +164,20 @@ jobs:
             # The pull half, on its own version line for the queue's reason: it is built against the
             # library's public API rather than against its shape, so pinning it to the library's
             # number would state an agreement it is not keeping. Same guard, same free ride.
+            # What a component keeps across activations. Its own line for the same reason, and it
+            # will move faster than the library while the online-change phases land.
+            - name: Publish the continuity package
+              working-directory: packages/continuity
+              env:
+                  NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+              run: |
+                  version=$(node -p "require('./package.json').version")
+                  if curl -fsSL -o /dev/null "https://registry.npmjs.org/@source-repo%2fcontinuity/${version}"; then
+                    echo "@source-repo/continuity@${version} is already published"
+                  else
+                    npm publish --access public --provenance
+                  fi
+
             - name: Publish the query package
               working-directory: packages/query
               env:

@@ -1,0 +1,23 @@
+{
+    "snapshotId": "golden-oven-v3",
+    "captureKind": "held-state-only",
+    "componentType": "oven",
+    "componentId": "oven3",
+    "sourceRevision": "rev-3",
+    "stateSchemaId": "oven.state",
+    "stateVersion": 3,
+    "stateSchemaHash": "I_tNz7OzvE_lV08PwAHRxRPFjqy7btb5ovTY0ubkJVU",
+    "heldState": {
+        "zones": {
+            "main": {
+                "targetC": 180
+            }
+        },
+        "mode": "heating",
+        "unit": "C"
+    },
+    "provenance": [],
+    "capturedAt": "2026-03-14T09:15:00.000Z",
+    "snapshotFormatVersion": 1,
+    "contentHash": "-vTP_q6vCwR7-Lat1abQIKUh3sfs5Hfm5hHnjOKJlKQ"
+}

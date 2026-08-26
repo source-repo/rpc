@@ -1,4 +1,4 @@
-import { canonicalValue } from './Canonical.js'
+import { canonicalValue, digestText } from './Canonical.js'
 import type { TypeNode } from './Schema.js'
 
 /**
@@ -187,15 +187,12 @@ export const stampInput = (scope: string, id: string, fields: readonly (readonly
  * WebCrypto rather than `node:crypto`, so this file stays in the browser build alongside the rest
  * of the DataProvider - the same choice `Signing.ts` already makes, and for the same reason.
  */
-export const rowStamp = async (scope: string, id: string, fields: readonly (readonly [string, unknown])[]): Promise<string> => {
-    const subtle = globalThis.crypto?.subtle
-    if (!subtle) throw new Error('a row stamp needs WebCrypto (globalThis.crypto.subtle), which this runtime does not provide')
-    const digest = await subtle.digest('SHA-256', new TextEncoder().encode(stampInput(scope, id, fields)))
-    // base64url, so a stamp survives a URL, a query string and a JSON field without being re-encoded.
-    let binary = ''
-    for (const byte of new Uint8Array(digest)) binary += String.fromCharCode(byte)
-    return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
-}
+export const rowStamp = (scope: string, id: string, fields: readonly (readonly [string, unknown])[]): Promise<string> =>
+    // The digest is `Canonical.ts`'s, shared with the snapshot envelope for the reason the encoder
+    // beside it is shared: one of these is a precondition a caller holds and the other names a state
+    // a process is restored from, and neither is a place to find out that two implementations
+    // rounded a detail differently.
+    digestText(stampInput(scope, id, fields))
 
 /**
  * Check a permission document, throwing with a reason if it is not usable.

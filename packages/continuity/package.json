@@ -1,0 +1,65 @@
+{
+    "name": "@source-repo/continuity",
+    "version": "0.1.0",
+    "description": "What a Source RPC component keeps across activations: versioned state snapshots, adjacent forward migrations with reviewed defaults, and provenance for every value that moved",
+    "keywords": [
+        "rpc",
+        "snapshot",
+        "migration",
+        "state",
+        "online-change",
+        "typescript"
+    ],
+    "type": "module",
+    "license": "MIT",
+    "author": "anderswestberg",
+    "repository": {
+        "type": "git",
+        "url": "git+https://github.com/source-repo/rpc.git",
+        "directory": "packages/continuity"
+    },
+    "engines": {
+        "node": ">=22"
+    },
+    "sideEffects": false,
+    "main": "./dist/index.js",
+    "types": "./dist/index.d.ts",
+    "exports": {
+        ".": {
+            "types": "./dist/index.d.ts",
+            "default": "./dist/index.js"
+        },
+        "./package.json": "./package.json"
+    },
+    "files": [
+        "dist",
+        "!dist/**/*.test.*"
+    ],
+    "scripts": {
+        "build": "tsc -p tsconfig.json",
+        "clean": "rimraf dist",
+        "typecheck": "tsc --noEmit -p tsconfig.json",
+        "test": "npm run clean && npm run build && ava",
+        "prepack": "npm run clean && npm run build"
+    },
+    "dependencies": {
+        "@source-repo/rpc": "^5.1.0"
+    },
+    "devDependencies": {
+        "@types/node": "^26.1.2",
+        "ava": "^8.0.1",
+        "rimraf": "^6.0.1",
+        "typescript": "^7.0.2"
+    },
+    "ava": {
+        "files": [
+            "dist/**/*.test.js"
+        ],
+        "workerThreads": false,
+        "concurrency": 1
+    },
+    "homepage": "https://github.com/source-repo/rpc/tree/main/packages/continuity#readme",
+    "bugs": {
+        "url": "https://github.com/source-repo/rpc/issues"
+    }
+}

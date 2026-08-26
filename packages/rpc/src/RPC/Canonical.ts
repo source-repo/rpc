@@ -76,3 +76,28 @@ export const canonicalValue = (value: unknown): unknown => {
  * value - every object in it is an array, so nothing is left for key order to decide.
  */
 export const canonicalText = (value: unknown): string => JSON.stringify(canonicalValue(value))
+
+/**
+ * A digest of canonical text: base64url of its SHA-256.
+ *
+ * Extracted rather than written twice, because a second caller arrived. A row stamp digests the
+ * stamp's own input and a snapshot digests its envelope, and the two must agree about what hashing
+ * *is* for the same reason they must agree about what canonical *is*: one of them is a precondition
+ * a caller holds and the other names a state a process is restored from, and neither is a place to
+ * discover that two implementations rounded a detail differently.
+ *
+ * base64url, so a digest survives a URL, a query string, a file name and a JSON field without being
+ * re-encoded. WebCrypto rather than `node:crypto`, which is what keeps this in the browser build
+ * alongside the rest of the data surface.
+ */
+export const digestText = async (text: string): Promise<string> => {
+    const subtle = globalThis.crypto?.subtle
+    if (!subtle) throw new Error('a canonical digest needs WebCrypto (globalThis.crypto.subtle), which this runtime does not provide')
+    const digest = await subtle.digest('SHA-256', new TextEncoder().encode(text))
+    let binary = ''
+    for (const byte of new Uint8Array(digest)) binary += String.fromCharCode(byte)
+    return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
+}
+
+/** The digest of a value's canonical form. What names the state of a thing rather than a text. */
+export const canonicalDigest = (value: unknown): Promise<string> => digestText(canonicalText(value))

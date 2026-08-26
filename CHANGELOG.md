@@ -1,5 +1,27 @@
 # Changelog
 
+## Unreleased
+
+### A component's state can outlive the process that held it
+
+The first phase of the online-change design: a component is a logical thing with a persistent address, and the process implementing it is not. **`@source-repo/continuity`** is what it keeps across that boundary — versioned snapshots of held state, adjacent forward migrations, and a record of every value that moved.
+
+**Phase 1 makes no claim of live process replacement, and says so in code rather than in a note.** `admissibleForHandoff` returns a *reason* rather than `false`, because the obligations a running activation holds — the timers it owes, the calls it has out, the leases it is answering for — are not captured yet, and "we have snapshots" must not be readable as "we can hand over".
+
+**Held state has to be explicit, and the rule is enforced instead of documented.** State is `structuredClone`d before every migration step; state that cannot be cloned is refused, naming why. A closure in a state field is the shape of everything that cannot survive the process holding it, which is exactly what the design says state must never be. The clone is then frozen, so a transform that writes to its input fails rather than being obeyed.
+
+**One reviewed transform per adjacent version**, walked in order. That is V−1 transforms to maintain rather than one per version pair — and, more to the point, one place per version where somebody had to decide what a new field means. A direct K→N transform is a decision nobody reviewed, taken about versions that were never adjacent. Two steps registered for one pair are refused: which ran would otherwise depend on module load order.
+
+**Three outcomes, and they are not degrees of success.** `total` says the old state determined the new one. `defaulted` says a value came from a decision, and records the field, the value, the approver and *why* — because six months later the question is never whether a default was applied, it is who chose it and against what. `impossible` refuses the chain, naming the field, rather than inventing a value nothing downstream could tell from a measured one.
+
+**There is no separate dry-run path, and that is the point.** A dry run executing different code proves nothing about the committed one, so migration is a pure function of an immutable snapshot and a dry run is calling it and not storing the answer. Two calls over one input produce the same snapshot in every field, hash included, because a derived snapshot carries its parent's `capturedAt` — deriving is not observing, and that is what keeps a clock out of the answer.
+
+**Determinism is checked rather than assumed.** Every step runs twice and its two outputs are compared, which catches a clock or a random value — the two that actually happen. There is deliberately no way to switch it off, because an off switch is what gets flipped when the check fires.
+
+Golden snapshots are retained as files under `golden/`, one per released state version, read verbatim: a fixture the code constructs agrees with whatever the code now does, which is the one thing a regression test must not do. Six rules were checked against builds with the rule removed.
+
+One thing moved in the library for it: `digestText` and `canonicalDigest` are exported from `Canonical.ts`, and the row stamp now uses the first. A snapshot hash and a row stamp had the same five lines twice, and neither is a place to discover that two implementations rounded a detail differently. The stamp's pinned fixtures are unchanged, which is what says the extraction moved nothing.
+
 ## 5.1.0
 
 **Read this first if you hold a row stamp.** `RPC_STAMP_VERSION` moved from `sw1` to `sw2`, so every stamp minted before this release compares unequal to the row it was taken from. A caller holding one is told its row changed, re-reads and is right — which is the direction the version exists to guarantee — but it happens on the first write after the upgrade rather than at a moment anybody chose. The encoding change behind it is in the entry below.
