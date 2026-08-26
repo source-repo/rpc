@@ -175,14 +175,15 @@ static async Task RunOnSocketIo(string url)
 {
     var options = new SourceRpcOptions { Name = Environment.GetEnvironmentVariable("RPC_PEER_NAME") ?? "csharp-socketio", IncludeExceptionDetail = true };
     var telemetry = new SourceRpcTelemetry();
-    var events = new TransportEvents();
-    var meter = new Meter(events);
-    var dispatcher = new RpcDispatcher(options, new SubscriptionTable(), telemetry, meter, null, new FixedOwner(), new InMemoryIdempotencyStore());
     using var logging = LoggerFactory.Create(b => b.AddSimpleConsole().SetMinimumLevel(
         Enum.TryParse<LogLevel>(Environment.GetEnvironmentVariable("RPC_LOG_LEVEL"), out var socketIoLevel) ? socketIoLevel : LogLevel.Warning));
     await using var transport = new SocketIoClientTransport(url, options, logging.CreateLogger("SourceRpc.SocketIo"));
+    // The core's publisher, over an ordinary transport - the same class the broker peer uses.
+    var events = new TransportEvents(transport, options);
+    var meter = new Meter(events);
+    var dispatcher = new RpcDispatcher(options, new SubscriptionTable(), telemetry, meter, null, new FixedOwner(), new InMemoryIdempotencyStore());
     await using var client = new SourceRpcClient(transport, options, telemetry, dispatcher);
-    events.Bind(transport, options.Name, dispatcher);
+    events.Bind(dispatcher);
     meter.Caller = client;
 
     await client.StartAsync();
@@ -201,10 +202,6 @@ static async Task RunOnBroker(string brokerUrl, string prefix)
 {
     var options = new SourceRpcOptions { Name = Environment.GetEnvironmentVariable("RPC_PEER_NAME") ?? "csharp-mqtt", IncludeExceptionDetail = true };
     var telemetry = new SourceRpcTelemetry();
-    var events = new TransportEvents();
-    var meter = new Meter(events);
-    var dispatcher = new RpcDispatcher(options, new SubscriptionTable(), telemetry, meter, null, new FixedOwner(), new InMemoryIdempotencyStore());
-
     var mqtt = new MqttTransportOptions { BrokerUrl = brokerUrl, Prefix = prefix };
     // One shared secret for every peer, which is right for a test and wrong for a plant: HMAC is
     // symmetric, so a secret this broad lets any holder sign as any peer. A real deployment gives
@@ -217,11 +214,15 @@ static async Task RunOnBroker(string brokerUrl, string prefix)
     }
 
     await using var transport = new MqttTransport(mqtt, options);
+    // The core's publisher, over an ordinary transport - the same class the socket.io peer uses.
+    var events = new TransportEvents(transport, options);
+    var meter = new Meter(events);
+    var dispatcher = new RpcDispatcher(options, new SubscriptionTable(), telemetry, meter, null, new FixedOwner(), new InMemoryIdempotencyStore());
     await using var client = new SourceRpcClient(transport, options, telemetry, dispatcher);
     // Bound after the dispatcher exists rather than injected into it. The publisher needs to know
     // who is subscribed and the dispatcher needs the responder that publishes - a cycle a container
     // cannot build, and the one that produced a hub whose methods were never invoked.
-    events.Bind(transport, options.Name, dispatcher);
+    events.Bind(dispatcher);
     meter.Caller = client;
 
     await client.StartAsync();
@@ -233,59 +234,6 @@ static async Task RunOnBroker(string brokerUrl, string prefix)
     await Task.Delay(Timeout.Infinite);
 }
 
-/// <summary>
-/// Event publishing over a transport rather than a hub - the same class for MQTT and socket.io,
-/// because nothing in it is either.
-///
-/// Deliberately small and deliberately here rather than in the library: fanning an event out to
-/// subscribers needs the subscription table and a way to send, and on a broker "a way to send" is
-/// the transport itself. A binding-independent publisher is the obvious next thing to lift into the
-/// core, and it is not lifted yet because one implementation is not a pattern.
-/// </summary>
-internal sealed class TransportEvents : ISourceRpcEvents
-{
-    private ISourceRpcTransport? _transport;
-    private string _self = "";
-    private readonly Dictionary<string, long> _sequences = [];
-
-    public string Epoch { get; } = Guid.NewGuid().ToString("N")[..8];
-
-    private RpcDispatcher? _dispatcher;
-
-    public void Bind(ISourceRpcTransport transport, string self, RpcDispatcher dispatcher)
-    {
-        _transport = transport;
-        _self = self;
-        _dispatcher = dispatcher;
-    }
-
-    public Task EmitAsync(string path, string eventName, params object?[] args) => EmitAsync(path, eventName, args, CancellationToken.None);
-
-    public async Task EmitAsync(string path, string eventName, object?[] args, CancellationToken cancellationToken)
-    {
-        long seq;
-        lock (_sequences)
-        {
-            var key = path + "\0" + eventName;
-            seq = _sequences.TryGetValue(key, out var at) ? at + 1 : 1;
-            _sequences[key] = seq;
-        }
-        if (_transport is null)
-            return;
-        // On a broker an event goes to the subscriber's own evt topic, so each subscriber is
-        // addressed rather than the event being broadcast to whoever happens to be listening.
-        foreach (var peer in _dispatcher?.SubscribersOf(path, eventName) ?? [])
-            await _transport.SendAsync(
-                new RpcFrame { Src = _self, Tgt = peer, Kind = "event", Path = path, Event = eventName, Seq = seq, Epoch = Epoch, Body = args },
-                cancellationToken);
-    }
-
-    public long SequenceOf(string path, string eventName)
-    {
-        lock (_sequences)
-            return _sequences.TryGetValue(path + "\0" + eventName, out var seq) ? seq : 0;
-    }
-}
 
 /// <summary>
 /// A fixed owner generation, standing in for a real topology record.

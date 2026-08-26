@@ -33,11 +33,13 @@ public sealed record RpcTicketReceipt
 public sealed class RpcDeferred<T>
 {
     private readonly Func<string, object?, Task> _send;
+    private readonly Func<RpcOutcome, Task>? _settledOutcome;
     private int _settled;
 
-    internal RpcDeferred(string id, DateTimeOffset expiresAt, Func<string, object?, Task> send)
+    internal RpcDeferred(string id, DateTimeOffset expiresAt, Func<string, object?, Task> send, Func<RpcOutcome, Task>? settledOutcome = null)
     {
         _send = send;
+        _settledOutcome = settledOutcome;
         Receipt = new RpcTicketReceipt { Id = id, ExpiresAt = expiresAt.ToUnixTimeMilliseconds() };
     }
 
@@ -48,14 +50,29 @@ public sealed class RpcDeferred<T>
     public Task ProgressAsync(object? value) => Volatile.Read(ref _settled) == 0 ? _send("progress", value) : Task.CompletedTask;
 
     /// <summary>Answer with the value. The first of resolve or reject wins; later calls do nothing.</summary>
-    public Task ResolveAsync(T value) =>
-        Interlocked.Exchange(ref _settled, 1) == 0 ? _send("resolved", value) : Task.CompletedTask;
+    public async Task ResolveAsync(T value)
+    {
+        if (Interlocked.Exchange(ref _settled, 1) != 0)
+            return;
+        // Recorded before it is sent, for the reason every other outcome is: the record is the
+        // commit point rather than the reply. Until this existed, a deferred command held its
+        // idempotency claim for ever - safe, in that a retry was dropped rather than run twice, and
+        // wrong, in that the key never became usable again.
+        await Record(new RpcOutcome(Failed: false, Value: value));
+        await _send("resolved", value);
+    }
 
     /// <summary>Answer with a failure. The first of resolve or reject wins.</summary>
-    public Task RejectAsync(Exception error) =>
-        Interlocked.Exchange(ref _settled, 1) == 0
-            ? _send("rejected", new { name = error.GetType().Name, message = error.Message })
-            : Task.CompletedTask;
+    public async Task RejectAsync(Exception error)
+    {
+        if (Interlocked.Exchange(ref _settled, 1) != 0)
+            return;
+        var code = error is SourceRpcException typed ? typed.Code.ToString() : nameof(RpcErrorCode.Exception);
+        await Record(new RpcOutcome(Failed: true, Code: code, Message: error.Message));
+        await _send("rejected", new { name = error.GetType().Name, message = error.Message });
+    }
+
+    private Task Record(RpcOutcome outcome) => _settledOutcome?.Invoke(outcome) ?? Task.CompletedTask;
 }
 
 /// <summary>
@@ -73,7 +90,30 @@ public sealed class RpcTicket<T>
     {
         Id = id;
         ExpiresAt = expiresAt;
+
+        // The expiry was metadata: a receipt said when the answer stopped being expected and
+        // nothing acted on it, so a peer that died mid-command left its caller awaiting Result for
+        // the life of the process. Armed here, it ends in a state the caller can act on. The
+        // distinction from an ordinary timeout matters - the command may well have run.
+        var remaining = expiresAt - DateTimeOffset.UtcNow;
+        if (remaining <= TimeSpan.Zero)
+            return;
+        _expiry = new Timer(
+            _ => Reject(new SourceRpcException(
+                RpcErrorCode.UnknownOutcome,
+                $"the deferred answer for {id} did not arrive before it expired - it may or may not have run")),
+            null,
+            remaining,
+            System.Threading.Timeout.InfiniteTimeSpan);
     }
+
+    private readonly Timer? _expiry;
+
+    /// <summary>Give up on this ticket because the link it belongs to has gone.</summary>
+    internal void Abandon() =>
+        Reject(new SourceRpcException(
+            RpcErrorCode.UnknownOutcome,
+            $"the link carrying the deferred answer for {Id} closed before it arrived - it may or may not have run"));
 
     /// <summary>The correlation of the call this answers, which is also the ticket's identity.</summary>
     public string Id { get; }
@@ -142,10 +182,31 @@ public sealed class RpcTicket<T>
             }
             handlers = _handlers;
         }
-        handlers?.Invoke(value);
+        try
+        {
+            handlers?.Invoke(value);
+        }
+        catch (Exception)
+        {
+            // A progress handler that throws must not unwind into the transport that delivered the
+            // frame, for the same reason an event handler must not: one bad subscriber would take
+            // the link down for everyone on it.
+        }
     }
 
-    internal void Resolve(T value) => _result.TrySetResult(value);
+    internal void Resolve(T value)
+    {
+        if (_result.TrySetResult(value))
+            _expiry?.Dispose();
+    }
 
-    internal void Reject(Exception error) => _result.TrySetException(error);
+    internal void Reject(Exception error)
+    {
+        if (_result.TrySetException(error))
+            _expiry?.Dispose();
+        else
+            // Already settled: whoever won disposed it. Disposing again is harmless and keeps the
+            // timer from outliving a ticket that resolved a moment before it fired.
+            _expiry?.Dispose();
+    }
 }

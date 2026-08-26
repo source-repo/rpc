@@ -38,6 +38,8 @@ public sealed class RpcDispatcher
 
     /// <summary>How many calls may run at once, so a burst is refused rather than absorbed.</summary>
     private readonly SemaphoreSlim _running;
+
+    private readonly ISourceRpcAuthorization _authorization;
     private readonly SubscriptionTable _subscriptions;
     private readonly SourceRpcOptions _options;
     private readonly SourceRpcTelemetry _telemetry;
@@ -51,8 +53,10 @@ public sealed class RpcDispatcher
         ISourceRpcResponder? responder = null,
         ILogger? log = null,
         IRpcOwnership? ownership = null,
-        IRpcIdempotencyStore? idempotency = null)
+        IRpcIdempotencyStore? idempotency = null,
+        ISourceRpcAuthorization? authorization = null)
     {
+        _authorization = authorization ?? new AllowAllAuthorization();
         _ownership = ownership;
         _idempotency = idempotency;
         _options = options;
@@ -99,7 +103,7 @@ public sealed class RpcDispatcher
         return frame.Kind switch
         {
             "call" => await DispatchAsync(frame, caller),
-            "subscribe" or "unsubscribe" => Watch(frame, caller),
+            "subscribe" or "unsubscribe" => await Watch(frame, caller),
             _ => frame.Reply("error", Error($"this peer does not handle '{frame.Kind}' frames"), RpcErrorCode.MethodNotFound)
         };
     }
@@ -173,6 +177,15 @@ public sealed class RpcDispatcher
         // to the world its caller observed; the deadline asks whether anyone is still waiting; the
         // idempotency store asks whether it has already been done. Running first and checking after
         // would answer all three too late.
+        // Asked before the fence and the deadline, because a caller with no business calling this
+        // at all should not have its command evaluated on any other ground first.
+        if (!await _authorization.CanInvokeAsync(invocation, caller.Cancellation))
+        {
+            _log.LogWarning("SourceRpc refused {Path}.{Method} from {Source}: not permitted", path, method, caller.Source);
+            _telemetry.FrameRejected("not permitted");
+            return frame.Reply("error", Error($"{caller.Source} may not call {path}.{method}"), RpcErrorCode.Forbidden);
+        }
+
         if (Fenced(frame, path) is { } fenced)
             return frame.Reply("error", Error(fenced), RpcErrorCode.OwnershipChanged);
 
@@ -250,6 +263,12 @@ public sealed class RpcDispatcher
             return frame.Reply("error", Error("this peer is already running as many calls as it will run at once"), RpcErrorCode.Busy);
         }
 
+        // Set before the responder runs, because Defer() is called from inside it. This is what
+        // finally closes a deferred command's idempotency claim: the answer is produced long after
+        // this method returns, so nothing here could record it.
+        if (claimed && frame.Idem is { Length: > 0 })
+            invocation.Settled = outcome => RecordAsync(frame, outcome, CancellationToken.None);
+
         var started = Stopwatch.GetTimestamp();
         RpcErrorCode? failure = null;
         try
@@ -260,16 +279,9 @@ public sealed class RpcDispatcher
             // and whatever it produces goes down the link afterwards.
             if (result is RpcTicketReceipt receipt)
             {
-                // The claim stays held until something records an outcome for it, and nothing here
-                // does: the answer is produced by the deferred object long after this returns. That
-                // is the safe half of the problem - a retry is dropped as in-progress rather than
-                // running the command a second time - but the claim is not released when the ticket
-                // settles either, so the key stays unusable until the store expires it. Wiring the
-                // deferred completion into the store is the missing piece.
-                if (claimed)
-                    _log.LogWarning(
-                        "SourceRpc is holding idempotency key {Key} for a deferred {Path}.{Method}; it will not be released when the ticket settles",
-                        frame.Idem, path, method);
+                // The claim stays held until the deferred settles, which now records the outcome
+                // through invocation.Settled above. A retry meanwhile is dropped as in-progress,
+                // which is right: the command is running, and its caller is waiting for it.
                 return frame.Reply("result", receipt) with { Deferred = true };
             }
 
@@ -332,7 +344,7 @@ public sealed class RpcDispatcher
     /// whose body is the argument array holding the event name, so every request has one shape and a
     /// caller writes `proxy.on('built', handler)` without knowing anything different happens.
     /// </summary>
-    private RpcFrame Watch(RpcFrame frame, RpcCaller caller)
+    private async Task<RpcFrame> Watch(RpcFrame frame, RpcCaller caller)
     {
         var ev = frame.Arg<string>(0);
         if (string.IsNullOrEmpty(ev))
@@ -346,6 +358,16 @@ public sealed class RpcDispatcher
             // let somebody stop receiving events would be a strange thing to enforce.
             var dropped = _subscriptions.Remove(path, ev, caller.Source);
             return frame.Reply("result", dropped ? "ok" : "ok - was not subscribed");
+        }
+
+        // Authorised separately from calls, and that is the point of having it: a method can be
+        // write-protected while the events from the same instance carry the production data the
+        // method would have returned. Authorising only calls leaves that open.
+        if (!await _authorization.CanSubscribeAsync(caller.Source, caller.User, path, ev, caller.Cancellation))
+        {
+            _log.LogWarning("SourceRpc refused {Peer} watching {Path}.{Event}", caller.Source, path, ev);
+            _telemetry.FrameRejected("not permitted to subscribe");
+            return frame.Reply("error", Error($"{caller.Source} may not watch {path}.{ev}"), RpcErrorCode.Forbidden);
         }
 
         var added = _subscriptions.Add(path, ev, caller.Source);

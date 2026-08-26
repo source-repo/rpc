@@ -78,6 +78,8 @@ public sealed class BuildWatcher(ISourceRpcEvents events)
 }
 ```
 
+`ISourceRpcEvents` lives in the core, so a peer on a broker or a socket.io client can announce things too - `TransportEvents` is the implementation, over any transport. It used to be the SignalR package's, which meant a peer that was not a hub could serve methods and say nothing. A send that fails is isolated: one unreachable subscriber must not stop the ones after it hearing the event.
+
 A TypeScript peer receives that as an ordinary subscription. Three things about it are decisions rather than accidents: the count runs whether or not anyone is subscribed, so a subscriber that joins late can tell how many it missed; a repeated subscribe is one subscription, because a client replaying after a reconnect must not be served twice; and a subscription is keyed by peer name rather than connection, so a reconnecting peer keeps receiving.
 
 ## Calling out
@@ -86,11 +88,34 @@ A TypeScript peer receives that as an ordinary subscription. Three things about 
 var options = new SourceRpcOptions { Name = "line-controller" };
 await using var transport = new SignalRClientTransport("http://plant:5217/rpc", options);
 await using var client = new SourceRpcClient(transport, options, new SourceRpcTelemetry());
-await client.StartAsync();
+
+// StartAsync brings the link up and returns before there is one - a peer may start before the
+// thing it connects to. Wait when the next thing needs a link; the token here is the wait, not
+// the transport's lifetime, so giving up waiting does not give up reconnecting.
+await client.StartAsync(host.ApplicationStopping);
+await client.WaitUntilConnectedAsync(startupTimeout);
 
 var reading = await client.CallAsync<string>("vs-automation", "meter", "read", ["flow"]);
 await using var watch = await client.SubscribeAsync("vs-automation", "meter", "tick", args => Console.WriteLine(args[0]));
 ```
+
+**Ask for the semantics on the call that needs them.** The dispatcher on the other side reads all of these and acts on every one; a caller had no way to set them until now, which made a .NET peer able to enforce the framework's safety rules and not request them:
+
+```csharp
+await client.CallAsync<int>("plant", "pump", "start", [3],
+    new RpcCallOptions
+    {
+        // Answered from the record if this arrives twice. Send one whenever repeating the command
+        // would do something twice - and expect IdempotencyUnavailable if the target has no store.
+        IdempotencyKey = $"start-pump-{workOrder}",
+        // The ownership this caller observed. Anything else refuses OwnershipChanged rather than
+        // running under an ownership the caller never saw.
+        OwnerFence = topology.OwnerEpoch,
+        Timeout = TimeSpan.FromSeconds(20)
+    });
+```
+
+**Arguments and results are read strictly.** `Arg<T>` stays lenient and answers `default`; `RequiredArg<T>` and `TryGetArg<T>` refuse with `InvalidParams` instead. Prefer the strict pair for anything a method acts on - a malformed integer becoming `0` and a malformed boolean becoming `false` are both plausible values, and a machine will act on them. One codec-neutral converter handles both wire shapes, so a method written under MessagePack behaves identically under JSON.
 
 A client is a peer, so it can also be called: give it a dispatcher and frames addressed to it are served down the same link. That is the ordinary shape for a device that both reports and takes instructions.
 
@@ -121,6 +146,27 @@ Everything above the transport — correlation, deadlines, tickets, fences, idem
 Where the hub authenticates, `PinSourceToAuthenticatedIdentity` additionally requires the announced name to match the authenticated principal. Where it does not, a name was never evidence of anything — but it is still recorded, which is what makes the frame check mean something even unauthenticated.
 
 `carrying` is part of the same answer rather than a separate feature: a bridge advertises the peers behind it, they become addressable before they have spoken — reachability comes from presence, not from waiting for the destination to talk first — and they become names that bridge, and only that bridge, may originate frames for.
+
+## Limits
+
+```csharp
+options.Limits = new RpcLimits { MaxConcurrentCalls = 32, MaxHops = 4 };
+```
+
+Hops, batch size and depth, identifier length and concurrent calls. Every one was unbounded, which is the same as trusting whoever is on the other end to be reasonable - and the accident is likelier than the attack. A relay loop is the one an ordinary network reaches first: two peers each relaying for the other pass a frame between them for as long as the process lives, and nothing reports it.
+
+`MaxConcurrentCalls` is the other half of a deliberate decision. Transports do not await dispatch, so that a responder can call out and still receive the reply; without a ceiling a burst becomes as many concurrent invocations as arrive, and the first sign of trouble is memory. Beyond it a call is refused with `Busy`, which certainly did not run and can be retried.
+
+## Authentication and authorization
+
+Pinning a peer's name to its authenticated identity says the name is not a lie. It does not say the holder may *use* it, and it says nothing at all when the connection never authenticated - so `PinSourceToAuthenticatedIdentity` alone reads like "authentication required" and is not:
+
+```csharp
+options.RequireAuthenticatedPeers = true;              // fail closed with no identity
+builder.Services.AddSingleton<ISourceRpcAuthorization, PlantPolicy>();
+```
+
+The policy is asked four questions: may this connection announce this name, may this bridge carry that other peer, may this caller invoke this method, and may this caller watch this event. The last is not redundant - a method can be write-protected while the events from the same instance carry the production data the method would have returned. Carried names are filtered one at a time, because a bridge legitimately carrying one cell must not thereby speak for another.
 
 ## Errors
 
@@ -235,7 +281,9 @@ The outcome is written *before* the caller is answered, because a crash between 
 
 `InMemoryIdempotencyStore` forgets on restart and says so; a host that dispenses or starts a pump wants something durable.
 
-**Not yet done:** a deferred command holds its claim after the ticket settles, because nothing records an outcome for it. A retry is dropped as in-progress rather than run twice — the safe half — but the key stays unusable until the store expires it.
+A deferred command records its outcome against the key when the ticket settles, so a retry is dropped as in-progress while it runs and answered from the record afterwards.
+
+**Tickets end, one way or another.** The expiry on a receipt is now an armed timer rather than metadata: a ticket whose answer never arrives fails with `UnknownOutcome`, and so does one still waiting when the client is disposed. Both say *may have run* rather than *failed*, because that is the true thing and the one a caller can act on.
 
 **A method can answer later:**
 
@@ -304,6 +352,9 @@ Breaking changes in this package, in transport options and in the idempotency st
 - **`MqttTransportOptions.Verify`** returns `string?` — the peer it proved the frame is from — where it returned `bool`. `MqttSigning.HmacVerifier` already does this; a hand-written verifier returns the source on success and `null` to refuse.
 - A request's MQTT reply address must now be its own `rsp` topic. `MqttTransportOptions.AllowResponseTopic` permits another arrangement where one is genuinely needed.
 - **`SocketIoTransportOptions.Path`** is now **`EnginePath`**, because it is engine.io's endpoint and never was the namespace.
+- **`CallAsync` and `CallDeferredAsync` take `RpcCallOptions`** before the cancellation token. A call passing the token positionally needs it named, or moved along one.
+- **`ISourceRpcEvents` moved** from `SourceRpc.SignalR` to `SourceRpc`. Same namespace-qualified name for anything that had `using SourceRpc;`, a package reference change for anything that did not.
+- A result that will not convert now throws `InvalidParams` where `CallAsync<T>` used to return `default`. That is the point of the change, and it is the one that can surface as a new exception in code that was quietly reading zeros.
 
 Anything still on a `ProjectReference` into `packages/signalr/csharp/` is pointing at a directory that no longer exists — take the packages from the feed instead, as *Publishing to a local feed* above describes. `IRpcResponder.Invoke(path, method, frame)` became `ISourceRpcResponder.InvokeAsync(RpcInvocation, CancellationToken)` in the same move.
 
@@ -311,12 +362,16 @@ Anything still on a `ProjectReference` into `packages/signalr/csharp/` is pointi
 
 **Shared subscriptions** (`$share/<group>/…`), which is how MQTT replicas load-balance requests.
 
-**A C# peer cannot be a bridge.** There is no `carrying`/`shape` advertisement here, so a .NET process joins a network as a leaf. Nothing depends on it today; it is the reason a C# node cannot sit between two segments.
+**A C# peer cannot be a bridge.** There is no `carrying`/`shape` advertisement here, so a .NET process joins a network as a leaf - it can *authorize* what others carry, but not carry anything itself.
 
 **socket.io reads only the current frame layout.** The TypeScript client also listens for the older `$`-delimited `message` event, so a server that has not yet learned a peer's dialect can still reach it. A C# peer with `AnnouncePresence = false` that is pushed a frame before it has sent one gets nothing.
 
 **`messageExpiryInterval` is not read on receive.** The TypeScript transport uses it to narrow a signed ttl, which is what makes "the broker may shorten a deadline, never extend it" true in both directions. Here a request that sat twenty-five seconds in the broker still runs with its full signed budget.
 
 **`mr-method` and `mr-event` share one slot in the signed canonical form.** Both implementations collapse them, so relabelling a signed event as a method keeps the signature valid and the frame is then dropped for want of a handler. The effect is suppression, which a hostile broker can achieve by discarding the frame anyway — but it is a genuine slot collision, and fixing it is a change to both languages rather than to this package.
+
+**Cross-language conformance is not executable.** The wire formats are documented and the C# side is driven from TypeScript, which is a good deal better than two mocks agreeing - but TypeScript's behaviour is still the de facto specification. Shared fixtures both implementations consume, and a published feature matrix per language and transport, are what would fix that.
+
+**A claim stranded by a crash is not recovered.** `AbandonAsync` releases one deliberately, but a process that dies between claiming and completing leaves the key held until the store expires it. That is the safe direction, and it needs a TTL and an administrative way back.
 
 Method semantics are not declared, so the idempotency store is consulted whenever a call carries a key rather than only for methods marked non-repeatable — the caller sending a key is taken as the request. Introspection (`describe()`) is not implemented either.

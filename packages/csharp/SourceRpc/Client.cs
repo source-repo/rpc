@@ -551,6 +551,22 @@ public sealed class SourceRpcClient : IAsyncDisposable
     public async ValueTask DisposeAsync()
     {
         _transport.FrameReceived -= OnFrameAsync;
+        _transport.LinkEstablished -= ReplaySubscriptionsAsync;
+
+        // Everything still waiting is told the link has gone, rather than left awaiting an answer
+        // that can no longer arrive. `UnknownOutcome` rather than `TransportError` for both: the
+        // request was sent, so whether it ran is exactly what nobody here can say - and for a
+        // command that matters, "it failed" invites the retry that must not happen.
+        foreach (var correlation in _pending.Keys.ToArray())
+            if (_pending.TryRemove(correlation, out var pending))
+                pending.Completion.TrySetException(new SourceRpcException(
+                    RpcErrorCode.UnknownOutcome,
+                    "the client closed before this call was answered - it may or may not have run"));
+
+        foreach (var correlation in _tickets.Keys.ToArray())
+            if (_tickets.TryRemove(correlation, out var ticket))
+                ticket.Abandon();
+
         await _transport.DisposeAsync();
     }
 
@@ -562,6 +578,9 @@ public sealed class SourceRpcClient : IAsyncDisposable
 
         /// <summary>Returns true when this settles the ticket, so it can be forgotten.</summary>
         bool Settle(string? outcome, object? body);
+
+        /// <summary>The link has gone, so nothing more is coming. Ends the ticket in a state a caller can act on.</summary>
+        void Abandon();
     }
 
     /// <summary>
@@ -602,6 +621,19 @@ public sealed class SourceRpcClient : IAsyncDisposable
             foreach (var (outcome, body) in waiting)
                 settled |= Deliver(outcome, body);
             return settled;
+        }
+
+        /// <inheritdoc/>
+        public void Abandon()
+        {
+            lock (_early)
+            {
+                // A ticket never opened has nobody awaiting it: the caller is still inside the call
+                // that would have returned it, and that call is being failed separately.
+                if (_ticket is null)
+                    return;
+            }
+            _ticket.Abandon();
         }
 
         public bool Settle(string? outcome, object? body)

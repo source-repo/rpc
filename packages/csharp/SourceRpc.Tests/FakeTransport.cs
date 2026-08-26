@@ -19,6 +19,9 @@ public sealed class FakeTransport(string name) : ISourceRpcTransport
     public event Action<IReadOnlyCollection<string>>? PeersChanged;
     public event Func<Task>? LinkEstablished;
 
+    /// <summary>How to answer a request, for a test that needs something other than a bare "ok".</summary>
+    public Func<RpcFrame, RpcFrame>? Answer { get; set; }
+
     /// <summary>Everything this transport was asked to send, in order.</summary>
     public ConcurrentQueue<RpcFrame> Sent { get; } = new();
 
@@ -35,7 +38,7 @@ public sealed class FakeTransport(string name) : ISourceRpcTransport
         // Answered on another thread, the way a real one does: the client registers its pending
         // exchange before awaiting, and completing inline would hide an ordering mistake there.
         if (frame.Kind is "call" or "subscribe" or "unsubscribe")
-            _ = Task.Run(() => Receive(new RpcFrame
+            _ = Task.Run(() => Receive(Answer?.Invoke(frame) ?? new RpcFrame
             {
                 Src = frame.Tgt,
                 Tgt = frame.Src,

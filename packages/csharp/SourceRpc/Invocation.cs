@@ -78,6 +78,13 @@ public sealed class RpcInvocation
     /// travels - and a caller accepts the later answer only for a call it actually made, to the
     /// peer it made it to, which is what makes a forged result have nothing to attach itself to.
     /// </summary>
+    /// <summary>
+    /// Called when a deferred answer settles, so the dispatcher can record the outcome against the
+    /// idempotency key this call carried. Set by the dispatcher before the responder runs, because
+    /// <see cref="Defer{T}"/> is called from inside it.
+    /// </summary>
+    internal Func<RpcOutcome, Task>? Settled { get; set; }
+
     public RpcDeferred<T> Defer<T>(TimeSpan? expiresIn = null)
     {
         if (Reply is null)
@@ -89,16 +96,20 @@ public sealed class RpcInvocation
         var expiresAt = DateTimeOffset.UtcNow + (expiresIn ?? TimeSpan.FromMinutes(5));
         var reply = Reply;
         var frame = Frame;
-        return new RpcDeferred<T>(correlation, expiresAt, (outcome, value) =>
-            reply(new RpcFrame
-            {
-                Src = frame.Tgt,
-                Tgt = frame.Src,
-                Kind = "ticket",
-                Corr = correlation,
-                Outcome = outcome,
-                Body = value
-            }));
+        return new RpcDeferred<T>(
+            correlation,
+            expiresAt,
+            (outcome, value) =>
+                reply(new RpcFrame
+                {
+                    Src = frame.Tgt,
+                    Tgt = frame.Src,
+                    Kind = "ticket",
+                    Corr = correlation,
+                    Outcome = outcome,
+                    Body = value
+                }),
+            Settled);
     }
 
     /// <summary>

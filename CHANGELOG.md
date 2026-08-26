@@ -2,6 +2,32 @@
 
 ## Unreleased
 
+### The rest of the review's pre-release list for the C# packages
+
+The six correctness defects landed first. These are the items the same review named as wanted before .NET is a supported installation path rather than a preview one - less dramatic, and mostly about a peer being able to *ask* for what it can already enforce.
+
+**A caller can request the semantics, not only obey them.** `RpcCallOptions` carries a per-call deadline, an idempotency key, an owner fence and a contract version. Every one of those fields already travelled and the dispatcher already acted on them; a C# caller simply had no way to set any of them, which made a .NET peer able to enforce the framework's safety rules and unable to invoke them. The process that most wants an owner fence is the one issuing the command. The per-call timeout also arms the local timer with the number the frame carries, so what the far end is told and what the caller actually does cannot drift apart.
+
+**Bad wire data fails instead of becoming a plausible value.** Conversion returned `default` when a value would not convert - so a malformed integer arrived at a method as `0` and a malformed boolean as `false`. In control software that is worse than throwing: both are values a machine will act on, and a setpoint of zero is not a sensible reading of "the wire said something I could not parse". `RequiredArg<T>` and `TryGetArg<T>` join the lenient `Arg<T>`, results are read the same way, and one codec-neutral converter now owns the behaviour for both wire shapes. The tests run every case twice - once as MessagePack delivers it, once as JSON - because a method written against one shape and deployed on the other is the failure being prevented. Writing them found two real gaps in the converter itself: string enums under JSON, and element-wise array conversion.
+
+**Readiness is separate from starting.** `StartAsync` returns before there is a link, deliberately - a peer may start before the thing it connects to - but that made `await StartAsync(); await CallAsync(...)` fail with `TransportError` rather than wait. `WaitUntilConnectedAsync` waits, and cancelling it abandons only the wait: a startup timeout no longer turns a slow server into a peer that never reconnects. `StartAsync`'s token is documented as the lifetime it actually is.
+
+**Limits, because unbounded is the same as trusting the far end to be reasonable.** Hops, batch size and depth, identifier length, concurrent calls. The hop ceiling is the one an ordinary network reaches first: two peers each relaying for the other pass one frame between them for as long as the process lives, and nothing reports it. The concurrency gate prices a decision made earlier - transports do not await dispatch so a responder can call out and receive the reply, and unbounded fire-and-forget was the unpriced half of that. Beyond the ceiling a call is refused `Busy`, which certainly did not run.
+
+**Tickets end.** The expiry on a receipt was metadata that nothing acted on, so a peer that died mid-command left its caller awaiting `Result` for the life of the process. It is an armed timer now, and disposing the client ends whatever is still waiting. Both report `UnknownOutcome` rather than a failure, because *may have run* is the true thing and the one a caller can act on. Progress handlers are isolated the way event handlers are.
+
+**A deferred command finally closes its idempotency claim** - named as still open when the correctness fixes landed. The answer is produced long after the dispatcher returns, so nothing there could record it; the deferred object now records the outcome as it settles. A retry is dropped as in-progress while the command runs, and answered from the record once it has.
+
+**Event publishing left the SignalR package.** `ISourceRpcEvents` is in the core with a `TransportEvents` implementation over any transport, so a peer on a broker or a socket.io client can announce things rather than only serve methods. Fan-out isolates a failed send: one unreachable subscriber must not stop the ones after it hearing the event.
+
+**Authentication and authorization stopped being one setting.** Pinning a name to an authenticated identity says the name is not a lie; it says nothing when the connection never authenticated, so "pinning is on" read like "authentication is required" and was not. `RequireAuthenticatedPeers` fails closed. `ISourceRpcAuthorization` answers four questions - announce, carry, invoke, subscribe - and the last is not redundant: a method can be write-protected while the events from the same instance carry the data the method would have returned. Carried names are filtered one at a time, because a bridge legitimately carrying one cell must not thereby speak for another.
+
+43 C# tests, 26 C# interop tests, 27 SignalR, and the client smoke test.
+
+Still open, and named rather than absorbed: a C# peer cannot itself be a bridge; cross-language conformance is documented rather than executable, so TypeScript remains the de facto specification; a claim stranded by a process crash is held until the store expires it; MQTT presence is unsigned and wants a tested broker-ACL story; and method semantics are undeclared, so a key is honoured whenever one is sent rather than only where a method says repeating it is unsafe.
+
+## Unreleased
+
 ### The C# packages: six correctness defects, found by review and each pinned by a test
 
 An external review of the framework at 5.0.1 marked the .NET packages **preview** for industrial command use, on three grounds. All three were real, and reproducing them turned up three more. None of these could be seen from the far end of a wire, which is why a cross-language suite that exercises every one of these semantics had them all passing.

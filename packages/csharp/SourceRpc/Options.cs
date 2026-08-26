@@ -55,6 +55,19 @@ public sealed class SourceRpcOptions
     /// </summary>
     public bool PinSourceToAuthenticatedIdentity { get; set; } = true;
 
+    /// <summary>
+    /// Refuse any peer that has not authenticated.
+    ///
+    /// Separate from <see cref="PinSourceToAuthenticatedIdentity"/>, and the distinction is easy to
+    /// lose: pinning says a name that *is* claimed must match the identity behind it, and says
+    /// nothing at all when there is no identity - so a connection that never authenticated passes
+    /// it. On a development network that is what you want. On a plant it means "pinning is on" and
+    /// "authentication is required" read alike and are not.
+    ///
+    /// Off by default, because turning it on where nothing authenticates refuses every peer.
+    /// </summary>
+    public bool RequireAuthenticatedPeers { get; set; }
+
     /// <summary>Delays before each attempt to (re)connect, in milliseconds. The last is repeated for ever.</summary>
     public int[] ReconnectDelaysMs { get; set; } = [0, 2000, 5000, 10000, 30000];
 
