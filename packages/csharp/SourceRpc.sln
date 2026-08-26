@@ -13,6 +13,10 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SourceRpc.Mqtt", "SourceRpc
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SourceRpc.SocketIo", "SourceRpc.SocketIo\SourceRpc.SocketIo.csproj", "{70595350-4F4D-4A99-B96F-1813B92C5479}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SourceRpc.Query", "SourceRpc.Query\SourceRpc.Query.csproj", "{65B46CC3-8DA2-49C7-ACAE-512A8D395CD6}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SourceRpc.Tests", "SourceRpc.Tests\SourceRpc.Tests.csproj", "{15188CA9-6CB4-4C77-BAC1-314F53374998}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -42,5 +46,13 @@ Global
 		{70595350-4F4D-4A99-B96F-1813B92C5479}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{70595350-4F4D-4A99-B96F-1813B92C5479}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{70595350-4F4D-4A99-B96F-1813B92C5479}.Release|Any CPU.Build.0 = Release|Any CPU
+		{65B46CC3-8DA2-49C7-ACAE-512A8D395CD6}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{65B46CC3-8DA2-49C7-ACAE-512A8D395CD6}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{65B46CC3-8DA2-49C7-ACAE-512A8D395CD6}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{65B46CC3-8DA2-49C7-ACAE-512A8D395CD6}.Release|Any CPU.Build.0 = Release|Any CPU
+		{15188CA9-6CB4-4C77-BAC1-314F53374998}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{15188CA9-6CB4-4C77-BAC1-314F53374998}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{15188CA9-6CB4-4C77-BAC1-314F53374998}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{15188CA9-6CB4-4C77-BAC1-314F53374998}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 EndGlobal

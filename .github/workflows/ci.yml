@@ -167,6 +167,14 @@ jobs:
             - name: Check the committed contracts
               run: npm run check:contract --workspace=@source-repo/rpc-cli
 
+            # The .NET package's own tests, which are not the interop ones below. Those drive a real
+            # TypeScript client against a real hub and prove the two speak; these are the rules the
+            # two languages have to *agree* on - what a failure means, whether a call may be sent
+            # again, and the canonical encoder, whose expected strings were taken from the TypeScript
+            # implementation rather than written from the specification. No server, no network.
+            - name: Test the .NET package
+              run: dotnet test packages/csharp/SourceRpc.Tests/SourceRpc.Tests.csproj -c Release
+
             # Started here rather than as a service container: it is built from this repository, so
             # it cannot exist until the checkout has happened. Backgrounded and then waited for, the
             # same shape as the broker wait above and for the same reason - a hub that has not

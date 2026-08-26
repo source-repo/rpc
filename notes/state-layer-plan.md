@@ -210,6 +210,18 @@ If a park is ever built, it is `query` only, per-call opt-in, bounded by the rem
 
 ## The .NET lane, in parallel
 
+**Steps 1 and 2 are done, and step 2 turned out to have a prerequisite the plan did not name.**
+
+The lane's whole design rests on `ShouldHandle` distinguishing `TransportError` from `UnknownOutcome` — and **`RpcErrorCode` in C# had neither `UnknownOutcome` nor four other codes a TypeScript peer sends.** A code is parsed by name and an unknown one falls back to `Exception`, so `NotInControl`, `Busy` and `Superseded` — all three of which certainly did not run — were arriving as *the method ran and threw*, and the one code meaning *nobody knows* arrived as a definite failure. A predicate built on that would not have been approximate; it would have been inverted. Fixed, with the vocabulary asserted against `Messages.ts`.
+
+Two more prerequisites fell out of it: a .NET caller could not set an idempotency key, a per-call deadline or a fence, though the frame carries all three — so a retry could only ever have been a second command — and a send the transport refused surfaced as whatever the carrier threw rather than as `TransportError`, which reads as *unknown* and is the wrong safe answer.
+
+**`SourceRpc.Query`** is the pull half: `RpcCallBudget` (the deadline as a budget, each attempt told what remains, an exhausted one refusing rather than sending a zero that means *no deadline*), a Polly pipeline whose `ShouldHandle` is `RpcOutcomes.MayRetry`, `RpcCanonical` ported from `Canonical.ts` with its expected strings taken from the TypeScript implementation, and a FusionCache-backed call cache with fail-safe and tag invalidation. Own version line at 0.1.0, the `queue` precedent again. Six rules checked against builds with the rule removed.
+
+**Step 3 — a component client — is not started**, which is the plan's own instruction: it is the piece that unlocks confirmed-current in C# and it is a much larger one, so the cache is an age window and says so.
+
+
+
 The same split, with the halves supplied by two libraries instead of one, and with one dependency that has to be honoured rather than worked around.
 
 **Polly v8 is the resilience half.** Retry, circuit-breaker, fallback, hedging, timeout and rate limiter — and deliberately **no cache**: the v7 cache policy is gone and the project defers to caching libraries, which is why this lane needs two of them rather than one. Two of its pieces map onto rules this plan has already had to state in the abstract. A `ResiliencePipeline` carrying an outer total timeout with inner per-attempt timeouts *is* "the deadline is absolute across retries", expressed in a type rather than in a comment. And `ShouldHandle` is where the error vocabulary finally buys something mechanical: `TransportError` — certainly did not run — is retryable, and `UnknownOutcome` must never be, because it is precisely the one a person goes and looks at. A predicate that treats them alike turns the library's headline distinction back into a spinner.

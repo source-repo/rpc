@@ -61,20 +61,39 @@ public sealed class SourceRpcClient : IAsyncDisposable
     /// </summary>
     public async Task<T?> CallAsync<T>(string target, string path, string method, object?[]? args = null, CancellationToken cancellationToken = default)
     {
-        var frame = await CallFrameAsync(target, path, method, args, cancellationToken);
+        var frame = await CallFrameAsync(target, path, method, args, null, cancellationToken);
         return Convert<T>(frame.Body);
     }
 
-    /// <summary>As <see cref="CallAsync{T}"/>, for a method whose answer is not wanted typed.</summary>
+    /// <summary>As <see cref="CallAsync{T}(string, string, string, object?[], CancellationToken)"/>, for a method whose answer is not wanted typed.</summary>
     public async Task<object?> CallAsync(string target, string path, string method, object?[]? args = null, CancellationToken cancellationToken = default)
     {
-        var frame = await CallFrameAsync(target, path, method, args, cancellationToken);
+        var frame = await CallFrameAsync(target, path, method, args, null, cancellationToken);
         return frame.Body;
     }
 
-    private async Task<RpcFrame> CallFrameAsync(string target, string path, string method, object?[]? args, CancellationToken cancellationToken)
+    /// <summary>
+    /// As <see cref="CallAsync{T}(string, string, string, object?[], CancellationToken)"/>, saying what this caller can say about the call itself: the key
+    /// that makes a second attempt the same command, the deadline it will actually wait, and the
+    /// owner generation it decided under. See <see cref="RpcCallOptions"/>.
+    /// </summary>
+    public async Task<T?> CallAsync<T>(string target, string path, string method, object?[]? args, RpcCallOptions options, CancellationToken cancellationToken = default)
+    {
+        var frame = await CallFrameAsync(target, path, method, args, options, cancellationToken);
+        return Convert<T>(frame.Body);
+    }
+
+    /// <summary>As the option-carrying <see cref="CallAsync{T}(string, string, string, object?[], RpcCallOptions, CancellationToken)"/>, for an answer not wanted typed.</summary>
+    public async Task<object?> CallAsync(string target, string path, string method, object?[]? args, RpcCallOptions options, CancellationToken cancellationToken = default)
+    {
+        var frame = await CallFrameAsync(target, path, method, args, options, cancellationToken);
+        return frame.Body;
+    }
+
+    private async Task<RpcFrame> CallFrameAsync(string target, string path, string method, object?[]? args, RpcCallOptions? options, CancellationToken cancellationToken)
     {
         var correlation = Guid.NewGuid().ToString("N");
+        var timeout = options?.Timeout ?? _options.CallTimeout;
         var frame = new RpcFrame
         {
             Src = _options.Name,
@@ -83,10 +102,15 @@ public sealed class SourceRpcClient : IAsyncDisposable
             Corr = correlation,
             Path = path,
             Method = method,
-            Ttl = (long)_options.CallTimeout.TotalMilliseconds,
+            // The same number that arms the local timer, so what the far end is told is exactly what
+            // this caller is going to do - it can then refuse work that is already too late rather
+            // than doing it for nobody.
+            Ttl = (long)timeout.TotalMilliseconds,
+            Idem = options?.IdempotencyKey,
+            Fence = options?.OwnerEpoch,
             Body = args ?? []
         };
-        return await ExchangeAsync(frame, correlation, cancellationToken);
+        return await ExchangeAsync(frame, correlation, timeout, cancellationToken);
     }
 
     /// <summary>
@@ -123,7 +147,7 @@ public sealed class SourceRpcClient : IAsyncDisposable
         _tickets[correlation] = sink;
         try
         {
-            var answer = await ExchangeAsync(frame, correlation, cancellationToken);
+            var answer = await ExchangeAsync(frame, correlation, _options.CallTimeout, cancellationToken);
             if (answer.Deferred == true && answer.Body is not null)
             {
                 var receipt = Convert<RpcTicketReceipt>(answer.Body);
@@ -173,14 +197,14 @@ public sealed class SourceRpcClient : IAsyncDisposable
             Ttl = (long)_options.CallTimeout.TotalMilliseconds,
             Body = new object?[] { eventName }
         };
-        await ExchangeAsync(frame, correlation, cancellationToken);
+        await ExchangeAsync(frame, correlation, _options.CallTimeout, cancellationToken);
 
         var key = Key(target, path, eventName);
         _handlers.AddOrUpdate(key, _ => [handler], (_, existing) => { lock (existing) { existing.Add(handler); } return existing; });
         return new Subscription(this, target, path, eventName, handler);
     }
 
-    private async Task<RpcFrame> ExchangeAsync(RpcFrame frame, string correlation, CancellationToken cancellationToken)
+    private async Task<RpcFrame> ExchangeAsync(RpcFrame frame, string correlation, TimeSpan timeout, CancellationToken cancellationToken)
     {
         if (!_transport.Connected)
             // Thrown rather than queued. A call discarded in silence leaves its caller waiting out
@@ -192,13 +216,24 @@ public sealed class SourceRpcClient : IAsyncDisposable
         _pending[correlation] = waiting;
         try
         {
-            await _transport.SendAsync(frame, cancellationToken);
+            try
+            {
+                await _transport.SendAsync(frame, cancellationToken);
+            }
+            catch (Exception e) when (e is not SourceRpcException and not OperationCanceledException)
+            {
+                // It never left, so whatever it would have done, it did not. Classified here rather
+                // than left as whatever the carrier threw, because a caller deciding whether to send
+                // a command again needs `CertainlyDidNotRun` to be true of this - and an unclassified
+                // exception is read as *unknown*, which is the safe reading and the wrong one.
+                throw new SourceRpcException(RpcErrorCode.TransportError, $"{frame.Path}.{frame.Method} was refused by the link before it was sent: {e.Message}", e);
+            }
             _telemetry.FrameSent(frame.Kind);
 
             using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            deadline.CancelAfter(_options.CallTimeout);
+            deadline.CancelAfter(timeout);
             await using (deadline.Token.Register(() =>
-                waiting.TrySetException(new SourceRpcException(RpcErrorCode.Timeout, $"{frame.Path}.{frame.Method} did not answer within {_options.CallTimeout}"))))
+                waiting.TrySetException(new SourceRpcException(RpcErrorCode.Timeout, $"{frame.Path}.{frame.Method} did not answer within {timeout}"))))
             {
                 var answer = await waiting.Task;
                 if (answer.Kind == "error")
@@ -449,6 +484,7 @@ public sealed class SourceRpcClient : IAsyncDisposable
                         Body = new object?[] { eventName }
                     },
                     correlation,
+                    client._options.CallTimeout,
                     CancellationToken.None);
             }
             catch (Exception e)

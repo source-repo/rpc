@@ -143,6 +143,14 @@ public interface ISourceRpcResponder
 /// <summary>
 /// The error codes a caller understands, which are the library's rather than this binding's: they
 /// are what a TypeScript peer turns back into a typed rejection, so the strings matter.
+///
+/// **They matter in the other direction too, and that is why five of these were added rather than
+/// designed.** A code arrives as a string and is parsed by name; one this enum does not have falls
+/// back to <see cref="Exception"/>, which says *the method ran and threw*. So a TypeScript peer
+/// answering `NotInControl`, `Busy`, `Superseded` or `UnknownOutcome` was telling a .NET caller the
+/// exact opposite of what it meant: three of those certainly did not run, and the fourth is the one
+/// nobody knows about. Every code a peer can put on the wire has to be spelled here or the wire is
+/// being misread rather than merely narrowed.
 /// </summary>
 public enum RpcErrorCode
 {
@@ -160,6 +168,40 @@ public enum RpcErrorCode
 
     /// <summary>The frame could not be delivered - no route, or nothing listening.</summary>
     TransportError,
+
+    /// <summary>
+    /// The call was sent and its outcome is not known: it may have run, it may not.
+    ///
+    /// **The distinction this draws against <see cref="TransportError"/> is the library's founding
+    /// one.** "It failed" invites a retry; "I do not know" says to go and look, and for a
+    /// non-repeatable command that is the difference between one pump start and two. A predicate
+    /// that treats the two alike turns the distinction back into a spinner.
+    /// </summary>
+    UnknownOutcome,
+
+    /// <summary>
+    /// The instance's mailbox was full, so the call was refused before it could queue. It certainly
+    /// did not run, and waiting and asking again is reasonable - unlike <see cref="Superseded"/>.
+    /// </summary>
+    Busy,
+
+    /// <summary>
+    /// A newer call to the same conflatable method replaced this one while it waited. It certainly
+    /// did not run and must not be retried: the newer value won, which is what the method opted into.
+    /// </summary>
+    Superseded,
+
+    /// <summary>
+    /// The method requires the instance's authority and the caller does not hold it. It certainly
+    /// did not run, and retrying without acquiring will refuse again.
+    /// </summary>
+    NotInControl,
+
+    /// <summary>
+    /// The caller declared a contract version this peer has no history for. Asking again with the
+    /// same declaration gets the same answer.
+    /// </summary>
+    IncompatibleVersion,
 
     /// <summary>The caller is not authenticated.</summary>
     Unauthorized,

@@ -1,0 +1,60 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    The pull half of a Source RPC network, for .NET.
+
+    Beside SourceRpc rather than in it, and for the reason the TypeScript package is beside
+    @source-repo/rpc: the core claims to depend on nothing but the BCL, and taking Polly and
+    FusionCache into it would end that claim - a device binding that never pulls would carry a
+    resilience engine and a cache to reach a network it only ever answers.
+
+    Two libraries rather than one because Polly deliberately has no cache: the v7 cache policy is
+    gone and the project defers to caching libraries. So resilience is Polly's and storage is
+    FusionCache's, and what is ours is the part neither can know - what a failure means, whether a
+    method may be sent again at all, and that a deadline is a budget rather than a per-attempt
+    timeout.
+  -->
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>12</LangVersion>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <RootNamespace>SourceRpc.Query</RootNamespace>
+    <AssemblyName>SourceRpc.Query</AssemblyName>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <IsPackable>true</IsPackable>
+    <PackageId>SourceRpc.Query</PackageId>
+    <!--
+      Its own version line, exactly as @source-repo/query has one and for the same reason: it is
+      built against the core's public API rather than against its shape, so pinning it to the core's
+      number would say something that is not true.
+    -->
+    <Version>0.1.0</Version>
+    <Authors>anderswestberg</Authors>
+    <Description>The pull half of a Source RPC network for .NET: what a failure means, whether a call may be sent again, a deadline that is a budget across attempts, and a canonical cache key - over Polly and FusionCache.</Description>
+    <PackageTags>rpc;msgrpc;polly;fusioncache;resilience;automation;iiot</PackageTags>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageProjectUrl>https://github.com/source-repo/rpc</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/source-repo/rpc</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <NoWarn>$(NoWarn);CS1591</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../SourceRpc/SourceRpc.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Polly.Core" Version="8.4.2" />
+    <PackageReference Include="ZiggyCreatures.FusionCache" Version="2.7.1" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="SourceRpc.Tests" />
+  </ItemGroup>
+
+</Project>

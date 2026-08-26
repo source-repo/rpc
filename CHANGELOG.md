@@ -40,6 +40,30 @@ The bound has three tiers, each a claim about who still has business with the ro
 
 `$with({ semantics })` rides along and travels nowhere. A client holds no schema and this repository's rule is that a running class beats the schema for that question, so it decides nothing - what it buys is a tray that can say *this uncertain one was a non-repeatable command* instead of showing six identical rows.
 
+### .NET could not read four of the error codes it was being sent
+
+A code arrives as a string and is parsed by name, and the C# enum spelled nine of the fourteen the library defines. An unknown name falls back to `Exception`, which says *the method ran and threw* — so a TypeScript peer answering **`NotInControl`**, **`Busy`** or **`Superseded`**, every one of which certainly did *not* run, was telling a .NET caller the opposite of what it meant. **`UnknownOutcome`** — the one code that means *nobody knows whether it ran* — arrived as a definite failure, and `IncompatibleVersion` with it. All five are now spelled, and the .NET suite asserts the whole vocabulary against the list in `Messages.ts`.
+
+`RpcOutcomes` puts the classification in the core rather than in a resilience package, because a caller writing a bare `catch` needs the same answer a pipeline does: `MayHaveRun`, `CertainlyDidNotRun`, `IsTerminalRefusal`, `MayRetry`. `CertainlyDidNotRun` is deliberately **not** the negation of `MayHaveRun` — an unclassified exception is neither, and reading *not known to have run* as *known not to have run* is exactly how a second pump start happens. A send the transport refuses is now classified `TransportError` rather than left as whatever the carrier threw, for the same reason: an unclassified failure reads as *unknown*, which is the safe reading and the wrong one.
+
+Three fields the frame has always carried and no .NET caller could set arrive together as **`RpcCallOptions`**: the idempotency key, a per-call deadline, and the owner fence. The first two are what make a *retry* safe rather than a second command, so a resilience policy built without them would have been a policy for doing a thing twice.
+
+### The pull half for .NET: `SourceRpc.Query`
+
+Beside `SourceRpc` rather than in it, for the reason `@source-repo/query` is beside `@source-repo/rpc`: the core depends on nothing but the BCL, and a device binding that never pulls should not carry a resilience engine and a cache to reach a network it only answers. Its own version line at `0.1.0`, over **Polly** and **FusionCache** — two libraries rather than one because Polly deliberately has no cache, the v7 policy having been removed in favour of deferring to caching libraries.
+
+**A deadline is a budget across every attempt**, which is the piece a policy library will not give you: every resilience engine offers a timeout per attempt and almost none offers what remains. `RpcCallBudget` hands each attempt what is left, and it travels as the ttl so the far end can refuse work that is already too late. A budget with nothing left refuses locally rather than sending a zero, because zero means *no deadline* on this wire — the same inversion the TypeScript side has a comment about.
+
+**`ShouldHandle` reads the error vocabulary rather than the exception type.** A `TransportError` is retried even for a non-repeatable command, because it never left and so has had no effect to repeat; an `UnknownOutcome` is retried for nothing the caller did not declare repeatable. Undeclared means undeclared.
+
+`RpcCanonical` is a **port** of the TypeScript encoder rather than an equivalent of it, and the tests say so mechanically: every expected string was produced by the TypeScript implementation, and the first is a substring of the literal `DataWrites.test.ts` pins for the row stamp — so changing either encoder fails one of the two suites. The two places .NET would otherwise diverge are written down rather than discovered: its JSON writer escapes `<`, `>`, `&` and everything non-ASCII, which is valid JSON and a different string, and it writes an integral double with a decimal point where JavaScript does not.
+
+Two of FusionCache's features are worth naming because this repository arrived at them independently before adopting them, which is the strongest reason to take a dependency rather than the weakest: **fail-safe** is the console polling loop's rule that a failure annotates the previous answer rather than clearing it, and a **soft timeout** is answer-stale-while-refreshing.
+
+What is deliberately absent is freshness from the publisher. *Confirmed current* needs a component channel, and a .NET peer cannot observe a component at all — so this is an age window, labelled as one, until that changes.
+
+`SourceRpc.Tests` is the first .NET test project here, and CI now runs it. What it covers is exactly the rules the two languages must agree on; everything else in this package is still interop, which proves the two speak and cannot reach a pure function.
+
 ### The console has an operations tray
 
 Every other tab in the console's right-hand column is about the network. This one is about the page: what it asked other peers to do, and how each turned out. The count on the tab is not a count of things to read but of commands nobody knows the outcome of, so it stays until each is dealt with rather than clearing when the tab is opened.

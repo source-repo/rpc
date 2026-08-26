@@ -1,0 +1,35 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    The first .NET test project here, and the reason it is the first is worth stating: everything in
+    this package was tested until now by a TypeScript suite driving TestHost over a real link, which
+    proves interoperation and cannot reach a pure function. What is under test here is exactly that
+    - the rules the two languages must agree on - and the fixture that holds them together is a
+    literal taken from the TypeScript suite rather than from this one.
+  -->
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="coverlet.collector" Version="6.0.0" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.8.0" />
+    <PackageReference Include="xunit" Version="2.5.3" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="2.5.3" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="Xunit" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../SourceRpc/SourceRpc.csproj" />
+    <ProjectReference Include="../SourceRpc.Query/SourceRpc.Query.csproj" />
+  </ItemGroup>
+
+</Project>

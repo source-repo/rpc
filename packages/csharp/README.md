@@ -2,7 +2,7 @@
 
 A .NET process as a peer on a Source RPC network — serving methods, publishing events, and calling out to other peers. It speaks the same protocol the TypeScript library speaks, in whichever of its two spellings the carrier calls for: the flat frame of [`docs/flat-frame-spec.md`](../../docs/flat-frame-spec.md) on a connection, and the `mr-` property layout of [`docs/mqtt5-frame-spec.md`](../../docs/mqtt5-frame-spec.md) on a broker.
 
-## Four packages, and why
+## Five packages, and why
 
 | package | what is in it | depends on |
 | --- | --- | --- |
@@ -10,6 +10,7 @@ A .NET process as a peer on a Source RPC network — serving methods, publishing
 | **`SourceRpc.SignalR`** | a hub for a process others dial into, and a client transport for one that dials out | ASP.NET Core |
 | **`SourceRpc.Mqtt`** | a peer on a broker — no server to write, because the broker is the middle | MQTTnet |
 | **`SourceRpc.SocketIo`** | a client for a .NET process that dials into a TypeScript socket.io server | SocketIOClient |
+| **`SourceRpc.Query`** | the pull half: what a failure means, whether a call may be sent again, a budget across attempts, a canonical key | Polly, FusionCache |
 
 The split is the point. A SignalR hub needs ASP.NET Core; an MQTT client on a device does not, and should not carry a web framework to get a protocol. So everything that decides what a frame *means* lives in `SourceRpc`, and a binding is a small class that moves frames.
 
@@ -124,6 +125,44 @@ Where the hub authenticates, `PinSourceToAuthenticatedIdentity` additionally req
 
 `SourceRpcException` carries the code a caller acts on, and its message always travels because somebody wrote it to be read. Anything else that escapes a method becomes `Exception` with a generic message, and the real one goes to the log — a vendor exception can contain a file path, a connection string or the innards of a COM error, and a plant network is not the place to publish it. `IncludeExceptionDetail` opts in, for development.
 
+**A code arrives as a string and is parsed by name, so this enum has to spell every code a peer can send.** It did not, and the effect was not a narrowing but a misreading: an unknown name falls back to `Exception`, which says *the method ran and threw*. So a TypeScript peer answering `NotInControl`, `Busy` or `Superseded` — all three of which certainly did **not** run — was telling a .NET caller the opposite of what it meant, and `UnknownOutcome`, the one code that means *nobody knows whether it ran*, arrived as a definite failure. `IncompatibleVersion` did too. All five are now spelled, and `SourceRpc.Tests` asserts the whole vocabulary against the list in `packages/rpc/src/RPC/Messages.ts`.
+
+What to do about a failure is `RpcOutcomes`, in the core rather than in the resilience package because a caller writing a bare `catch` needs the same answer a pipeline does:
+
+```csharp
+RpcOutcomes.MayHaveRun(code)          // UnknownOutcome, Timeout — go and look
+RpcOutcomes.CertainlyDidNotRun(code)  // TransportError, Busy, a refusal — nothing happened
+RpcOutcomes.IsTerminalRefusal(code)   // asking again gets the same answer
+RpcOutcomes.MayRetry(failure, semantics)
+```
+
+`CertainlyDidNotRun` is deliberately **not** the negation of `MayHaveRun`: an unclassified exception is neither, and reading *not known to have run* as *known not to have run* is exactly how a second pump start happens.
+
+## The pull half: `SourceRpc.Query`
+
+Beside `SourceRpc` rather than in it, for the reason `@source-repo/query` is beside `@source-repo/rpc`: the core depends on nothing but the BCL, and a device binding that never pulls should not carry a resilience engine and a cache to reach a network it only answers.
+
+Two libraries rather than one, because **Polly deliberately has no cache** — the v7 cache policy is gone and the project defers to caching libraries. So resilience is Polly's, storage is FusionCache's, and what is ours is what neither can know.
+
+```csharp
+var budget = new RpcCallBudget(TimeSpan.FromSeconds(10));
+var readings = await RpcResilience.ExecuteAsync(
+    budget,
+    (options, token) => client.CallAsync<Reading[]>("oven3", "plant", "readings", null, options, token),
+    new RpcResilienceOptions { Semantics = RpcMethodSemantics.Query },
+    cancellationToken: token);
+```
+
+**A deadline is a budget across every attempt**, and that is the piece a policy library will not give you: every resilience engine offers a timeout per attempt and almost none offers what remains. Three attempts under a "ten second timeout" that each restart the clock is a caller waiting thirty seconds having asked for ten — and on a plant, a command still being sent long after the person who ordered it stopped watching. Each attempt is handed `RpcCallOptions` whose `Timeout` is what is left, which travels as the ttl so the far end can refuse work that is already too late; a budget with nothing left refuses locally rather than sending a zero, because zero means *no deadline* on this wire.
+
+**`ShouldHandle` reads the error vocabulary rather than the exception type.** A `TransportError` is retried even for a non-repeatable command — it never left, so it has had no effect to repeat — and an `UnknownOutcome` is not retried for anything the caller did not declare repeatable. Undeclared means undeclared: absent semantics retries nothing.
+
+The cache is keyed by `RpcCanonical`, a port of the TypeScript encoder rather than an equivalent of it — two callers who built the same arguments differently are asking one question, and on this link asking twice is a screen that takes twice as long to draw. Its expected strings in `SourceRpc.Tests` were produced by the TypeScript implementation, and the first of them is a substring of the literal `packages/rpc/src/DataWrites.test.ts` pins for the row stamp, so the two suites hold each other.
+
+Two of FusionCache's features are worth naming because this repository arrived at them independently before adopting them, which is the strongest reason to take a dependency rather than the weakest. **Fail-safe** reuses an expired entry when the factory fails — the rule the console's polling loop already had, that a link which dropped is not a collection that emptied. And **a soft timeout** answers with the stale value while the refresh continues, which is what a screen on a slow link wants.
+
+**What is deliberately not here is freshness from the publisher.** A page drawn at the revision a component channel currently holds is *confirmed current* rather than merely recently fetched, and that is unavailable in .NET until a peer here can observe a component at all. Until then this is an age window, labelled as one.
+
 ## Telemetry
 
 Counters, a duration histogram and spans, through `System.Diagnostics.Metrics` and `ActivitySource` — the BCL's own instruments, so there is no OpenTelemetry dependency here and a host that wants traces adds the meter and source to its own exporter:
@@ -154,9 +193,12 @@ A consumer anywhere on the machine then does `dotnet add package SourceRpc.Signa
 
 ```
 npm run build:csharp     # the solution
-npm run pack:csharp      # all four NuGet packages, into packages/csharp/nupkg
+npm run test:csharp      # the .NET package's own tests - no server, no network
+npm run pack:csharp      # the NuGet packages, into packages/csharp/nupkg
 npm run hub              # the test host, for the interop suite to point at
 ```
+
+**Two kinds of test, and the split is worth knowing.** `SourceRpc.Tests` covers the rules the two languages have to *agree* on — what a failure means, whether a call may be sent again, the canonical encoder — and its expected strings were produced by the TypeScript implementation rather than written from the specification, so changing either encoder fails one of the two suites. Everything else is interop: a real TypeScript client against a real hub, which proves the two speak and cannot reach a pure function.
 
 `packages/signalr/src/Interop.test.ts` drives a real TypeScript `RpcClient` against the real hub over both hub protocols. `TestHost` doubles as the C# client smoke test:
 
@@ -293,4 +335,6 @@ Nothing in the TypeScript component work depends on this. Snapshots ride as opaq
 
 **`mr-method` and `mr-event` share one slot in the signed canonical form.** Both implementations collapse them, so relabelling a signed event as a method keeps the signature valid and the frame is then dropped for want of a handler. The effect is suppression, which a hostile broker can achieve by discarding the frame anyway — but it is a genuine slot collision, and fixing it is a change to both languages rather than to this package.
 
-Method semantics are not declared, so the idempotency store is consulted whenever a call carries a key rather than only for methods marked non-repeatable — the caller sending a key is taken as the request. Introspection (`describe()`) is not implemented either.
+Method semantics are not declared **on a served method**, so the idempotency store is consulted whenever a call carries a key rather than only for methods marked non-repeatable — the caller sending a key is taken as the request. `RpcMethodSemantics` now exists as a *caller's* statement, which is what `SourceRpc.Query` retries on; nothing transmits or serves it. Introspection (`describe()`) is not implemented either.
+
+**A lost link does not fail the calls that were in flight.** The TypeScript client fails them the moment the link drops, and says which of the two things happened: `TransportError` for a request that never left, `UnknownOutcome` for one that did. Here there is no disconnection signal at all — `ISourceRpcTransport` has `Connected` and no event — so a call whose link went waits out its whole deadline and is then reported `Timeout`. The classification is right, because `Timeout` is also *may have run*; the latency is not, and on a thirty-second default that is thirty seconds of an operator watching a spinner over a command whose outcome is already unknowable. Closing it means an event on the transport contract, which three bindings implement.
