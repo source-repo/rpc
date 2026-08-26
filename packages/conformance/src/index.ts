@@ -316,6 +316,27 @@ export type WriteStep =
     | { readonly act: 'expect'; readonly row: { readonly [field: string]: unknown } }
     /** That the row is not there at all. */
     | { readonly act: 'gone' }
+    /**
+     * Remember the **resource** stamp as it stands now, so a later step can say whether it moved.
+     *
+     * A different thing from the row stamp every other step here is about, and the difference is the
+     * point: a row stamp names one row and is what a precondition compares, while a resource stamp
+     * names the state of the whole collection as far as writes this node served are concerned. It is
+     * what lets a caching reader know its page of fifty is still the page of fifty it fetched -
+     * which the component's own revision cannot say for a declared resource, because these nodes
+     * move that on **reads**.
+     */
+    | { readonly act: 'note' }
+    /**
+     * Whether the resource stamp has moved since it was noted.
+     *
+     * The whole column, in one word. A node whose stamp does not move when the data moves is worse
+     * than one publishing no stamp at all - a reader believes it and stops asking - and a node whose
+     * stamp moves when nothing happened has turned a cache back into a poll.
+     */
+    | { readonly act: 'stamp'; readonly moved: boolean }
+    /** Ask for a page, which must leave the resource stamp exactly where it was. */
+    | { readonly act: 'read' }
 
 export interface WriteQuestion {
     readonly asks: string
@@ -332,6 +353,13 @@ export interface WriteQuestion {
  * The questions, in the order a suite runs them. Each is independent: a suite rebuilds the fixture
  * between them, because a question that depended on the one before it would fail in a way that named
  * the wrong question.
+ *
+ * The **resource stamp** steps are the exception worth stating, because they are not about the
+ * fixture at all: `note` and `stamp` compare a node's own running counter, which no amount of
+ * rebuilding rows resets. That is why they are always written as note-then-compare within one
+ * question rather than against any absolute value - and why a backend that publishes no resource
+ * stamp must **skip** these rather than read an absent one as unchanged, which would pass for the
+ * wrong reason.
  */
 export const WRITE_QUESTIONS: readonly WriteQuestion[] = [
     {
@@ -414,6 +442,45 @@ export const WRITE_QUESTIONS: readonly WriteQuestion[] = [
             { act: 'expect', row: { label: 'North works' } }
         ],
         because: 'nothing proves an id is the row’s identity rather than a column of that name on a table where the two coincide'
+    },
+    {
+        asks: 'a write moves the resource stamp and a read leaves it alone',
+        collection: 'customers',
+        id: '1',
+        steps: [
+            { act: 'note' },
+            { act: 'read' },
+            { act: 'stamp', moved: false },
+            { act: 'update', patch: { city: 'Hamburg' }, using: 'fresh', answers: 'ok' },
+            { act: 'stamp', moved: true }
+        ],
+        because: 'a stamp that does not move when the data moves is worse than none, and one that moves on a read is a poll wearing a cache'
+    },
+    {
+        asks: 'a change that was refused moves the resource stamp no more than a read does',
+        collection: 'customers',
+        id: '2',
+        steps: [
+            { act: 'note' },
+            { act: 'update', patch: { city: 'Lund' }, using: 'other', answers: 'conflict' },
+            { act: 'stamp', moved: false },
+            { act: 'expect', row: { name: 'borg', city: null, balance: 3.0 } }
+        ],
+        because: 'a conflict is a change that did not happen, and telling every reader to discard its pages over one is how a precondition becomes a traffic source'
+    },
+    {
+        asks: 'a removal moves the resource stamp like any other change',
+        collection: 'customers',
+        id: '2',
+        steps: [
+            { act: 'note' },
+            { act: 'delete', using: 'fresh', answers: 'ok' },
+            { act: 'stamp', moved: true },
+            { act: 'note' },
+            { act: 'delete', using: 'held', answers: 'missing' },
+            { act: 'stamp', moved: false }
+        ],
+        because: 'a row that was already gone is not a second removal, and a `missing` outcome changed nothing for anybody to re-read'
     },
     {
         asks: 'a verb the rule does not offer is refused whatever the stamp says',

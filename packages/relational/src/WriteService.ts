@@ -9,6 +9,7 @@ import {
     type RpcWriteOutcome,
     type RpcWritePermissions,
     type RpcWriteVerb,
+    type RpcResourceStamps,
     type RpcWritableResource
 } from '@source-repo/rpc'
 import { sql, type Kysely, type SqlBool, type Transaction } from 'kysely'
@@ -67,6 +68,14 @@ export interface RelationalWriteOptions {
      * rule refused rather than merely unserved, and says so in `props.refused`.
      */
     readonly catalogue?: CatalogueOptions
+    /**
+     * Where a resource's stamp is kept, **shared with this node's read service**.
+     *
+     * This is the half that makes a stamp mean anything: every table the rules make writable is
+     * claimed here, and every write that lands moves it. Without this the read service publishes no
+     * stamps at all, which is the honest answer for a node that cannot say when its data changed.
+     */
+    readonly stamps?: RpcResourceStamps
 }
 
 export interface RelationalWriteProps {
@@ -118,6 +127,9 @@ export class RelationalWriteService extends RpcComponent<RelationalWriteProps, R
     private readonly permissions?: RpcWritePermissions
     private catalogue: Catalogue = { tables: [], unserved: [], byName: new Map() }
     private writes: ResolvedWrites = { writable: new Map(), refused: [] }
+    /** The catalogue read in flight, so a slower one cannot land on top of a newer one. */
+    private reading: Promise<unknown> = Promise.resolve()
+    private readonly stamps?: RpcResourceStamps
 
     constructor(options: RelationalWriteOptions) {
         const flavour = typeof options.flavour === 'string' ? flavours[options.flavour] : options.flavour
@@ -132,6 +144,7 @@ export class RelationalWriteService extends RpcComponent<RelationalWriteProps, R
         // than being read as granting nothing - the judgement `validateAiGrants` already makes about
         // a security artifact, and this is one.
         this.permissions = readWritePermissions(options.writes)
+        this.stamps = options.stamps
     }
 
     /**
@@ -155,15 +168,32 @@ export class RelationalWriteService extends RpcComponent<RelationalWriteProps, R
      */
     @rpc({ semantics: 'idempotent-command', effect: 'program' })
     async refresh(): Promise<{ writable: number; refused: readonly RpcRefusedWrite[] }> {
-        this.catalogue = await readCatalogue(this.db, this.flavour, this.catalogueOptions)
-        this.writes = resolveWrites(this.catalogue, this.permissions)
-        componentHost(this).replaceProps({
-            flavour: this.flavour.name,
-            writable: this.writes.writable.size,
-            refused: this.writes.refused,
-            locking: this.flavour.rowLock
+        return this.serialised(async () => {
+            this.catalogue = await readCatalogue(this.db, this.flavour, this.catalogueOptions)
+            this.writes = resolveWrites(this.catalogue, this.permissions)
+            // Claimed here rather than on the first write, so a table's stamp is in every answer from
+            // the moment the node is up. A stamp that appeared the first time somebody wrote would be
+            // absent exactly while a reader was building the belief that this resource has none.
+            for (const table of this.writes.writable.keys()) this.stamps?.claim([table])
+            componentHost(this).replaceProps({
+                flavour: this.flavour.name,
+                writable: this.writes.writable.size,
+                refused: this.writes.refused,
+                locking: this.flavour.rowLock
+            })
+            return { writable: this.writes.writable.size, refused: this.writes.refused }
         })
-        return { writable: this.writes.writable.size, refused: this.writes.refused }
+    }
+
+    /**
+     * Serialised for the reason the read service gives at length: two callers inside a refresh at
+     * once make it last-finished wins, so a slow read can install a catalogue older than one that
+     * already landed - which here would silently narrow what this node is permitted to write.
+     */
+    private serialised<T>(read: () => Promise<T>): Promise<T> {
+        const mine = this.reading.then(read, read)
+        this.reading = mine.catch(() => undefined)
+        return mine
     }
 
     /**
@@ -248,6 +278,10 @@ export class RelationalWriteService extends RpcComponent<RelationalWriteProps, R
                 return { id, stamp: written ? await this.stampOf(resolved, id, written) : undefined }
             })
             this.setState((previous) => ({ created: previous.created + 1, lastWriteMs: Date.now() - began }))
+            // After the commit, for the same reason the counter is: a transaction that fails throws
+            // out of here, and a resource stamp moved in the callback would have told every caching
+            // reader to discard a page over a row that was rolled back.
+            this.stamps?.moved([resolved.table.name])
             return { status: 'ok' as const, id: made.id, ...(made.stamp !== undefined ? { stamp: made.stamp } : {}) }
         })
     }
@@ -330,6 +364,11 @@ export class RelationalWriteService extends RpcComponent<RelationalWriteProps, R
         // between a number that says what happened and one that says what was attempted: a commit
         // that fails throws out here, and a counter bumped in the callback would already have
         // recorded the write that was rolled back.
+        // Only on `ok`, and that is the sharp edge of the whole feature: a conflict is a change that
+        // did not happen, and a `missing` is a row that was not there. Moving the stamp for either
+        // would tell every caching reader to throw away a page that is still perfectly good - which
+        // is how a resource stamp turns into a poll, one refused precondition at a time.
+        if (outcome.status === 'ok') this.stamps?.moved([resolved.table.name])
         this.setState((previous) => ({
             ...(outcome.status === 'ok' ? { [counter]: (previous[counter] as number) + 1 } : {}),
             ...(outcome.status === 'missing' ? { missing: previous.missing + 1 } : {}),

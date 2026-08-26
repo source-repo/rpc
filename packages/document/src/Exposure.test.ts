@@ -135,7 +135,11 @@ test('a sampled shape is checked against the documents it was inferred from', as
         t.pass('no MongoDB reachable, skipped')
         return
     }
-    const held = t.context.held!
+    // **Its own database, not the shared one.** This test adds a collection, and the test beside it
+    // asserts exactly which collections the node serves - two things ava runs concurrently, and a
+    // race with no fixed answer: whichever ran second was right about a different database than the
+    // one it was looking at. Cheap to isolate, since a fixture is already one database per name.
+    const held = await fixture(`${run}drift`)
 
     // The check this package needs more than the SQL one does. A column type is a statement the
     // database makes about every row it will ever hold; a sampled shape is evidence about the
@@ -159,7 +163,7 @@ test('a sampled shape is checked against the documents it was inferred from', as
     t.teardown(async () => {
         await client.close()
         await server.close()
-        await held.db.collection('drifting').drop().catch(() => undefined)
+        await held.close()
     })
     const proxy = await client.proxy<DataProxy>('drifted')
 

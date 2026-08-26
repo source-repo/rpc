@@ -1,6 +1,6 @@
 import test from 'ava'
 import { pathsOverlap, revisionGoverns, rpcComponentKey, rpcPeerKey, rpcQueryKey } from './Key.js'
-import { freshnessOf, supersedes } from './Freshness.js'
+import { freshnessOf, sameResourceState, supersedes } from './Freshness.js'
 import { isTerminalRefusal, repeatable, rpcQueryOptions, RpcDeadlinePassed } from './Options.js'
 
 /**
@@ -92,6 +92,18 @@ test('a late answer carrying an older revision does not supersede what is held',
     t.true(supersedes({ epoch: 'e1', revision: 12 }, { epoch: 'e1', revision: 12 }), 'the same revision twice is the same data')
     t.false(supersedes({ epoch: 'e1', revision: 11 }, { epoch: 'e1', revision: 12 }))
     t.true(supersedes({ epoch: 'e2', revision: 0 }, { epoch: 'e1', revision: 12 }), 'a restart is the newest thing there is')
+})
+
+test('an absent resource stamp is never read as unchanged', (t) => {
+    // The one way a pager could be told the set held still when nobody said so. A stamp exists only
+    // for a resource some writer on that node claimed, so absent is the ordinary case rather than
+    // the exceptional one - a record in the snapshot has the revision instead, and a read-only table
+    // has nobody who could move a stamp.
+    t.is(sameResourceState({}, {}), undefined)
+    t.is(sameResourceState({ stamp: 'a.1' }, {}), undefined)
+    t.is(sameResourceState({}, { stamp: 'a.1' }), undefined)
+    t.true(sameResourceState({ stamp: 'a.1' }, { stamp: 'a.1' }))
+    t.false(sameResourceState({ stamp: 'a.1' }, { stamp: 'a.2' }))
 })
 
 test('two paths overlap when one reaches into the other', (t) => {

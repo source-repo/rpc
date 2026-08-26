@@ -78,6 +78,8 @@ A path into `props` or `state` is *in* the snapshot, so the revision moving mean
 
 A **restart** is the exception, and it is the right way round: a new epoch drops the declared resources too, because a component that came back may have reconnected to a different database.
 
+What a store-backed node *can* say about a declared resource is `stamp`, on the answer itself: two answers carrying the same one describe the same state, as far as writes that node served are concerned. `sameResourceState(a, b)` compares two of them and answers `undefined` where either node does not speak for its resource — which is the question offset paging cannot otherwise ask, since a row inserted between page one and page two renumbers everything below it.
+
 ## License
 
 MIT

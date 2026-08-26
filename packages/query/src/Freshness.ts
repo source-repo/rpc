@@ -90,3 +90,29 @@ export const freshnessOf = (answer: RpcAnsweredAt, channel: RpcChannelAt | undef
  */
 export const supersedes = (arriving: RpcAnsweredAt, held: RpcAnsweredAt | undefined): boolean =>
     !held || arriving.epoch !== held.epoch || arriving.revision >= held.revision
+
+/**
+ * Whether two answers describe the same state of a resource - the question offset paging cannot
+ * otherwise ask.
+ *
+ * A pager turning from page one to page two is holding two answers to two different questions, and
+ * on every backend there is a hazard between them: a row inserted in the meantime renumbers
+ * everything below it, so page two can repeat a row page one already showed or skip one entirely.
+ * The component's epoch and revision say nothing about it - they are the *component's*, and the
+ * store-backed nodes move the revision on reads.
+ *
+ * `stamp` is what can answer it, and only within its own limits: **as far as writes this node
+ * served are concerned**. Two answers carrying the same stamp are pages of the same set. Two
+ * carrying different stamps are certainly not.
+ *
+ * Three-valued, and the third value is the whole reason this is a function rather than a comparison
+ * written at the call site. `undefined` means *this node does not speak for that resource* - it has
+ * no writer, or it is a record in the snapshot with a revision instead - and reading an absent stamp
+ * as "unchanged" is the one way a pager can be told the set held still when nobody said so.
+ *
+ * It cannot see a database changed by anything other than this node: another service, a scheduled
+ * job, a person at a SQL prompt. A `true` here means *nothing this node did moved it*, which is
+ * weaker than *nothing moved it* and must be read that way.
+ */
+export const sameResourceState = (a: { readonly stamp?: string }, b: { readonly stamp?: string }): boolean | undefined =>
+    a.stamp === undefined || b.stamp === undefined ? undefined : a.stamp === b.stamp

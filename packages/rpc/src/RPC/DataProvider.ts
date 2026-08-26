@@ -60,6 +60,7 @@ export interface RpcGetManyResult extends RpcDataTiming {
     readonly data: readonly unknown[]
     readonly epoch: string
     readonly revision: number
+    readonly stamp?: string
 }
 
 /**
@@ -223,6 +224,25 @@ export interface RpcGetListResult extends RpcDataTiming {
     /** Which epoch and revision this page was drawn from, so a caller can tell a restart from an update. */
     readonly epoch: string
     readonly revision: number
+    /**
+     * A name for the state of the whole resource, where the node can speak for one.
+     *
+     * Two answers carrying the same stamp describe the same state, as far as **writes this node
+     * served** are concerned. That qualification is the whole of it and is not a caveat to be
+     * skimmed: a table changed by another service, a scheduled job or a person at a SQL prompt moves
+     * underneath this without it noticing, so a caller must read a matching stamp as *nothing I did
+     * changed it* rather than as *nothing changed it*.
+     *
+     * **Absent means the node does not speak for this resource**, which is the ordinary case: a
+     * record in `props` or `state` has the component's own revision instead and needs nothing here,
+     * and a read-only table has nobody who could move a stamp. Absent is deliberately the default,
+     * because a stamp that does not move when the data moves is worse than no stamp at all.
+     *
+     * **Not ordered.** Two stamps are equal or they are not; neither is newer. See
+     * `RpcResourceStamps`, and note what the epoch and revision above still do *not* cover for a
+     * declared resource - they are the component's, and the store-backed nodes move them on reads.
+     */
+    readonly stamp?: string
 }
 
 /**

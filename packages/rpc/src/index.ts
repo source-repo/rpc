@@ -42,6 +42,8 @@ export * from './RPC/Snapshots.js'
 // stamp, the projection comparison and the `$data` cache key. See RPC/Canonical.ts.
 export * from './RPC/Canonical.js'
 export * from './RPC/DataProvider.js'
+// A name for the state of a whole resource, for the nodes that can honestly move one.
+export * from './RPC/ResourceStamps.js'
 // The words a store-backed node accepts writes with, and no verb that performs one: there is no
 // `$write` beside `$data`, because a write is a method call. See RPC/DataWrites.ts.
 export * from './RPC/DataWrites.js'

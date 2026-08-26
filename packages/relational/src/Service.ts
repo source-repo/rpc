@@ -12,7 +12,8 @@ import {
     type RpcGetListResult,
     type RpcGetManyParams,
     type RpcGetManyReferenceParams,
-    type RpcGetManyResult
+    type RpcGetManyResult,
+    type RpcResourceStamps
 } from '@source-repo/rpc'
 import { sql, type Kysely, type SqlBool } from 'kysely'
 import { readCatalogue, resourceOf, wireRow, type Catalogue, type CatalogueOptions, type TableInfo, type UnservedTable } from './Catalogue.js'
@@ -56,6 +57,17 @@ export interface RelationalOptions {
      * its own.
      */
     readonly count?: boolean
+    /**
+     * Where a resource's stamp is kept, **shared with this node's write service**.
+     *
+     * Without it every answer carries no stamp, which is the correct default: a stamp names the
+     * state of a resource as far as writes this node served are concerned, and a node with no write
+     * service has served none. Handing it to only one of the two is safe rather than subtly wrong -
+     * see `RpcResourceStamps`, where a stamp exists only for a resource a *writer* claimed, so a
+     * read service given a registry nobody writes into publishes nothing rather than publishing a
+     * number that never moves.
+     */
+    readonly stamps?: RpcResourceStamps
 }
 
 export interface RelationalProps {
@@ -88,8 +100,11 @@ export class RelationalService extends RpcComponent<RelationalProps, RelationalS
     private readonly flavour: SqlFlavour
     private readonly catalogueOptions: CatalogueOptions
     private readonly counts: boolean
+    private readonly stamps?: RpcResourceStamps
     private catalogue: Catalogue = { tables: [], unserved: [], byName: new Map() }
     private resources: readonly RpcDataResource[] = []
+    /** The catalogue read in flight, so a slower one cannot land on top of a newer one. */
+    private reading: Promise<unknown> = Promise.resolve()
 
     constructor(options: RelationalOptions) {
         const flavour = typeof options.flavour === 'string' ? flavours[options.flavour] : options.flavour
@@ -98,6 +113,7 @@ export class RelationalService extends RpcComponent<RelationalProps, RelationalS
         this.flavour = flavour
         this.catalogueOptions = options.catalogue ?? {}
         this.counts = options.count ?? true
+        this.stamps = options.stamps
     }
 
     /**
@@ -110,14 +126,36 @@ export class RelationalService extends RpcComponent<RelationalProps, RelationalS
      */
     @rpc({ semantics: 'idempotent-command' })
     async refresh(): Promise<{ resources: number; unserved: readonly UnservedTable[] }> {
-        this.catalogue = await readCatalogue(this.db, this.flavour, this.catalogueOptions)
-        this.resources = this.catalogue.tables.map(resourceOf)
-        componentHost(this).replaceProps({
-            flavour: this.flavour.name,
-            resources: this.resources.length,
-            unserved: this.catalogue.unserved
+        return this.serialised(async () => {
+            this.catalogue = await readCatalogue(this.db, this.flavour, this.catalogueOptions)
+            this.resources = this.catalogue.tables.map(resourceOf)
+            componentHost(this).replaceProps({
+                flavour: this.flavour.name,
+                resources: this.resources.length,
+                unserved: this.catalogue.unserved
+            })
+            return { resources: this.resources.length, unserved: this.catalogue.unserved }
         })
-        return { resources: this.resources.length, unserved: this.catalogue.unserved }
+    }
+
+    /**
+     * One at a time, and that is not tidiness.
+     *
+     * `refresh()` is an `@rpc` method on a `parallel` service, so two callers can be inside it at
+     * once - and `this.catalogue = await readCatalogue(...)` is last-**finished** wins rather than
+     * last-started. A read that began before a migration can land after one that began *after* it,
+     * installing a catalogue missing exactly the thing somebody refreshed to see. Not hypothetical:
+     * it is what made a suite here flake, where concurrent tests each add a collection, refresh, and
+     * drop it, and one of them would find the collection it had just added absent.
+     *
+     * Serialising costs a queued caller the time of the read in front of it and gives them the
+     * answer they asked for. The tail is caught so one failed read does not poison every refresh
+     * after it - the caller whose read failed still sees its own rejection.
+     */
+    private serialised<T>(read: () => Promise<T>): Promise<T> {
+        const mine = this.reading.then(read, read)
+        this.reading = mine.catch(() => undefined)
+        return mine
     }
 
     /** What is served and what is not, in one answer, for a console or a script that is diagnosing. */
@@ -231,7 +269,7 @@ export class RelationalService extends RpcComponent<RelationalProps, RelationalS
             hasMore,
             queryMs,
             ...(countMs !== undefined ? { countMs } : {}),
-            ...this.stamp()
+            ...this.stamp(table)
         }
     }
 
@@ -257,21 +295,29 @@ export class RelationalService extends RpcComponent<RelationalProps, RelationalS
         return {
             ids,
             data: ids.map((given) => wireRow(table, found.get(given)!)),
-            ...this.stamp()
+            ...this.stamp(table)
         }
     }
 
     /**
      * Where the answer came from, taken from this component's own snapshot.
      *
-     * Worth reading for what it does *not* say: an epoch here means this peer restarted, not that
-     * the data changed. A table being written to underneath a pager renumbers rows between one page
-     * and the next, and nothing in this stamp will report that - offset paging has that property on
-     * every backend, and saying so plainly is better than a number that looks like it covers it.
+     * Worth reading for what the epoch and revision do *not* say: an epoch here means this peer
+     * restarted, not that the data changed, and the revision beside it moves on **reads** - every
+     * request bumps `state.requests`. A table being written to underneath a pager renumbers rows
+     * between one page and the next, and neither number will report that; offset paging has that
+     * property on every backend, and saying so plainly is better than a number that looks like it
+     * covers it.
+     *
+     * `stamp` is the one that speaks about the data, and only about what this node did to it.
      */
-    private stamp(): { epoch: string; revision: number } {
+    private stamp(table: TableInfo): { epoch: string; revision: number; stamp?: string } {
         const snapshot = componentSnapshot(this)
-        return { epoch: snapshot.epoch, revision: snapshot.revision }
+        // And the part that does say the data changed, where this node is in a position to know.
+        // Absent unless a writer on this node claimed the table, because a stamp that does not move
+        // when the table moves is worse than none.
+        const stamp = this.stamps?.of([table.name])
+        return { epoch: snapshot.epoch, revision: snapshot.revision, ...(stamp !== undefined ? { stamp } : {}) }
     }
 }
 

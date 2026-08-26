@@ -362,6 +362,24 @@ watch.getSnapshot().freshness // 'current' | 'possibly-changed' | 'unknown'
 
 It is not a browser package. `@tanstack/query-core` is framework-agnostic and dependency-free, so two Node services pulling from a third get the same dedup, the same budget arithmetic and the same confirmed-current, with `useSyncExternalStore` replaced by whatever they already have.
 
+### What a store-backed node can say about its own data
+
+A declared resource gets `unknown`, and that is honest rather than final. `RpcResourceStamps` is the beginning of an answer for it: a node that serves reads *and* writes shares one registry between the two halves, the writer claims what it may write, and every write that lands moves that resource's stamp. Answers then carry it:
+
+```typescript
+const stamps = new RpcResourceStamps()
+await exposeRelational(server, 'sql', { db, flavour: 'postgres', stamps })
+await exposeRelationalWrites(server, 'sql.write', { db, flavour: 'postgres', writes, stamps })
+```
+
+**Read what it says exactly.** Two answers carrying the same stamp describe the same state of that resource, *as far as writes this node served are concerned* — so a matching stamp means **nothing I did changed it**, never *nothing changed it*. A table moved by another service, a scheduled job or a person at a SQL prompt goes past without it noticing. It is also not ordered: two stamps are equal or they are not, and neither is newer.
+
+**A stamp exists only for a resource a writer claimed**, and that is structural rather than conventional. A read-only table has nobody who could move one, and a deployment that hands the registry to its read service and forgets the write service gets *no stamps at all* rather than a set that never moves — which is the failure that matters, because a node publishing a stamp that stays put while the database moves is worse than one publishing none. A refused write moves nothing either: a conflict is a change that did not happen, and telling every reader to discard its pages over one is how a precondition becomes a traffic source.
+
+The use it already has is the question offset paging cannot otherwise ask. Turning from page one to page two is two answers to two different questions, and a row inserted between them renumbers everything below — so page two can repeat a row or skip one. `sameResourceState(pageOne, pageTwo)` answers it, three-valued, with `undefined` for *this node does not speak for that resource*.
+
+`packages/conformance` asks both halves of it — does a write move the stamp, and does a read leave it alone — of SQLite, Postgres, MySQL and Mongo alike.
+
 ## Publishing bounds
 
 Expose options bound what the network hears — local state always changes immediately:

@@ -10,7 +10,7 @@ import {
     type ConformanceCollection,
     type WriteEnds
 } from '@source-repo/conformance'
-import { rowStamp, type RpcGetListParams, type RpcGetListResult, type RpcWritePermissions } from '@source-repo/rpc'
+import { rowStamp, RpcResourceStamps, type RpcGetListParams, type RpcGetListResult, type RpcGetManyResult, type RpcWritePermissions } from '@source-repo/rpc'
 import anyTest, { type TestFn } from 'ava'
 import { Kysely, MysqlDialect, PostgresDialect, sql } from 'kysely'
 import { createPool } from 'mysql2'
@@ -124,6 +124,15 @@ const WRITE_RULES = {
     [WRITTEN.sites]: WRITE_PERMISSIONS.sites
 } as unknown as RpcWritePermissions
 
+/**
+ * The resource stamp off an answer, whichever verb produced it.
+ *
+ * Read through a helper rather than inline, so the one place a suite could accidentally read an
+ * *absent* stamp as "unchanged" is the one place it is written - which is exactly how this column
+ * would pass for the wrong reason on a node that publishes nothing.
+ */
+const resourceStampOf = (answer: RpcGetListResult | RpcGetManyResult | unknown) => (answer as RpcGetListResult).stamp
+
 /** A row of the same collection that the question is not about, for the "somebody else's stamp" step. */
 const OTHER: { readonly [collection in ConformanceCollection]: string } = { customers: '3', orders: '11', sites: 'south' }
 
@@ -146,11 +155,16 @@ const raise = async (backend: Backend) => {
     await db.insertInto(TABLE.customers).values(CUSTOMERS as unknown as Record<string, unknown>[]).execute()
     await db.insertInto(TABLE.orders).values(ORDERS as unknown as Record<string, unknown>[]).execute()
     await db.insertInto(TABLE.sites).values(SITES as unknown as Record<string, unknown>[]).execute()
-    const service = new RelationalService({ db, flavour: backend.flavour, catalogue: { tables: (name) => name.endsWith(run) } })
+    // One registry handed to both halves, which is the whole arrangement: the writer claims what it
+    // may write and moves a stamp when a write lands, and the reader publishes whatever the writer
+    // claimed. Given to only one of the two, a node publishes no stamps rather than stamps that
+    // never move - which is the failure this cannot afford to make quiet.
+    const stamps = new RpcResourceStamps(`${backend.name}-${run}`)
+    const service = new RelationalService({ db, flavour: backend.flavour, catalogue: { tables: (name) => name.endsWith(run) }, stamps })
     await service.refresh()
     await db.insertInto(WRITTEN.customers).values(CUSTOMERS as unknown as Record<string, unknown>[]).execute()
     await db.insertInto(WRITTEN.sites).values(SITES as unknown as Record<string, unknown>[]).execute()
-    const writer = new RelationalWriteService({ db, flavour: backend.flavour, writes: WRITE_RULES, catalogue: { tables: (name) => name.endsWith(run) } })
+    const writer = new RelationalWriteService({ db, flavour: backend.flavour, writes: WRITE_RULES, catalogue: { tables: (name) => name.endsWith(run) }, stamps })
     await writer.refresh()
     return { backend, service, writer, db }
 }
@@ -273,7 +287,7 @@ test('the row a backend publishes is the row it answers with', async (t) => {
 // rolling a row back while another counts it is a race with no fixed answer. Serial tests run
 // one at a time and before the concurrent ones, so nothing here overlaps anything.
 test.serial('every backend refuses the same changes for the same reasons', async (t) => {
-    for (const { backend, writer, db } of t.context.live)
+    for (const { backend, service, writer, db } of t.context.live)
         for (const question of WRITE_QUESTIONS) {
             const excepted = question.except?.[backend.name]
             if (excepted) {
@@ -290,7 +304,25 @@ test.serial('every backend refuses the same changes for the same reasons', async
             const held = opening.status === 'ok' ? opening.stamp : ''
             const elsewhere = await writer.getOne(table, OTHER[question.collection])
 
+            // The resource stamp as it stood when the question last noted it. Compared rather than
+            // asserted absolutely, because it is the node's own running counter and no amount of
+            // rebuilding rows between questions resets it.
+            let noted: string | undefined
             for (const step of question.steps) {
+                if (step.act === 'note') {
+                    noted = resourceStampOf(await service.dataRequest('getList', [table], { pagination: { page: 0, pageSize: 1 } }))
+                    t.truthy(noted, `${where}: this node publishes a resource stamp for a table it can write`)
+                    continue
+                }
+                if (step.act === 'read') {
+                    await service.dataRequest('getList', [table], { pagination: { page: 0, pageSize: 50 } })
+                    continue
+                }
+                if (step.act === 'stamp') {
+                    const now = resourceStampOf(await service.dataRequest('getList', [table], { pagination: { page: 0, pageSize: 1 } }))
+                    t.is(now !== noted, step.moved, `${where}: the resource stamp ${step.moved ? 'moved' : 'did not move'}`)
+                    continue
+                }
                 if (step.act === 'expect') {
                     const row = await writer.getOne(table, question.id)
                     t.is(row.status, 'ok', `${where}: the row is still there`)

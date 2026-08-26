@@ -26,6 +26,28 @@ The line between the two libraries is worth stating, because it is the same line
 
 Every rule above has a regression test that was checked against a build with the rule removed.
 
+### A store-backed node can name the state of a whole resource
+
+The pull cache's freshness comes from the component's revision, and that deliberately says nothing about a **declared resource** — a table, a document collection, a queue — because those live behind the component and the shipped store-backed nodes move their revision on *reads*. `RpcResourceStamps` is the beginning of an answer for them: one registry shared between a node's read half and its write half, the writer claims what it may write, and every write that lands moves that resource's stamp. `getList` and `getMany` carry it as an optional `stamp`.
+
+**Read it exactly.** Two answers carrying the same stamp describe the same state of that resource *as far as writes this node served are concerned* — so a match means **nothing I did changed it**, never *nothing changed it*. A table moved by another service, a scheduled job or a person at a SQL prompt goes past unseen. It is not ordered either: two stamps are equal or they are not, and neither is newer.
+
+**A stamp exists only for a resource a writer claimed**, and that is structural rather than conventional. A deployment that hands the registry to its read service and forgets the write service gets no stamps at all rather than a set that never moves — which is the failure that matters, since a node publishing a stamp that stays put while its database moves is worse than one publishing none. A refused write moves nothing: a conflict is a change that did not happen, and telling every reader to discard its pages over one is how a precondition becomes a traffic source.
+
+`packages/conformance` asks both halves of it — does a write move the stamp, does a read leave it alone — of SQLite, Postgres, MySQL and Mongo alike, and both halves were checked against builds that get them wrong. The use it already has is `sameResourceState(a, b)` in `@source-repo/query`: the question offset paging cannot otherwise ask, since a row inserted between page one and page two renumbers everything below it. Three-valued, with `undefined` for *this node does not speak for that resource* — reading an absent stamp as "unchanged" is the one way a pager can be told the set held still when nobody said so.
+
+`RPC_STAMP_VERSION` is unrelated and unchanged by this: a row stamp is a precondition over one row, and a resource stamp is a name for the state of a collection.
+
+### A concurrent `refresh()` could install an older catalogue than the one already in place
+
+`refresh()` on the relational and document nodes is an `@rpc` method on a `parallel` service, so two callers can be inside it at once — and `this.catalogue = await readCatalogue(...)` is last-**finished** wins rather than last-started. A read that began before a migration can land after one that began *after* it, installing a catalogue missing exactly the table somebody refreshed to see, on all four services.
+
+Found because it is what made `packages/document`'s own suite flake: three concurrent tests each add a collection, refresh, and drop it, and one of them would find the collection it had just added absent. Catalogue reads are now serialised per service, so the last one *started* is the last one installed, and one failed read does not poison the refreshes behind it.
+
+There is no dedicated regression test for it, and that is worth stating rather than glossing: forcing the interleaving needs a catalogue read that is slow on demand, and a test that cannot make the race happen would assert nothing while looking as though it did. The evidence is that the flake reproduced on every run before the change and on none of four after it.
+
+One genuine test-isolation bug surfaced with it and is fixed: two concurrent tests in `Exposure.test.ts` shared one database, where one added a collection and the other asserted exactly which collections the node served. A race with no fixed answer — whichever ran second was right about a different database than the one it was looking at.
+
 ### One encoder decides whether two values are the same value
 
 Three things had to answer that question and there were three answers, two of them `JSON.stringify` — which reports **key insertion order**, which nothing promises. A JSON column round-trips through a driver, a document store hands back BSON, and a caller builds an options object in whatever order its code reads; each of the three then failed differently and quietly. The row stamp reported a conflict on a row nobody touched. The projection comparison re-subscribed, spending a targeted snapshot to receive what it already had. And a cache key would miss, asking the plant again for a page it is holding.

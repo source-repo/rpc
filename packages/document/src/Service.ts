@@ -12,7 +12,8 @@ import {
     type RpcGetListResult,
     type RpcGetManyParams,
     type RpcGetManyReferenceParams,
-    type RpcGetManyResult
+    type RpcGetManyResult,
+    type RpcResourceStamps
 } from '@source-repo/rpc'
 import type { Db, Document, Filter } from 'mongodb'
 import { idText, idValue, readCatalogue, resourceOf, wireDocument, type CollectionInfo, type DocumentCatalogue, type DocumentCatalogueOptions } from './Catalogue.js'
@@ -41,6 +42,15 @@ export interface DocumentOptions {
      * be seen. With this off, `total` is **absent** rather than zero and `hasMore` carries the pager.
      */
     readonly count?: boolean
+    /**
+     * Where a collection's stamp is kept, **shared with this node's write service**.
+     *
+     * The same arrangement the SQL node makes, for the same reason: a stamp names the state of a
+     * resource as far as writes this node served are concerned, so it exists only for a collection a
+     * writer claimed. A read service handed a registry nobody writes into publishes nothing, rather
+     * than publishing a token that never moves.
+     */
+    readonly stamps?: RpcResourceStamps
 }
 
 export interface DocumentProps {
@@ -68,14 +78,18 @@ export class DocumentService extends RpcComponent<DocumentProps, DocumentState> 
     private readonly db: Db
     private readonly catalogueOptions: DocumentCatalogueOptions
     private readonly counts: boolean
+    private readonly stamps?: RpcResourceStamps
     private catalogue: DocumentCatalogue = { collections: [], byName: new Map() }
     private resources: readonly RpcDataResource[] = []
+    /** The catalogue read in flight, so a slower one cannot land on top of a newer one. */
+    private reading: Promise<unknown> = Promise.resolve()
 
     constructor(options: DocumentOptions) {
         super({ resources: 0, shapes: [] }, { requests: 0, refusals: 0, failures: 0 })
         this.db = options.db
         this.catalogueOptions = options.catalogue ?? {}
         this.counts = options.count ?? true
+        this.stamps = options.stamps
     }
 
     /**
@@ -87,16 +101,38 @@ export class DocumentService extends RpcComponent<DocumentProps, DocumentState> 
      */
     @rpc({ semantics: 'idempotent-command' })
     async refresh(): Promise<{ resources: number; shapes: DocumentProps['shapes'] }> {
-        this.catalogue = await readCatalogue(this.db, this.catalogueOptions)
-        this.resources = this.catalogue.collections.map(resourceOf)
-        const shapes = this.catalogue.collections.map((collection) => ({
-            name: collection.name,
-            from: collection.shape,
-            sampled: collection.sampled,
-            id: collection.idKind
-        }))
-        componentHost(this).replaceProps({ resources: this.resources.length, shapes })
-        return { resources: this.resources.length, shapes }
+        return this.serialised(async () => {
+            this.catalogue = await readCatalogue(this.db, this.catalogueOptions)
+            this.resources = this.catalogue.collections.map(resourceOf)
+            const shapes = this.catalogue.collections.map((collection) => ({
+                name: collection.name,
+                from: collection.shape,
+                sampled: collection.sampled,
+                id: collection.idKind
+            }))
+            componentHost(this).replaceProps({ resources: this.resources.length, shapes })
+            return { resources: this.resources.length, shapes }
+        })
+    }
+
+    /**
+     * One at a time, and that is not tidiness.
+     *
+     * `refresh()` is an `@rpc` method on a `parallel` service, so two callers can be inside it at
+     * once - and `this.catalogue = await readCatalogue(...)` is last-**finished** wins rather than
+     * last-started. A read that began before a migration can land after one that began *after* it,
+     * installing a catalogue missing exactly the thing somebody refreshed to see. Not hypothetical:
+     * it is what made a suite here flake, where concurrent tests each add a collection, refresh, and
+     * drop it, and one of them would find the collection it had just added absent.
+     *
+     * Serialising costs a queued caller the time of the read in front of it and gives them the
+     * answer they asked for. The tail is caught so one failed read does not poison every refresh
+     * after it - the caller whose read failed still sees its own rejection.
+     */
+    private serialised<T>(read: () => Promise<T>): Promise<T> {
+        const mine = this.reading.then(read, read)
+        this.reading = mine.catch(() => undefined)
+        return mine
     }
 
     /** What is served, and where each shape came from - for a console or a script that is diagnosing. */
@@ -201,7 +237,7 @@ export class DocumentService extends RpcComponent<DocumentProps, DocumentState> 
             hasMore,
             queryMs,
             ...(countMs !== undefined ? { countMs } : {}),
-            ...this.stamp()
+            ...this.stamp(collection)
         }
     }
 
@@ -217,13 +253,23 @@ export class DocumentService extends RpcComponent<DocumentProps, DocumentState> 
         return {
             ids,
             data: ids.map((given) => wireDocument(found.get(given)!) as Record<string, unknown>),
-            ...this.stamp()
+            ...this.stamp(collection)
         }
     }
 
-    private stamp(): { epoch: string; revision: number } {
+    /**
+     * Where the answer came from.
+     *
+     * The epoch says this peer restarted, not that the data changed, and the revision beside it
+     * moves on **reads** - every request bumps `state.requests`. `stamp` is the one that speaks
+     * about the data, and only about what this node did to it: absent unless a writer here claimed
+     * the collection, because a stamp that does not move when the collection moves is worse than
+     * none at all.
+     */
+    private stamp(collection: CollectionInfo): { epoch: string; revision: number; stamp?: string } {
         const snapshot = componentSnapshot(this)
-        return { epoch: snapshot.epoch, revision: snapshot.revision }
+        const stamp = this.stamps?.of([collection.name])
+        return { epoch: snapshot.epoch, revision: snapshot.revision, ...(stamp !== undefined ? { stamp } : {}) }
     }
 }
 

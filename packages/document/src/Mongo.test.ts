@@ -1,5 +1,5 @@
 import { DATA_QUESTIONS, rowsAgainstDeclaration, stampedFields, WRITE_PERMISSIONS, WRITE_QUESTIONS, type ConformanceCollection, type WriteEnds } from '@source-repo/conformance'
-import { rowStamp, type RpcGetListParams, type RpcGetListResult, type RpcGetManyResult, type RpcWritePermissions } from '@source-repo/rpc'
+import { rowStamp, RpcResourceStamps, type RpcGetListParams, type RpcGetListResult, type RpcGetManyResult, type RpcWritePermissions } from '@source-repo/rpc'
 import anyTest, { type TestFn } from 'ava'
 import { randomUUID } from 'node:crypto'
 import { DocumentRefusal } from './Filter.js'
@@ -21,6 +21,15 @@ import { DocumentWriteService } from './WriteService.js'
 const run = randomUUID().replace(/-/g, '').slice(0, 10)
 
 /** A document of the same collection the question is not about, for the "somebody else's stamp" step. */
+/**
+ * The resource stamp off an answer, whichever verb produced it.
+ *
+ * Read through a helper rather than inline, so the one place a suite could accidentally read an
+ * *absent* stamp as "unchanged" is the one place it is written - which is exactly how this column
+ * would pass for the wrong reason on a node that publishes nothing.
+ */
+const resourceStampOf = (answer: RpcGetListResult | RpcGetManyResult | unknown) => (answer as RpcGetListResult).stamp
+
 const OTHER: { readonly [collection in ConformanceCollection]: string } = { customers: '3', orders: '11', sites: 'south' }
 
 interface Context {
@@ -289,14 +298,22 @@ test.serial('it refuses the same changes the SQL node refuses, for the same reas
         // before it would fail in a way that named the wrong question.
         const held = await fixture(`${run}w${WRITE_QUESTIONS.indexOf(question)}`)
         try {
+            // One registry handed to both halves, which is the whole arrangement: the writer claims
+            // what it may write and moves a stamp when a write lands, and the reader publishes
+            // whatever the writer claimed. Given to only one of the two, a node publishes no stamps
+            // rather than stamps that never move.
+            const stamps = new RpcResourceStamps(`mongo-${run}-${WRITE_QUESTIONS.indexOf(question)}`)
             const writer = new DocumentWriteService({
                 db: held.db,
                 writes: {
                     [held.name.customers]: WRITE_PERMISSIONS.customers,
                     [held.name.sites]: WRITE_PERMISSIONS.sites
-                } as unknown as RpcWritePermissions
+                } as unknown as RpcWritePermissions,
+                stamps
             })
             await writer.refresh()
+            const reader = new DocumentService({ db: held.db, stamps })
+            await reader.refresh()
 
             const collection = held.name[question.collection]
             const where = `${question.asks}${question.because ? ` - ${question.because}` : ''}`
@@ -307,7 +324,25 @@ test.serial('it refuses the same changes the SQL node refuses, for the same reas
             const started = opening.status === 'ok' ? opening.stamp : ''
             const elsewhere = await writer.getOne(collection, OTHER[question.collection])
 
+            // The resource stamp as it stood when the question last noted it. Compared rather than
+            // asserted absolutely, because it is the node's own running counter and rebuilding the
+            // fixture between questions does not reset it.
+            let noted: string | undefined
             for (const step of question.steps) {
+                if (step.act === 'note') {
+                    noted = resourceStampOf(await reader.dataRequest('getList', [collection], { pagination: { page: 0, pageSize: 1 } }))
+                    t.truthy(noted, `${where}: this node publishes a resource stamp for a collection it can write`)
+                    continue
+                }
+                if (step.act === 'read') {
+                    await reader.dataRequest('getList', [collection], { pagination: { page: 0, pageSize: 50 } })
+                    continue
+                }
+                if (step.act === 'stamp') {
+                    const now = resourceStampOf(await reader.dataRequest('getList', [collection], { pagination: { page: 0, pageSize: 1 } }))
+                    t.is(now !== noted, step.moved, `${where}: the resource stamp ${step.moved ? 'moved' : 'did not move'}`)
+                    continue
+                }
                 if (step.act === 'expect') {
                     const document = await writer.getOne(collection, question.id)
                     t.is(document.status, 'ok', `${where}: the document is still there`)

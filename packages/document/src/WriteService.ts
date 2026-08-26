@@ -9,6 +9,7 @@ import {
     type RpcWriteOutcome,
     type RpcWritePermissions,
     type RpcWriteVerb,
+    type RpcResourceStamps,
     type RpcWritableResource
 } from '@source-repo/rpc'
 import type { Db, Document, Filter, OptionalUnlessRequiredId } from 'mongodb'
@@ -62,6 +63,14 @@ export interface DocumentWriteOptions {
      * than merely unserved, and says so in `props.refused`.
      */
     readonly catalogue?: DocumentCatalogueOptions
+    /**
+     * Where a collection's stamp is kept, **shared with this node's read service**.
+     *
+     * The half that makes a stamp mean anything: every collection the rules make writable is claimed
+     * here, and every write that lands moves it. Without this the read service publishes no stamps
+     * at all, which is the honest answer for a node that cannot say when its data changed.
+     */
+    readonly stamps?: RpcResourceStamps
 }
 
 export interface DocumentWriteProps {
@@ -117,8 +126,11 @@ export class DocumentWriteService extends RpcComponent<DocumentWriteProps, Docum
     private readonly db: Db
     private readonly catalogueOptions: DocumentCatalogueOptions
     private readonly permissions?: RpcWritePermissions
+    private readonly stamps?: RpcResourceStamps
     private catalogue: DocumentCatalogue = { collections: [], byName: new Map() }
     private writes: ResolvedWrites = { writable: new Map(), refused: [] }
+    /** The catalogue read in flight, so a slower one cannot land on top of a newer one. */
+    private reading: Promise<unknown> = Promise.resolve()
 
     constructor(options: DocumentWriteOptions) {
         super({ writable: 0, refused: [], locking: 'guarded-filter' }, { created: 0, updated: 0, deleted: 0, conflicts: 0, missing: 0, refusals: 0, failures: 0 })
@@ -128,6 +140,7 @@ export class DocumentWriteService extends RpcComponent<DocumentWriteProps, Docum
         // than being read as granting nothing - the judgement `validateAiGrants` already makes about
         // a security artifact, and this is one.
         this.permissions = readWritePermissions(options.writes)
+        this.stamps = options.stamps
     }
 
     /**
@@ -155,10 +168,27 @@ export class DocumentWriteService extends RpcComponent<DocumentWriteProps, Docum
      */
     @rpc({ semantics: 'idempotent-command', effect: 'program' })
     async refresh(): Promise<{ writable: number; refused: readonly RpcRefusedWrite[] }> {
-        this.catalogue = await readCatalogue(this.db, this.catalogueOptions)
-        this.writes = resolveWrites(this.catalogue, this.permissions)
-        componentHost(this).replaceProps({ writable: this.writes.writable.size, refused: this.writes.refused, locking: 'guarded-filter' })
-        return { writable: this.writes.writable.size, refused: this.writes.refused }
+        return this.serialised(async () => {
+            this.catalogue = await readCatalogue(this.db, this.catalogueOptions)
+            this.writes = resolveWrites(this.catalogue, this.permissions)
+            // Claimed here rather than on the first write, so a collection's stamp is in every answer
+            // from the moment the node is up - absent until somebody wrote would be absent exactly while
+            // a reader was forming the belief that this resource has none.
+            for (const collection of this.writes.writable.keys()) this.stamps?.claim([collection])
+            componentHost(this).replaceProps({ writable: this.writes.writable.size, refused: this.writes.refused, locking: 'guarded-filter' })
+            return { writable: this.writes.writable.size, refused: this.writes.refused }
+        })
+    }
+
+    /**
+     * Serialised for the reason the read service gives at length: two callers inside a refresh at
+     * once make it last-finished wins, so a slow read can install a catalogue older than one that
+     * already landed - which here would silently narrow what this node is permitted to write.
+     */
+    private serialised<T>(read: () => Promise<T>): Promise<T> {
+        const mine = this.reading.then(read, read)
+        this.reading = mine.catch(() => undefined)
+        return mine
     }
 
     /**
@@ -239,6 +269,7 @@ export class DocumentWriteService extends RpcComponent<DocumentWriteProps, Docum
             // its precondition for no reason anybody can see.
             const written = await this.documentById(resolved, made.insertedId)
             this.setState((previous) => ({ created: previous.created + 1, lastWriteMs: Date.now() - began }))
+            this.stamps?.moved([resolved.collection.name])
             return { status: 'ok' as const, id, ...(written ? { stamp: await this.stampOf(resolved, id, written) } : {}) }
         })
     }
@@ -335,7 +366,13 @@ export class DocumentWriteService extends RpcComponent<DocumentWriteProps, Docum
         const current = await this.documentById(resolved, key)
         if (!current) return this.counted({ status: 'missing' }, began)
         if ((await this.stampOf(resolved, id, current)) !== expect) return this.counted({ status: 'conflict' }, began)
-        return this.counted(await act(current, key), began)
+        const outcome = await act(current, key)
+        // Only on `ok`, and it is the sharp edge of the whole feature: a conflict is a change that
+        // did not happen and a `missing` is a document that was not there. Moving the resource stamp
+        // for either would tell every caching reader to discard a page that is still perfectly good -
+        // which is how a resource stamp turns into a poll, one refused precondition at a time.
+        if (outcome.status === 'ok') this.stamps?.moved([resolved.collection.name])
+        return this.counted(outcome, began)
     }
 
     /**
