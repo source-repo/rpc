@@ -20,6 +20,10 @@ export * from './RPC/Snapshots.js'
 // Web only for the same reason Activity is: it touches `localStorage`, and the interface it
 // satisfies is injectable so a Node peer supplies its own.
 export * from './RPC/WebSnapshots.js'
+// One encoder for the three places that decide whether two values are the same value. In the web
+// build because two of the three are: the projection comparison a page's channel makes, and the
+// `$data` cache key `@source-repo/query` builds - which is a browser package before it is anything.
+export * from './RPC/Canonical.js'
 // The DataProvider verb, and `matchesFilter` with it. A page holds part of a set already - the
 // typed leaves it subscribes to - and filters those itself while the collection beside them is
 // filtered on the peer, so it needs the same matcher rather than a second version of it.

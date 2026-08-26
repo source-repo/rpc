@@ -1,3 +1,4 @@
+import { canonicalText } from './Canonical.js'
 import { TransportEvent } from './Core.js'
 import {
     componentSnapshotEvent,
@@ -627,7 +628,7 @@ class ComponentChannel {
 const sameProjection = (a: readonly RpcProjectionEntry[] | undefined, b: readonly RpcProjectionEntry[] | undefined) => {
     if (!a || !b) return a === b
     if (a.length !== b.length) return false
-    return a.every((entry, index) => JSON.stringify(entry) === JSON.stringify(b[index]))
+    return a.every((entry, index) => canonicalText(entry) === canonicalText(b[index]))
 }
 
 const describeProjection = (projection: readonly RpcProjectionEntry[] | undefined) =>

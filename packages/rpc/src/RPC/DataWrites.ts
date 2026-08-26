@@ -1,3 +1,4 @@
+import { canonicalValue } from './Canonical.js'
 import type { TypeNode } from './Schema.js'
 
 /**
@@ -142,44 +143,14 @@ export type RpcRowRead = { readonly status: 'ok'; readonly row: unknown; readonl
  * precondition rather than passing one. A caller holding a stamp across a node upgrade is told its
  * row changed, retries, and is right - the alternative is a version somebody has to remember to
  * check and a window where they did not.
- */
-export const RPC_STAMP_VERSION = 'sw1'
-
-/**
- * One value, as the stamp sees it.
  *
- * Tagged by kind rather than stringified, because `1` and `'1'` are different states of a column
- * and a digest that could not tell them apart would report no conflict across a type change. Dates
- * and byte arrays are given canonical forms rather than left to `JSON.stringify`, which turns the
- * first into an ISO string and the second into an object of numeric keys - both stable enough by
- * accident today and neither promised by anything.
- *
- * Objects are canonicalised with their keys **sorted**, which is the one that matters in practice:
- * a JSON column round-trips through a driver, and a document store hands back a `BSON` object, with
- * no promise whatsoever about key order between two reads. Digesting insertion order would report a
- * conflict on a row nobody touched, which is worse than useless - it is a precondition that fails
- * at random, and the first thing anybody does with one of those is stop sending it.
+ * `sw2` is the first time that has been exercised. The encoding moved to `Canonical.ts`, shared with
+ * the projection comparison and the `$data` cache key, and it took one rule with it: a key whose
+ * value is `undefined` is now omitted rather than digested as null. Which means a row holding a JSON
+ * column with an undefined-valued key stamps differently than it did - so the version moves too,
+ * because leaving `sw1` naming two encodings is the exact thing this exists to prevent.
  */
-const stampValue = (value: unknown): unknown => {
-    if (value === null || value === undefined) return ['n']
-    if (typeof value === 'boolean') return ['b', value]
-    if (typeof value === 'number') return ['d', Number.isFinite(value) ? value : String(value)]
-    if (typeof value === 'bigint') return ['i', value.toString()]
-    if (typeof value === 'string') return ['s', value]
-    if (value instanceof Date) return ['t', value.toISOString()]
-    if (value instanceof Uint8Array) return ['y', Array.from(value)]
-    if (Array.isArray(value)) return ['a', value.map(stampValue)]
-    if (typeof value === 'object')
-        return [
-            'o',
-            Object.keys(value as Record<string, unknown>)
-                .sort()
-                .map((key) => [key, stampValue((value as Record<string, unknown>)[key])])
-        ]
-    // A function or a symbol in a row is not a value a store handed back; digesting its description
-    // keeps this total rather than letting an unexpected shape throw inside a precondition.
-    return ['?', String(value)]
-}
+export const RPC_STAMP_VERSION = 'sw2'
 
 /**
  * What a stamp digests, before it is hashed. Exported so a suite can assert the *input* rather than
@@ -194,7 +165,7 @@ export const stampInput = (scope: string, id: string, fields: readonly (readonly
         // Sorted by field name rather than taken in the order the caller happened to iterate, so a
         // store that reorders its columns between two reads - or two stores describing the same
         // table - produce the same stamp for the same state.
-        [...fields].sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0)).map(([name, value]) => [name, stampValue(value)])
+        [...fields].sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0)).map(([name, value]) => [name, canonicalValue(value)])
     ])
 
 /**

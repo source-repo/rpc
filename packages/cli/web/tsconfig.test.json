@@ -1,0 +1,15 @@
+{
+    // The app's tests run under vitest's **node** environment - `panel.test.ts` stands up a real
+    // RpcServer on a port - so they load the library's Node entry point where the app loads its
+    // browser one. Two configs rather than one, because the difference is real rather than
+    // administrative: tsconfig.json checks the app against exactly what vite bundles, and this
+    // checks the tests against exactly what vitest loads. One config for both meant the app was
+    // being checked against a library entry point it never runs, which typechecks a Node-only
+    // export cleanly and then fails in the page.
+    "extends": "./tsconfig.json",
+    "compilerOptions": {
+        "customConditions": []
+    },
+    "exclude": [],
+    "include": ["src/**/*.test.ts"]
+}

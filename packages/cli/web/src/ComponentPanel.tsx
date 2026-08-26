@@ -1,8 +1,9 @@
 import { RefObject, useCallback, useEffect, useMemo, useState, useSyncExternalStore } from 'react'
-import { rpcComponent, type RpcComponentData, type RpcComponentLike, type RpcComponentStore, type RpcGetListParams, type RpcGetListResult, type RpcServer } from '@source-repo/rpc'
+import { rpcComponent, type RpcComponentData, type RpcComponentLike, type RpcComponentStore, type RpcServer } from '@source-repo/rpc'
+import type { RpcDataCache } from '@source-repo/query'
 import { staticSource, storeSource, type EditAffordance } from './ValueTree'
 import { ScopeTree } from './ScopeTree'
-import { ValueGrid, type FetchPage } from './ValueGrid'
+import { ValueGrid, type PageQuestion } from './ValueGrid'
 import { actionsFor, leavesUnder, scopeTree } from './scope'
 import type { DescribedAction, DescribedComponent, DescribedMethod, TypeNode } from './types'
 
@@ -42,9 +43,6 @@ import type { DescribedAction, DescribedComponent, DescribedMethod, TypeNode } f
  */
 
 type Store = RpcComponentStore<RpcComponentData, RpcComponentData>
-
-/** Just the DataProvider verb, so the panel needs no generic over the component's own class. */
-type DataProxy = { $data(method: 'getList', resource: readonly string[], params?: RpcGetListParams): Promise<RpcGetListResult> }
 
 /** How to call whatever claims a path: the method, and whether the path travels as an argument. */
 type Setter = { method: DescribedMethod; generic: boolean }
@@ -143,6 +141,7 @@ export const ComponentPanel = ({
     methods,
     types,
     server,
+    data,
     onSubscribed
 }: {
     peer: string
@@ -154,6 +153,8 @@ export const ComponentPanel = ({
     types?: { [name: string]: TypeNode }
     /** The page's own RpcServer - the peer this page is - read at observe time, like sendChat. */
     server: RefObject<RpcServer | null>
+    /** The page's one cache. Holds the answers, and decides whether a period tick asks anything. */
+    data: RpcDataCache
     /** The peer's observer count just changed, so a re-describe will show it moving. */
     onSubscribed?: () => void
 }) => {
@@ -164,8 +165,6 @@ export const ComponentPanel = ({
     const [pending, setPending] = useState<string | undefined>()
     const [failed, setFailed] = useState<{ path: string; message: string } | undefined>()
     const [period, setPeriod] = useState<number | undefined>(5000)
-    /** Bumped when a call settles, which is what makes the affected page refetch at once. */
-    const [settled, setSettled] = useState(0)
 
     const status = useChannelFact(store, statusOf, undefined)
 
@@ -206,6 +205,19 @@ export const ComponentPanel = ({
     // same implicitly, so switching peers cannot leak a subscription the server keeps serving.
     useEffect(() => () => void store?.close(), [store])
 
+    /**
+     * Hand the channel to the cache, so a page can be told it is *current* rather than given an age.
+     *
+     * The cache opens nothing itself, deliberately - subscribing to a whole snapshot in order to
+     * learn a revision would spend exactly what the pull half exists to save - so it takes the
+     * signal from the channel this panel already has. Where there is none, and a component with no
+     * typed leaves legitimately has none, every page here reads `age unknown` and says so.
+     */
+    useEffect(() => {
+        if (!store) return
+        return data.observe(peer, namespace, store)
+    }, [data, store, peer, namespace])
+
     const observe = async () => {
         const link = server.current
         if (!link) return
@@ -236,9 +248,15 @@ export const ComponentPanel = ({
      *
      * Nothing is written locally on success, for the same reason an editor writes nothing - the
      * only report that the component agrees is what it says next time it is asked. Which is now,
-     * rather than a period from now: `settled` moves and the page it belongs to refetches.
+     * rather than a period from now.
+     *
+     * **What is asked again is the resource this button belongs to, and nothing else.** The action
+     * came from that resource's own `actions` list, so where the button lives is a structural fact
+     * about what it touched rather than a guess. What this replaces is a counter that made every
+     * collection in the pane a different question after any successful call - one round trip per
+     * collection, on the link least able to spare it, for a command that touched one row.
      */
-    const runAction = async (action: DescribedAction, id: string) => {
+    const runAction = async (action: DescribedAction, id: string, resource: readonly string[]) => {
         const link = server.current
         if (!link) return
         // The author says which of its methods are final; a console guessing from the word
@@ -249,7 +267,7 @@ export const ComponentPanel = ({
         try {
             const proxy = await link.proxy<Record<string, (...args: unknown[]) => Promise<unknown>>>(namespace, peer)
             await proxy[action.method](id)
-            setSettled((count) => count + 1)
+            data.settled({ target: peer, namespace, resource })
         } catch (e) {
             setFailed({ path: id, message: (e as { message?: string }).message ?? String(e) })
         } finally {
@@ -258,17 +276,20 @@ export const ComponentPanel = ({
     }
 
     /**
-     * One page of one collection, asked for rather than subscribed to.
+     * One page of one collection, *named* rather than fetched.
      *
-     * Read from the link at call time like every other call this panel makes, so a page turn during
-     * a reconnect uses the link that exists then rather than one captured when the pane opened.
+     * The panel says which question a grid is showing and the cache decides what asking it costs -
+     * which is the whole of the change: two panes on the same page ask it once, a page turned back
+     * to is answered from what is held, and a period tick over a page the component has published
+     * nothing since costs nothing at all.
      */
-    const fetchPage: FetchPage = async (resource, page, pageSize, filter, sort) => {
-        const link = server.current
-        if (!link) throw new Error('no link')
-        const proxy = await link.proxy<DataProxy>(namespace, peer)
-        return proxy.$data('getList', resource, { pagination: { page, pageSize }, ...(filter ? { filter } : {}), ...(sort ? { sort } : {}) })
-    }
+    const pageQuestion: PageQuestion = (resource, page, pageSize, filter, sort) => ({
+        target: peer,
+        namespace,
+        method: 'getList',
+        resource,
+        params: { pagination: { page, pageSize }, ...(filter ? { filter } : {}), ...(sort ? { sort } : {}) }
+    })
 
     /**
      * State only: props are the host's inputs and are not the caller's to set. Depth is no longer
@@ -295,11 +316,16 @@ export const ComponentPanel = ({
                         // Nothing is written locally on success. The value on screen changes when
                         // the component publishes its next snapshot, which is the only report that
                         // the plant agrees - an optimistic row would show a setpoint the oven
-                        // refused. A subscribed leaf gets that by itself; a polled page would not
-                        // until its period came round, so it is asked again now. Waiting five
-                        // seconds to learn whether the plant accepted a command is the one place
-                        // a period is plainly wrong.
-                        setSettled((count) => count + 1)
+                        // refused. A subscribed leaf gets that by itself; a pulled page would not
+                        // until its period came round, so what this method claims to have changed
+                        // is asked again now. Waiting five seconds to learn whether the plant
+                        // accepted a command is the one place a period is plainly wrong.
+                        //
+                        // The path is the claim, and it came from a `sets` declaration - an editor
+                        // is drawn on this row precisely because some method said it writes here.
+                        // A page of a record elsewhere in the same component is not re-asked, which
+                        // is what the counter this replaces could not express.
+                        data.settled({ target: peer, namespace, resource: path })
                     } catch (e) {
                         setFailed({ path: path.join('.'), message: (e as { message?: string }).message ?? String(e) })
                     } finally {
@@ -352,7 +378,7 @@ export const ComponentPanel = ({
                     </div>
                     <div className="value-table">
                         <h4>{scope.join('.')}</h4>
-                        <ValueGrid component={component} types={types} scope={scope} source={source} edit={edit} fetchPage={fetchPage} period={period} settled={settled} actionsFor={(path) => actionsFor(component, path, methods)} onAction={(action, id) => void runAction(action, id)} />
+                        <ValueGrid component={component} types={types} scope={scope} source={source} edit={edit} cache={data} pageQuestion={pageQuestion} period={period} actionsFor={(path) => actionsFor(component, path, methods)} onAction={(action, id, resource) => void runAction(action, id, resource)} />
                     </div>
                 </div>
             )}

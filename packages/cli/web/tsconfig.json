@@ -8,12 +8,21 @@
         ],
         "module": "ESNext",
         "moduleResolution": "Bundler",
+        // What vite resolves, so the typecheck sees the same library the bundle does. Without it
+        // `@source-repo/rpc` types resolve to the Node entry point while the build takes the browser
+        // one, and everything exported from only the web build - `visibilityActivity`,
+        // `localStorageSnapshots` - typechecks as missing while working perfectly in the page.
+        "customConditions": ["browser"],
         "jsx": "react-jsx",
         "strict": true,
         "noEmit": true,
         "skipLibCheck": true,
         "allowImportingTsExtensions": true
     },
+    "exclude": [
+        // Checked separately, against the library entry point they actually load. See tsconfig.test.json.
+        "src/**/*.test.ts"
+    ],
     "include": [
         "src",
         "vite.config.ts",

@@ -329,6 +329,39 @@ They do serve a `getOne`, and it is a different verb wearing the same name: it a
 
 **Row actions and a write namespace are not the same mechanism, and neither replaces the other.** An action names a method the component *already has* — `retryDeadLetter`, `acknowledge`, `startBatch` — which is where the interlock, the clamping and the refusal-while-the-door-is-open live, and the declaration adds nothing but which row it is about. A write verb changes a field, and it exists for the store whose rows are data rather than a machine's state, where there is no method to name because there was never a decision to encode. A plant's answer stays the action; a work-order table's answer is the write.
 
+### Not asking again for a page that has not changed
+
+A pulled page needs a period, and a period is what `usePolled` was: ask every five seconds, whatever the plant is doing. Which is honest, and wasteful in exactly the case that matters — a page nobody has changed costs the same as one that changed twice.
+
+The answer already carries what settles it. Every `$data` result names the **epoch and revision** it was drawn from, and a component channel holds the epoch and revision the publisher is currently at. A page whose revision matches the channel's has had nothing published over it since it was drawn: not *probably still good*, not *recent* — **confirmed current**, said by the source.
+
+`@source-repo/query` is that comparison wired into a cache:
+
+```typescript
+import { RpcDataCache } from '@source-repo/query'
+
+const cache = new RpcDataCache({
+    ask: async ({ target, namespace, method, resource, params }, { deadlineMs }) => {
+        const proxy = await client.proxy(namespace, target)
+        return proxy.$with({ ttl: deadlineMs ?? 0 }).$data(method, resource, params)
+    }
+})
+
+// The freshness signal comes from a channel you already opened. The cache never opens one:
+// subscribing to a whole snapshot in order to learn a revision would spend exactly what the
+// pull half exists to save.
+cache.observe('bakery', 'field', field[rpcComponent])
+
+const watch = cache.watch({ target: 'bakery', namespace: 'field', method: 'getList', resource: ['state', 'tags'], params: { pagination: { page: 0, pageSize: 50 } } }, { periodMs: 5000 })
+watch.getSnapshot().freshness // 'current' | 'possibly-changed' | 'unknown'
+```
+
+**Three states, and the third is the one that keeps the other two honest.** `unknown` is what a page reads where nothing is watching that component — which a console does routinely, since a component whose state is only a record has no typed leaves to subscribe to and opens no channel at all. Collapsing that into `possibly-changed` would look like caution and would be a guess wearing the same costume as the age it replaced.
+
+**A declared resource takes no freshness from the revision, structurally.** A path into `props` or `state` is *in* the snapshot; a table behind the component is not, and the store-backed nodes move their revision on **reads** and on a metrics timer. Wiring the rule to those would make every answer invalidate itself — a poll with no period, against the peers least able to afford one. A new epoch is the exception and drops them too, because a component that came back may have reconnected to a different database.
+
+It is not a browser package. `@tanstack/query-core` is framework-agnostic and dependency-free, so two Node services pulling from a third get the same dedup, the same budget arithmetic and the same confirmed-current, with `useSyncExternalStore` replaced by whatever they already have.
+
 ## Publishing bounds
 
 Expose options bound what the network hears — local state always changes immediately:

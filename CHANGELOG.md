@@ -2,6 +2,50 @@
 
 ## Unreleased
 
+### The pull half: a page can be *confirmed current*, and a period can cost nothing
+
+A pulled page needed a period, and a period asked every five seconds whatever the plant was doing — so a page nobody had changed cost exactly as much as one that changed twice. What settles it was already on the wire: every `$data` answer names the epoch and revision it was drawn from, and a component channel holds the epoch and revision the publisher is at. A page whose revision matches the channel's has had nothing published over it since it was drawn.
+
+**`@source-repo/query`** is that comparison wired into `@tanstack/query-core`. Its own package on its own version line, built against the library's public API only — the `@source-repo/queue` precedent, and for the same reason. Not in `@source-repo/rpc`, which would put a query cache in the bundle of every peer that never pulls.
+
+The line between the two libraries is worth stating, because it is the same line in both languages. **Theirs**: dedup, storage, eviction, backoff, stale-while-revalidate, persistence, devtools — none of it interesting, all of it fiddly, and rebuilding it would be rebuilding it twice. **Ours, and unobtainable from any cache library**: that a page drawn at the revision the channel holds is confirmed current; that `semantics` decides whether a retry is safe at all; that a deadline is a budget the caller declared rather than a per-attempt timeout; and the key that makes two questions the same question.
+
+**Three states, never two.** `current` is a fact from the source. `possibly-changed` says the publisher has spoken since, and whether it touched *this* is a further question. `unknown` is first-class, because the signal is silently absent wherever no channel is open — which a console does routinely, since a component whose state is only a record has no typed leaves and opens no subscription at all. Collapsing that into `possibly-changed` would look like caution and would be the same fake one level down: a screen saying *this may have changed* where what is true is *nobody here knows*. A `current` that is sometimes a guess is worth nothing.
+
+**A period tick over a `current` page asks for nothing at all**, which is the whole difference from the loop it replaces. `refetchInterval` is deliberately not turned on: the period belongs to whoever is watching, which is the entire reason `$data` is a call rather than a subscription.
+
+**Declared resources are excluded structurally rather than by a note**, and the reason is concrete: Relational, Document and Queue bump their revision on **reads** and on a metrics timer, so wiring the rule to their resources would make every answer invalidate itself — a poll with no period, against the peers least able to afford one. A new epoch is the exception and drops them too, because a component that came back may have reconnected to a different database.
+
+**A late answer carrying a lower revision is not published as fresh.** Two requests for one key and the second answered first is ordinary on a network where a peer may be reached over MQTT; without the rule the older page lands last and is reported current on a comparison that was never really made.
+
+**A settled call invalidates what it claims to have touched, and nothing else** — `sets` for an editor, the resource for an action offered on a row. With neither it invalidates *nothing*, and that degradation is the point rather than a gap: `sets` declares intent, is optional, and carries no compatibility rule, so a method that says nothing must cost nothing. What still covers that case is the revision compare, which is a fact from the publisher rather than a claim from the caller.
+
+**Two cache defaults are wrong here and are replaced.** Queries are retried three times by default, which is right only because a `query` is a query — and `semantics` is optional in this library on purpose, so absent reads as *does not say* and nothing is retried. And a retry will happily re-issue a call whose deadline has passed; a deadline here is a budget, so every attempt is given what remains and one that arrives with none left is refused rather than sent. `Forbidden`, `Superseded`, `OwnershipChanged` and the rest are refusals rather than failures, and asking again only gets them again.
+
+**`onlineManager` can be wired to the link**, so "offline" means this link rather than `navigator.onLine` — which is true on a plant LAN with no route to the peer, and false on a laptop whose Wi-Fi dropped while the plant is reachable over Ethernet. The same source in Node and in a browser.
+
+Every rule above has a regression test that was checked against a build with the rule removed.
+
+### One encoder decides whether two values are the same value
+
+Three things had to answer that question and there were three answers, two of them `JSON.stringify` — which reports **key insertion order**, which nothing promises. A JSON column round-trips through a driver, a document store hands back BSON, and a caller builds an options object in whatever order its code reads; each of the three then failed differently and quietly. The row stamp reported a conflict on a row nobody touched. The projection comparison re-subscribed, spending a targeted snapshot to receive what it already had. And a cache key would miss, asking the plant again for a page it is holding.
+
+`canonicalValue` and `canonicalText` are now exported, and the row stamp, both `sameProjection` implementations and `@source-repo/query`'s key all run on them. The stamp's pinned fixtures in `DataWrites.test.ts` are what gate all three, because neither of the other two can pin itself — two projections compare *through* the encoder and two keys are *built* by it, so a change leaves both self-consistent and both wrong.
+
+**One rule moved with it, and `RPC_STAMP_VERSION` moves to `sw2` because of it**: a key whose value is `undefined` is omitted rather than digested as null. `{ offset: undefined }` and `{}` describe the same subscription and the same question, and for the stamp it is the same argument key sorting already makes — a driver that round-trips a JSON column through JSON drops the key, one that hands back a live object keeps it as `undefined`, and digesting those differently reports a conflict on a row nobody touched. A caller holding an `sw1` stamp across the upgrade is told its row changed, re-reads and is right, which is the direction the version exists to guarantee.
+
+### The console pulls through the cache, and `usePolled` is gone
+
+One cache for the page rather than one per pane, so two panels on the same peer ask one question between them and a collection reopened a moment later is answered without a round trip. The channel a panel already opened is handed to the cache as the freshness signal — it opens nothing itself.
+
+Each collection now says which of the three states it is in instead of only its age, and `current` is the only one drawn in colour: *may have changed* is ordinary and constant on a moving plant, and drawing it as a warning is how an operator learns to stop reading a pane.
+
+The `settled` counter is gone with it. It made **every** collection in the pane a different question after any successful call — one round trip per collection, on the link least able to spare it, for a command that touched one row. What replaces it invalidates the resource an action belongs to, or the path an editor's method claims, and nothing else.
+
+`polled.ts` is now `timing.ts` and holds the two things that genuinely are React: a number that has to tick to look alive, and a value that has to stop moving before it is worth acting on. Deciding when to ask was never that file's to make.
+
+One thing found on the way: the console's typecheck was resolving `@source-repo/rpc` to the **Node** entry point while vite bundled the browser one, so anything exported from only the web build typechecked as missing and anything Node-only typechecked as present. `web/tsconfig.json` now resolves the `browser` condition, and the app's own tests — which really do run under Node — moved to `web/tsconfig.test.json`.
+
 ### A reload comes back with what was last known, and says how old it is
 
 A dropped link keeps its values and puts an age on them, because last-known-with-an-age beats a blank. A reload threw them away and came back `initializing` — the one place that rule was not honoured, and on a link where the first snapshot is eighty seconds off it is eighty seconds of blank screen in front of an operator.

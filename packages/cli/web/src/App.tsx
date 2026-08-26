@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
-import { RpcServer, TransportEvent, type RpcSchema } from '@source-repo/rpc'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { RpcServer, TransportEvent, type RpcGetListParams, type RpcGetListResult, type RpcSchema } from '@source-repo/rpc'
+import { RpcDataCache, rpcOnlineFrom } from '@source-repo/query'
 import { pageName } from './peerName'
 import { Chat } from './Chat'
 import { ChatMessage, ChatService } from './ChatService'
@@ -43,10 +44,41 @@ const useConsole = () => {
     const problems = useRef<((problem: NetworkProblem) => void) | null>(null)
     const peer = useRef<RpcServer | null>(null)
 
+    /**
+     * One cache for the page, because the questions are the page's rather than any pane's.
+     *
+     * Two panels open on the same peer ask one question between them, and a page reopened on a
+     * collection somebody was reading a moment ago is answered without a round trip. Per-panel it
+     * would be neither - and the freshness signal, which is per component, would be registered
+     * twice against the same channel.
+     *
+     * The link is read at call time, like every other call this page makes, so a request issued
+     * during a reconnect uses the link that exists then rather than one captured when the page
+     * loaded.
+     */
+    const data = useMemo(
+        () =>
+            new RpcDataCache({
+                ask: async ({ target, namespace, method, resource, params }) => {
+                    const link = peer.current
+                    if (!link) throw new Error('no link')
+                    // The console browses collections and nothing else so far. Said out loud rather
+                    // than cast, because serving a `getMany` as a `getList` would answer the wrong
+                    // question with a straight face.
+                    if (method !== 'getList') throw new Error(`the console asks for lists; ${method} is not wired here`)
+                    const proxy = await link.proxy<DataProxy>(namespace, target)
+                    return proxy.$data('getList', resource, params as RpcGetListParams)
+                }
+            }),
+        []
+    )
+    useEffect(() => () => data.close(), [data])
+
     useEffect(() => {
         let server: RpcServer | undefined
         let attempts = 0
         let cancelled = false
+        let undoOnline: (() => void) | undefined
         /**
          * Closed on the way out of the page as well as on unmount.
          *
@@ -95,6 +127,14 @@ const useConsole = () => {
                     transport.on(TransportEvent.connected, () => setStatus('connected'))
                 }
                 peer.current = server
+                // So that "offline" means this link rather than `navigator.onLine`, which is true
+                // on a plant LAN with no route to the console. Taken from the transports *after*
+                // ready() for the same reason the listeners above are - before it there is nothing
+                // to listen to - and re-wired on a reconnect, which replaces the previous listener
+                // rather than stacking on it.
+                const live = server.transports[0]
+                undoOnline?.()
+                undoOnline = live ? rpcOnlineFrom(live) : undefined
 
                 const proxy = await server.proxy<ConsoleService & { on: (e: string, h: (...a: unknown[]) => void) => Promise<unknown> }>('console', consoleName)
                 await proxy.on('event', (event: unknown) => events.current?.(event as StreamedEvent))
@@ -136,11 +176,12 @@ const useConsole = () => {
         return () => {
             cancelled = true
             window.removeEventListener('pagehide', leaving)
+            undoOnline?.()
             void server?.close()
         }
     }, [])
 
-    return { service, status, me, events, peerChange, said, frames, problems, peer }
+    return { service, status, me, events, peerChange, said, frames, problems, peer, data }
 }
 
 /**
@@ -157,11 +198,14 @@ const download = (rows: unknown[], filename: string) => {
     URL.revokeObjectURL(url)
 }
 
+/** Just the DataProvider verb, so the page needs no generic over anybody's component class. */
+type DataProxy = { $data(method: 'getList', resource: readonly string[], params?: RpcGetListParams): Promise<RpcGetListResult> }
+
 /** Which of the side panel's three views is showing. */
 type SideTab = 'chat' | 'events' | 'traffic' | 'problems' | 'presence'
 
 export const App = () => {
-    const { service, status, me, events, peerChange, said, frames, problems, peer } = useConsole()
+    const { service, status, me, events, peerChange, said, frames, problems, peer, data } = useConsole()
     const [chats, setChats] = useState<{ [peer: string]: ChatMessage[] }>({})
     /**
      * Messages that have arrived and not been looked at, per peer.
@@ -475,6 +519,7 @@ export const App = () => {
                                         methods={namespace.methods}
                                         types={description.types}
                                         server={peer}
+                                        data={data}
                                         onSubscribed={() => {
                                             if (service && selected) void service.describe(selected).then(setDescribed).catch(() => undefined)
                                         }}

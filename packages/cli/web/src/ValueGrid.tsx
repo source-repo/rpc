@@ -1,10 +1,12 @@
 import { useEffect, useMemo, useState } from 'react'
-import { matchesFilter, type RpcFilter, type RpcGetListResult, type RpcSort } from '@source-repo/rpc'
+import { matchesFilter, type RpcFilter, type RpcSort } from '@source-repo/rpc'
+import type { RpcDataCache, RpcFreshness, RpcQuestion } from '@source-repo/query'
 import { leavesUnder, typeAt, type ScopeLeaf } from './scope'
 import { staticSource, ValueTree, type EditAffordance, type ValueSource } from './ValueTree'
 import { compileFilter } from './filter'
 import { pageControls } from './pager'
-import { useDebounced, usePolled, useWaitedSeconds } from './polled'
+import { useRpcData } from './data'
+import { useDebounced, useWaitedSeconds } from './timing'
 import type { DescribedAction, DescribedComponent, TypeNode } from './types'
 
 /**
@@ -29,8 +31,27 @@ import type { DescribedAction, DescribedComponent, TypeNode } from './types'
  * of this grid subscribes and which half asks.
  */
 
-/** How a page is fetched. Supplied by whoever holds the link, so this component opens nothing. */
-export type FetchPage = (resource: readonly string[], page: number, pageSize: number, filter?: RpcFilter, sort?: RpcSort) => Promise<RpcGetListResult>
+/**
+ * How a page is *named*, rather than how it is fetched. Supplied by whoever holds the link, so this
+ * component opens nothing - and asks for nothing either: naming the question is now the whole of
+ * what the grid does, and the cache decides whether asking it costs anything.
+ */
+export type PageQuestion = (resource: readonly string[], page: number, pageSize: number, filter?: RpcFilter, sort?: RpcSort) => RpcQuestion
+
+/**
+ * The three states, said out loud.
+ *
+ * A pane that showed only an age would be reporting the one thing this network does not have to
+ * guess at. `current` is a fact from the publisher - it has said nothing since this page was drawn -
+ * and `unknown` is the honest third: nothing is watching this component, or it is a table behind it
+ * that the revision does not speak for. Collapsing that into "may have changed" would look like
+ * caution and would be a guess wearing the same costume as the number it replaced.
+ */
+const FRESHNESS: { [state in RpcFreshness]: { label: string; title: string; className: string } } = {
+    current: { label: 'current', title: 'the component has published nothing since this page was drawn', className: 'fresh-current' },
+    'possibly-changed': { label: 'may have changed', title: 'the component has published since this page was drawn', className: 'fresh-changed' },
+    unknown: { label: 'age unknown', title: 'nothing here can say whether this changed: no channel open, or a resource the revision does not cover', className: 'fresh-unknown' }
+}
 
 /**
  * One collection, paged.
@@ -42,27 +63,29 @@ export type FetchPage = (resource: readonly string[], page: number, pageSize: nu
 const Collection = ({
     leaf,
     types,
-    fetchPage,
+    cache,
+    pageQuestion,
     period,
     pageSize,
     edit,
-    settled,
     filter,
     actions,
     onAction
 }: {
     leaf: ScopeLeaf
     types?: { [name: string]: TypeNode }
-    fetchPage: FetchPage
+    /** Holds the answers, and decides whether a period tick has anything to ask for. */
+    cache: RpcDataCache
+    pageQuestion: PageQuestion
     period: number | undefined
     pageSize: number
     edit?: EditAffordance
-    settled: number
     /** Compiled once by the pane above, so both halves of the grid answer the same search. */
     filter?: RpcFilter
     /** What the component says may be done to a row of this resource, already checked to exist. */
     actions?: DescribedAction[]
-    onAction?: (action: DescribedAction, id: string) => void
+    /** The resource travels with the call: where the button lives is what the method touched. */
+    onAction?: (action: DescribedAction, id: string, resource: readonly string[]) => void
 }) => {
     const [page, setPage] = useState(0)
     const [sort, setSort] = useState<RpcSort | undefined>()
@@ -89,16 +112,12 @@ const Collection = ({
      */
     const sortable = values?.kind === 'object' ? Object.keys(values.fields) : []
 
-    // What identifies the question, so turning a page starts a new one and a re-render does not.
-    // `settled` is in it because a call that has just changed something makes this a different
-    // question - and it is a counter rather than a remount, so the operator stays on the page
-    // they were reading rather than being sent back to the first one for having edited a row.
-    //
-    // The separator is written as an escape and never as the byte. A literal control character
-    // makes the file binary to everything that sniffs content: grep matches and prints nothing,
-    // and git stops diffing it. See CLAUDE.md - this has cost this repository time twice.
-    const question = [label, page, pageSize, settled, ordering].join('\u0001')
-    const { data, error, fetching, since } = usePolled(() => fetchPage(leaf.path, page, pageSize, filter, sort), period, question)
+    // What identifies the question is now the question itself, keyed by the library's own canonical
+    // encoder inside the cache - so turning a page starts a new one and a re-render does not, and
+    // two panes asking the same thing ask it once. The counter that used to be part of this key is
+    // gone with it: a call that changed something now invalidates what it *claims* to have touched,
+    // rather than making every collection in the pane a different question.
+    const { data, error, fetching, since, freshness } = useRpcData(cache, pageQuestion(leaf.path, page, pageSize, filter, sort), period)
 
     /**
      * The answer as something a row can read from.
@@ -139,6 +158,15 @@ const Collection = ({
                     {/* Said out loud rather than shown as a blank: the rows below are the last
                         answer, and an operator has to know which of the two they are reading. */}
                     {fetching && data ? ' · refreshing' : ''}
+                    {/* The fact, rather than an age. `current` here means the component has
+                        published nothing since this page was drawn - which is not "recent" and is
+                        not a policy, and is the one thing a period alone could never report. */}
+                    {data && !fetching && (
+                        <span className={FRESHNESS[freshness].className} title={FRESHNESS[freshness].title}>
+                            {' · '}
+                            {FRESHNESS[freshness].label}
+                        </span>
+                    )}
                     {/* Two different numbers, and both are worth having. How long this has been
                         waiting says the request is alive; how long the peer spent says where the
                         time went - and their difference is the link. Without the second, a slow
@@ -209,7 +237,7 @@ const Collection = ({
                     {actions?.length ? (
                         <span className="row-actions">
                             {actions.map((action) => (
-                                <button key={action.method} className="toggle" title={`calls ${action.method}(${id})`} onClick={() => onAction?.(action, id)}>
+                                <button key={action.method} className="toggle" title={`calls ${action.method}(${id})`} onClick={() => onAction?.(action, id, leaf.path)}>
                                     {action.label ?? action.method}
                                 </button>
                             ))}
@@ -231,9 +259,9 @@ export const ValueGrid = ({
     scope,
     source,
     edit,
-    fetchPage,
+    cache,
+    pageQuestion,
     period,
-    settled,
     actionsFor,
     onAction,
     pageSize = 50
@@ -245,13 +273,12 @@ export const ValueGrid = ({
     /** The live snapshot, rooted at the component rather than at props or state. */
     source: ValueSource
     edit?: EditAffordance
-    fetchPage: FetchPage
+    cache: RpcDataCache
+    pageQuestion: PageQuestion
     period: number | undefined
-    /** Bumped whenever a call settles, so a page that a command may have changed is asked again. */
-    settled: number
     /** What may be done to a row of the resource at this path, if anything. */
     actionsFor: (path: string[]) => DescribedAction[] | undefined
-    onAction?: (action: DescribedAction, id: string) => void
+    onAction?: (action: DescribedAction, id: string, resource: readonly string[]) => void
     pageSize?: number
 }) => {
     const [typed, setTyped] = useState('')
@@ -312,11 +339,11 @@ export const ValueGrid = ({
                     key={leaf.path.join('.')}
                     leaf={leaf}
                     types={types}
-                    fetchPage={fetchPage}
+                    cache={cache}
+                    pageQuestion={pageQuestion}
                     period={period}
                     pageSize={pageSize}
                     edit={edit}
-                    settled={settled}
                     filter={filter}
                     actions={actionsFor(leaf.path)}
                     onAction={onAction}

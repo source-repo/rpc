@@ -15,6 +15,12 @@ import { permittedResources, RPC_STAMP_VERSION, rowStamp, stampInput, validateWr
  * literals below are the encoding's own fixture: change how a stamp is computed and these change,
  * visibly, in a diff - which is the whole reason `RPC_STAMP_VERSION` rides inside the input rather
  * than beside it.
+ *
+ * Since the encoder moved to `Canonical.ts` those literals gate more than the stamp. The projection
+ * comparison and the `$data` cache key are the same function, and neither can pin itself: two
+ * projections compare through it and two keys are built by it, so a change to the encoding leaves
+ * both self-consistent and both wrong. These are the only fixtures in the repository that fail when
+ * it moves, which is why they are worth the awkwardness of being opaque strings.
  */
 
 const CUSTOMER_ONE = [
@@ -25,7 +31,7 @@ const CUSTOMER_ONE = [
 ] as const
 
 test('a stamp is the same digest wherever the same row is read', async (t) => {
-    t.is(await rowStamp('customers', '1', CUSTOMER_ONE), 'CNOVpx5_qd_BL5JeiDJVyDIlaDnbBRdNOHjsZzZL4UY')
+    t.is(await rowStamp('customers', '1', CUSTOMER_ONE), '6Rb9EMenemRPURBGYZQddL7MLFODcmTBPcVHyKiji6E')
     t.is(
         await rowStamp('customers', '2', [
             ['name', 'borg'],
@@ -33,9 +39,9 @@ test('a stamp is the same digest wherever the same row is read', async (t) => {
             ['active', false],
             ['balance', 3.0]
         ]),
-        '8DpLmCO68-Ab_TQSNgXV5kJ65a4ANIqh3XoCkTu1XxQ'
+        'sFoL-4qBfxfPcpkUqIPDogJCRGos29K4LDVqSKNxEHQ'
     )
-    t.is(await rowStamp('sites', 'north', [['label', 'North plant']]), 'Xe_so1_KROa4W2yLpZDQxP7ng_iro9B_AEgv3VD3r1k')
+    t.is(await rowStamp('sites', 'north', [['label', 'North plant']]), 'Jo1RxtofbqMxYqpqK4aqconmVapYRVs5UPyL4E3BOuw')
 })
 
 test('the field order a store happened to iterate in does not change the stamp', async (t) => {

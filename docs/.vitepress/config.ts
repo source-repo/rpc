@@ -69,6 +69,7 @@ export default defineConfig({
                 items: [
                     { text: '@source-repo/rpc', link: '/packages/rpc' },
                     { text: '@source-repo/rpc-cli', link: '/packages/cli' },
+                    { text: '@source-repo/query', link: '/packages/query' },
                     { text: '@source-repo/queue', link: '/packages/queue' },
                     { text: '@source-repo/relational', link: '/packages/relational' },
                     { text: '@source-repo/document', link: '/packages/document' },

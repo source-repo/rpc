@@ -1435,6 +1435,21 @@ textarea.control {
     color: var(--warn);
 }
 
+/* The three freshness states of a pulled page, and they are deliberately not a traffic light.
+   `current` is the only one that is a *fact* - the component has published nothing since the page
+   was drawn - so it is the only one coloured. "May have changed" is ordinary and constant on a
+   moving plant, and "age unknown" is the honest answer wherever nothing is watching; drawing either
+   as a warning would make the pane cry wolf all day, which is how an operator learns to stop
+   reading it. */
+.fresh-current {
+    color: var(--ok);
+}
+
+.fresh-changed,
+.fresh-unknown {
+    color: var(--muted);
+}
+
 /* A row and what may be done to it. The buttons follow the editors' rule - present on hover or
    focus, so a page of fifty rows is not also a wall of fifty pairs of buttons. */
 .collection-row {

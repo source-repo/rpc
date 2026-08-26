@@ -1,3 +1,4 @@
+import { canonicalText } from './Canonical.js'
 import { MessageModule, Message, MessageType, GenericModule } from './Core.js'
 import {
     RpcCallInstanceMethodPayload,
@@ -138,7 +139,11 @@ const sameProjection = (a: readonly RpcProjectionEntry[] | undefined, b: readonl
     // Compared by value rather than identity, and a paged caller depends on it: turning a page
     // changes only the offset, and a comparison that missed that would leave the subscriber on
     // page one while its grid showed page two.
-    return a.every((entry, index) => JSON.stringify(entry) === JSON.stringify(b[index]))
+    //
+    // Through the canonical encoder rather than `JSON.stringify`, which answers key insertion order:
+    // `{ path, offset }` and `{ offset, path }` ask for the same thing, and calling them different
+    // spends a targeted snapshot re-subscribing to what the subscriber already had.
+    return a.every((entry, index) => canonicalText(entry) === canonicalText(b[index]))
 }
 
 export type BindObject = {
