@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+### `@source-repo/signalr` publishes on a tag like everything else
+
+It was the one package the release workflow did not publish, so 5.1.0 moved every other package and left this one at 5.0.0 - published by hand once and then not. That is precisely the drift the versions-together rule exists to prevent, and it went unnoticed because nothing failed: a package that is simply absent from a job does not report anything.
+
+Same step and same guard as the others, so it rides every tag and a release that did not touch it publishes nothing.
+
 ## 5.1.0
 
 **Read this first if you hold a row stamp.** `RPC_STAMP_VERSION` moved from `sw1` to `sw2`, so every stamp minted before this release compares unequal to the row it was taken from. A caller holding one is told its row changed, re-reads and is right — which is the direction the version exists to guarantee — but it happens on the first write after the upgrade rather than at a moment anybody chose. The encoding change behind it is in the entry below.
