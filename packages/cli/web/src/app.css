@@ -1450,6 +1450,21 @@ textarea.control {
     color: var(--muted);
 }
 
+/* A command that was sent and never answered.
+   Loud, and deliberately not the same treatment as an error: an error is a fact about the plant and
+   this is the absence of one, so it stays on screen with its own buttons rather than joining the
+   run of red text an operator has learned to skim. */
+.uncertain {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 8px 0;
+    padding: 8px 10px;
+    border-left: 3px solid var(--warn);
+    background: color-mix(in srgb, var(--warn) 8%, transparent);
+    font-size: 13px;
+}
+
 /* A row and what may be done to it. The buttons follow the editors' rule - present on hover or
    focus, so a page of fifty rows is not also a wall of fifty pairs of buttons. */
 .collection-row {

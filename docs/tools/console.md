@@ -134,6 +134,16 @@ A component carrying a few hundred tags declares one [generic setter](../guide/c
 
 Nothing is written locally on success. The number on screen moves when the plant publishes its next snapshot, which is the only report that the plant agrees — an optimistic row would show a setpoint the oven refused. A refusal arrives where the value would have been.
 
+### Every press carries an idempotency key
+
+The CLI attached one and the console did not, which was the wrong way round: the CLI is driven by somebody typing a command they can read back, and the console is the thing an operator actually presses. Without a key, a second press after `UnknownOutcome` is a second command — and on a plant that is the difference between one pump start and two.
+
+**A key per press, held for the retry, and gone the moment anything else is committed.** A key generated per *attempt* would buy nothing, since that is what the request id already is; one derived from the value would be worse, because committing 180, then 190, then 180 again is three decisions and the third would be answered with the first one's result.
+
+So the offer to try again appears **only where nobody knows what happened**, and it uses the library's own `mayHaveRun` rather than a second opinion — a screen disagreeing with the tray beside it about whether a command may have run would be disagreeing in front of an operator about the only question that mattered. An ordinary refusal gets no such button: the interlock being open is a fact, and pressing it again gets the same fact.
+
+It applies to all three ways the console commands a plant: an editor drawn from `sets`, an action offered on a row, and the method panel's **Call**. The last of those is relayed — the call to the plant is made by the console process rather than by the browser — so the key travels as an argument of the console's own `call` verb to reach the wire at all. The **repeat** button deliberately carries no key and offers no retry: it says twenty calls and means twenty, which for a command is twenty commands, and there is no single intent for a second attempt to be at.
+
 ### Context
 
 Each node's panel can also show what it **inherits**: the site it stands in, the work order it is running, the maintenance window that applies to it. Type a token id — `acme.site` — pick the axis, and the console watches it; what it watches is remembered per peer.

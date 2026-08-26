@@ -222,7 +222,7 @@ test('the console describes its own service with argument types', async (t) => {
     const service = description.namespaces.find((namespace) => namespace.name === 'console')
     t.true(description.validating, 'the console should be checking its own arguments')
     const call = service?.methods.find((method) => method.name === 'call')
-    t.deepEqual(call?.paramNames, ['peer', 'namespace', 'method', 'args'], 'a form needs labels, not "argument 0"')
+    t.deepEqual(call?.paramNames, ['peer', 'namespace', 'method', 'args', 'idempotencyKey'], 'a form needs labels, not "argument 0"')
     t.deepEqual(call?.params?.[0], { kind: 'string' })
 
     // The dictionary that blocked all of this: ServerDescription.types is { [name]: TypeNode }.

@@ -42,6 +42,28 @@ try {
 
 `TransportError` now means the request never left - a failed encode, a closed link, a broker that refused the publish - so the command certainly did not run. `UnknownOutcome` means it did leave and nothing came back. `Timeout` is the same uncertainty with a more specific cause, and should be read the same way for a command.
 
+### What this peer has asked for, after the promise has gone
+
+A client already knows what it asked and how each of those turned out — it mints the id, holds the promise, arms the timer and classifies the failure. Then the promise settles and it forgets. Which is fine for a program, because a program *has* the promise; it is not fine for a person, because the thing an operator needs after pressing a button is not the return value. It is whether the command ran, and if nobody knows, that nobody knows.
+
+`client.operations` — and `server.operations`, which is the same registry, since a server on a bus is a caller too — keeps one frozen entry per call in the shape the component store already defines:
+
+```typescript
+const tray = client.operations
+tray.getSnapshot()                       // newest last: id, target, namespace, method, status, times
+tray.select((all) => all.filter((one) => one.status === 'unknown-outcome').length)
+```
+
+There is **no wire change and no contract change** in any of this: it is hooked at `callWith`, which is already the single funnel every call goes through, so one hook covers a client's calls, a server-acting-as-caller's and a component channel's.
+
+Six statuses, and two of the distinctions are the library's own. `issued` and `sent` are separate because a request the transport never accepted certainly did not run and one it did may have. And **`unknown-outcome` is a status rather than an error string**, because it is the row a tray must not let scroll away: both `UnknownOutcome` and `Timeout` land there, with the code kept beside it, since the two are the same fact about a plant reached by different routes. `mayHaveRun(failure)` is exported so a screen classifies a failure exactly as the registry does rather than keeping a second opinion. `deferred` is the sixth: a method that answers twice has a call that succeeded and an operation that has not.
+
+**Arguments and results are not retained, and that is a security property rather than a preference.** An `untap(token)` argument is a bearer capability and a `$data` answer is a page of plant rows; a peer-wide store holding either would hand every screen in the process a read surface that `authorize()` was protecting on the way in. What is kept is a description of the request — who, what, when, how it ended.
+
+The bound has three tiers, and each is a claim about who still has business with the row. Settled-and-certain goes first. Then the oldest `unknown-outcome`, because bounded is bounded but that row outlives every settled call above it. **A call still in flight is never dropped**, so the registry may exceed `keep` — evicting one would take a command off an operator's screen while it was still happening, and leave nowhere to record the uncertain outcome it may be about to become.
+
+`semantics` may ride along on `$with`. It travels nowhere and decides nothing — a client holds no schema, and this repository's rule is that a running class beats the schema for that question — but it is the difference between a tray that can say *this uncertain one was a non-repeatable command* and one showing six identical rows.
+
 ### Running a command once
 
 Give a server somewhere durable to record what a non-repeatable command did, and a redelivery after a crash is answered from the record instead of run again:
@@ -58,7 +80,7 @@ The store is consulted only for `non-repeatable-command` methods, so reads pay n
 await pump.$with({ idempotencyKey: workOrder }).dispense()
 ```
 
-`$with` returns another proxy for the same instance, so the key never leaks into calls that did not ask for it. The outcome is recorded **before** the answer is sent - the other order leaves a window where the caller has the result and the store does not.
+`$with` returns another proxy for the same instance, so the key never leaks into calls that did not ask for it. **A key generated per attempt buys nothing** — that is what the request id already is. It has to name the operator's intent and survive being tried again, which is why the console mints one per *press* and holds it for the retry rather than deriving it from the value being written: committing 180, then 190, then 180 again is three decisions, and a key derived from the value would make the third answer with the first one's result. The outcome is recorded **before** the answer is sent - the other order leaves a window where the caller has the result and the store does not.
 
 `$with` also takes `timeoutMs`, a per-call override of the client's `callTimeout` that becomes the transmitted ttl, so what the far end is told is exactly what this caller will do. `0` disables both the local timer and the ttl - for a long poll whose bound lives on the server side - and it genuinely disables them: a zero timeout used to omit the ttl correctly while still arming a `setTimeout(…, 0)`, which is not "never" but "next tick".
 

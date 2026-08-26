@@ -350,11 +350,27 @@ export class ConsoleService extends EventEmitter {
     }
 
     @rpc
-    async call(peer: string, namespace: string, method: string, args: unknown[] = []): Promise<{ result?: unknown; error?: string; code?: string; ms: number }> {
+    async call(
+        peer: string,
+        namespace: string,
+        method: string,
+        args: unknown[] = [],
+        /**
+         * Names the command, so a second attempt at it is recognised as the same one.
+         *
+         * Here because the console *relays*: the call to the plant is made by this process, not by
+         * the browser, so a key the operator's page mints has to travel this far to reach the wire.
+         * Without it a retry after an uncertain outcome is a second command, which on a plant is the
+         * difference between one pump start and two - and the browser is the thing an operator
+         * actually presses.
+         */
+        idempotencyKey?: string
+    ): Promise<{ result?: unknown; error?: string; code?: string; ms: number }> {
         const started = Date.now()
         try {
             const proxy = await this.reach(peer).proxy<Record<string, (...a: unknown[]) => Promise<unknown>>>(namespace, peer)
-            return { result: await proxy[method](...args), ms: Date.now() - started }
+            const remote = idempotencyKey ? proxy.$with({ idempotencyKey }) : proxy
+            return { result: await remote[method](...args), ms: Date.now() - started }
         } catch (e) {
             // Reported rather than thrown: an RpcError's code is the useful part, and it would be
             // flattened into a generic exception on its way back to the browser.

@@ -247,7 +247,15 @@ export interface ConsoleService {
     /** What has gone wrong on the links, newest first — including before this page was opened. */
     problems(): Promise<{ problems: NetworkProblem[] }>
     describe(peer: string): Promise<ServerDescription | { error: string; code?: string }>
-    call(peer: string, namespace: string, method: string, args: unknown[]): Promise<{ result?: unknown; error?: string; code?: string; ms: number }>
+    /**
+     * Call a method on a peer, relayed by the console.
+     *
+     * `idempotencyKey` is what makes a second attempt the same command rather than another one. It
+     * has to travel this far because the console is the caller: the page asks the console, and the
+     * console asks the plant, so a key minted in the browser reaches the wire only if this verb
+     * carries it.
+     */
+    call(peer: string, namespace: string, method: string, args: unknown[], idempotencyKey?: string): Promise<{ result?: unknown; error?: string; code?: string; ms: number }>
     watch(peer: string, namespace: string, event: string): Promise<{ watching: boolean; already: boolean }>
     unwatch(peer: string, namespace: string, event: string): Promise<{ watching: boolean; already: boolean }>
     /**

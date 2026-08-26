@@ -54,6 +54,9 @@ export * from './RPC/Compatibility.js'
 export * from './RPC/Codec.js'
 export * from './RPC/Signing.js'
 export * from './RPC/Idempotency.js'
+// What this page has asked other peers to do, and how each turned out. A browser is where this
+// matters most: it is the peer an operator presses buttons on. See RPC/Operations.ts.
+export * from './RPC/Operations.js'
 export * from './RPC/RpcClientHandler.js'
 export * from './RPC/RpcServerHandler.js'
 

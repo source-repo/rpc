@@ -2857,13 +2857,26 @@
                   "value": null
                 }
               ]
+            },
+            {
+              "kind": "union",
+              "options": [
+                {
+                  "kind": "string"
+                },
+                {
+                  "kind": "literal",
+                  "value": null
+                }
+              ]
             }
           ],
           "paramNames": [
             "peer",
             "namespace",
             "method",
-            "args"
+            "args",
+            "idempotencyKey"
           ],
           "returns": {
             "kind": "object",

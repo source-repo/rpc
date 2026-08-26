@@ -1,6 +1,7 @@
 import { RefObject, useCallback, useEffect, useMemo, useState, useSyncExternalStore } from 'react'
-import { rpcComponent, type RpcComponentData, type RpcComponentLike, type RpcComponentStore, type RpcServer } from '@source-repo/rpc'
+import { rpcComponent, type RpcCallOptions, type RpcComponentData, type RpcComponentLike, type RpcComponentStore, type RpcMethodSemantics, type RpcServer } from '@source-repo/rpc'
 import type { RpcDataCache } from '@source-repo/query'
+import { Uncertain, useCommanding } from './command'
 import { staticSource, storeSource, type EditAffordance } from './ValueTree'
 import { ScopeTree } from './ScopeTree'
 import { ValueGrid, type PageQuestion } from './ValueGrid'
@@ -131,6 +132,18 @@ const PERIODS: { label: string; ms: number | undefined }[] = [
     { label: 'manual', ms: undefined }
 ]
 
+/**
+ * What every command from this panel carries.
+ *
+ * The key is what makes a retry the same command. The semantics travel nowhere and decide nothing -
+ * they are the caller's claim, kept so the operations registry can show beside an uncertain outcome
+ * that *this one was a non-repeatable command*, rather than offering an operator six identical rows.
+ */
+const commandOptions = (idempotencyKey: string, semantics: string | undefined): RpcCallOptions => ({
+    idempotencyKey,
+    ...(semantics ? { semantics: semantics as RpcMethodSemantics } : {})
+})
+
 /** Nothing to read from until a channel is open, and a component may legitimately never have one. */
 const NOTHING = staticSource({})
 
@@ -162,8 +175,14 @@ export const ComponentPanel = ({
     const [observing, setObserving] = useState(false)
     const [error, setError] = useState<string | null>(null)
     const [busy, setBusy] = useState(false)
-    const [pending, setPending] = useState<string | undefined>()
     const [failed, setFailed] = useState<{ path: string; message: string } | undefined>()
+    /**
+     * Every command this panel sends, and the key that makes a second attempt at one the *same*
+     * command rather than another one. Shared by the editors and the row actions, because an
+     * operator has one hand and can only be waiting on one of them.
+     */
+    const commanding = useCommanding()
+    const pending = commanding.pending
     const [period, setPeriod] = useState<number | undefined>(5000)
 
     const status = useChannelFact(store, statusOf, undefined)
@@ -262,17 +281,14 @@ export const ComponentPanel = ({
         // The author says which of its methods are final; a console guessing from the word
         // "discard" would be guessing about a plant.
         if (action.confirm && !window.confirm(`${action.method}(${id})?`)) return
-        setPending(id)
         setFailed(undefined)
-        try {
-            const proxy = await link.proxy<Record<string, (...args: unknown[]) => Promise<unknown>>>(namespace, peer)
-            await proxy[action.method](id)
-            data.settled({ target: peer, namespace, resource })
-        } catch (e) {
-            setFailed({ path: id, message: (e as { message?: string }).message ?? String(e) })
-        } finally {
-            setPending(undefined)
-        }
+        await commanding
+            .run(id, async (idempotencyKey) => {
+                const proxy = await link.proxy<Record<string, (...args: unknown[]) => Promise<unknown>>>(namespace, peer)
+                await proxy.$with(commandOptions(idempotencyKey, methods.find((one) => one.name === action.method)?.semantics))[action.method](id)
+                data.settled({ target: peer, namespace, resource })
+            })
+            .catch((e) => setFailed({ path: id, message: (e as { message?: string }).message ?? String(e) }))
     }
 
     /**
@@ -307,30 +323,28 @@ export const ComponentPanel = ({
                 call: async (value: unknown) => {
                     const link = server.current
                     if (!link) return
-                    setPending(path.join('.'))
                     setFailed(undefined)
-                    try {
-                        const proxy = await link.proxy<Record<string, (...args: unknown[]) => Promise<unknown>>>(namespace, peer)
-                        // The generic form is told where to write; the per-field one already knows.
-                        await (generic ? proxy[method.name](path, value) : proxy[method.name](value))
-                        // Nothing is written locally on success. The value on screen changes when
-                        // the component publishes its next snapshot, which is the only report that
-                        // the plant agrees - an optimistic row would show a setpoint the oven
-                        // refused. A subscribed leaf gets that by itself; a pulled page would not
-                        // until its period came round, so what this method claims to have changed
-                        // is asked again now. Waiting five seconds to learn whether the plant
-                        // accepted a command is the one place a period is plainly wrong.
-                        //
-                        // The path is the claim, and it came from a `sets` declaration - an editor
-                        // is drawn on this row precisely because some method said it writes here.
-                        // A page of a record elsewhere in the same component is not re-asked, which
-                        // is what the counter this replaces could not express.
-                        data.settled({ target: peer, namespace, resource: path })
-                    } catch (e) {
-                        setFailed({ path: path.join('.'), message: (e as { message?: string }).message ?? String(e) })
-                    } finally {
-                        setPending(undefined)
-                    }
+                    await commanding
+                        .run(path.join('.'), async (idempotencyKey) => {
+                            const proxy = await link.proxy<Record<string, (...args: unknown[]) => Promise<unknown>>>(namespace, peer)
+                            const commanded = proxy.$with(commandOptions(idempotencyKey, method.semantics))
+                            // The generic form is told where to write; the per-field one already knows.
+                            await (generic ? commanded[method.name](path, value) : commanded[method.name](value))
+                            // Nothing is written locally on success. The value on screen changes when
+                            // the component publishes its next snapshot, which is the only report that
+                            // the plant agrees - an optimistic row would show a setpoint the oven
+                            // refused. A subscribed leaf gets that by itself; a pulled page would not
+                            // until its period came round, so what this method claims to have changed
+                            // is asked again now. Waiting five seconds to learn whether the plant
+                            // accepted a command is the one place a period is plainly wrong.
+                            //
+                            // The path is the claim, and it came from a `sets` declaration - an editor
+                            // is drawn on this row precisely because some method said it writes here.
+                            // A page of a record elsewhere in the same component is not re-asked, which
+                            // is what the counter this replaces could not express.
+                            data.settled({ target: peer, namespace, resource: path })
+                        })
+                        .catch((e) => setFailed({ path: path.join('.'), message: (e as { message?: string }).message ?? String(e) }))
                 }
             }
         },
@@ -369,6 +383,10 @@ export const ComponentPanel = ({
                 )}
             </div>
             {error && <p className="component-error">{error}</p>}
+            {/* Above the panes rather than beside the row that failed: a command whose outcome
+                nobody knows is a fact about the component, not about the field it was aimed at, and
+                a row can be scrolled away from while this must not be. */}
+            <Uncertain commanding={commanding} />
             {!observing && !error && <p className="muted">Cached props and state, read without a call. Observe to subscribe.</p>}
             {observing && (
                 <div className="component-body">

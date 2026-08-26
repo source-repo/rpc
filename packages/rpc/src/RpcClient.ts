@@ -3,6 +3,7 @@ import { GenericModule, PeerRegistry, Transport, TransportEvent } from './RPC/Co
 import { MessageSigner, type TrustedCertificateAuthority } from './RPC/Auth.js'
 import { RpcSchema } from './RPC/Schema.js'
 import { defaultWebSocketPort, IManageRpc } from './RPC/Rpc.js'
+import { RpcOperations } from './RPC/Operations.js'
 import { defaultCallTimeout, RpcClientHandler, type WithOptions } from './RPC/RpcClientHandler.js'
 import {
     ComponentChannels,
@@ -115,6 +116,14 @@ export type RpcProxy<T> = RemoteSurface<T> & WithOptions<RemoteSurface<T>>
  * peer state instead of inferring either from failed calls.
  */
 export class RpcClient extends EventEmitter {
+    /**
+     * What this peer has asked other peers to do, and how each of those turned out.
+     *
+     * Owned here rather than by the handler, so it exists from construction: the handler is built in
+     * `init()`, and a screen binding to a tray does so while the link is still being made. It is the
+     * same object either way - `callWith` is the only thing that writes to it.
+     */
+    readonly operations = new RpcOperations()
     rpcClient?: RpcClientHandler
     manageRpc?: IManageRpc
     readyFlag = false
@@ -192,7 +201,7 @@ export class RpcClient extends EventEmitter {
         // The transport encodes, so there is no converter between it and the handler. A structured
         // wire format such as MQTT 5 needs to see the message, not bytes a converter already flattened.
         transport.codec = codecFor(this.options.useMsgPack)
-        this.rpcClient = new RpcClientHandler(this.options.name, [transport], this.options.callTimeout)
+        this.rpcClient = new RpcClientHandler(this.options.name, [transport], this.options.callTimeout, this.operations)
         this.rpcClient.batchCalls = this.options.batchCalls ?? true
         if (this.options.schema)
             this.rpcClient.schemaVersions = Object.fromEntries(

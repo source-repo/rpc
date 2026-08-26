@@ -9,8 +9,10 @@ import {
     RpcSuccessPayload,
     type RpcTicketPayload,
     RpcMessageType,
-    type RpcBatchPayload
+    type RpcBatchPayload,
+    type RpcMethodSemantics
 } from './RpcServerHandler.js'
+import { RpcOperations } from './Operations.js'
 import { RpcTickets } from './Ticket.js'
 import { EventEmitter } from 'events'
 import { v4 as uuidv4 } from 'uuid'
@@ -92,6 +94,16 @@ export interface RpcCallOptions {
      * within-flight half of what the lease's target-side check cannot see.
      */
     ownerEpoch?: string
+    /**
+     * What this method does, for the operations registry to show beside the call.
+     *
+     * **It travels nowhere and decides nothing.** A client holds no schema, and this repository's
+     * own rule is that a running class beats the schema for exactly this question - so a caller's
+     * claim about semantics is for a screen to read and never for a mechanism to gate on. What it
+     * buys is the difference between a tray that can say *this uncertain one was a non-repeatable
+     * command* and one showing an operator six identical rows.
+     */
+    semantics?: RpcMethodSemantics
 }
 
 /** A proxy with per-call options attached. See `$with` on a proxy. */
@@ -263,12 +275,21 @@ export class RpcClientHandler extends MessageModule<Message<RpcMessage>, RpcMess
      */
     resubscribeRetry = { attempts: 8, baseMs: 1000, capMs: 30000 }
     eventEmitter: { [index: string]: unknown } = new EventEmitter() as unknown as { [index: string]: unknown }
+    /**
+     * What this peer has asked other peers to do. Supplied by whoever owns the handler where they
+     * want an identity that exists before `ready()` - a screen binds to this while the link is still
+     * being built - and made here otherwise.
+     */
+    readonly operations: RpcOperations
+
     constructor(
         name: string,
         sources?: GenericModule<unknown, unknown, Message, RpcMessage>[],
-        public callTimeout = defaultCallTimeout
+        public callTimeout = defaultCallTimeout,
+        operations?: RpcOperations
     ) {
         super(name, sources)
+        this.operations = operations ?? new RpcOperations()
     }
 
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -300,10 +321,21 @@ export class RpcClientHandler extends MessageModule<Message<RpcMessage>, RpcMess
             // A deferred method answers twice. This is the first: a correlation id and an expiry,
             // which become the ticket the caller holds while the work runs.
             const deferred = payload.deferred ? (payload.result as { id: string; expiresAt: number }) : undefined
+            // A ticket is not a result, so the *call* succeeding is not the *operation* finishing.
+            // The registry is handed the ticket's own promise rather than left to guess from the
+            // shape of a value, because a remote method is free to return an object with an `id` and
+            // an `expiresAt` and mean nothing by it - the same reason the server says `deferred`
+            // rather than letting the client sniff for it.
             // Same reason as a ticket reply: a ticket whose target is unknown could be answered by
             // anyone, so an answer with no verifiable source is delivered as the plain result it
             // came as rather than hydrated into something that claims a guarantee it cannot make.
-            pending.resolve(deferred && source ? this.tickets.open(deferred.id, source, deferred.expiresAt) : payload.result)
+            if (deferred && source) {
+                const ticket = this.tickets.open(deferred.id, source, deferred.expiresAt)
+                this.deferring.set(payload.id, ticket.result)
+                pending.resolve(ticket)
+                return
+            }
+            pending.resolve(payload.result)
             return
         }
         if (isErrorResponse(payload)) {
@@ -550,6 +582,15 @@ export class RpcClientHandler extends MessageModule<Message<RpcMessage>, RpcMess
      */
     private sentRequests = new Set<string>()
 
+    /**
+     * The ticket promise for a call that answered with one, held between the success branch that
+     * opened it and the resolve wrapper that hands it to the registry.
+     *
+     * Deleted on the way through rather than left, since a peer that defers a great deal would
+     * otherwise accumulate one entry per call for the life of the process.
+     */
+    private readonly deferring = new Map<string, Promise<unknown>>()
+
     /** Detach a pending call and cancel its timeout. Returns undefined if it already settled. */
     private takePending(id: string | undefined) {
         if (id === undefined) return undefined
@@ -609,9 +650,44 @@ export class RpcClientHandler extends MessageModule<Message<RpcMessage>, RpcMess
             ...(options.idempotencyKey ? { idempotencyKey: options.idempotencyKey } : {}),
             ...(options.ownerEpoch ? { fence: { ownerEpoch: options.ownerEpoch } } : {})
         }
+        // Written down before anything is sent, so a call that never leaves is still a call this
+        // peer made. `callWith` is the single funnel - a client's calls, a server-acting-as-caller's
+        // and a component channel's all arrive here - which is why one hook covers every one of them
+        // and why there is no wire change anywhere in this.
+        //
+        // Deliberately not `params`: an `untap(token)` argument is a bearer capability, and a
+        // peer-wide store holding one would hand every screen in the process a read surface that
+        // `authorize()` was protecting on the way in.
+        this.operations.record({
+            id: payload.id,
+            ...(remote !== undefined ? { target: remote } : {}),
+            namespace: instanceName,
+            method,
+            ...(options.semantics !== undefined ? { semantics: options.semantics } : {}),
+            ...(options.idempotencyKey ? { idempotencyKey: options.idempotencyKey } : {}),
+            ...(timeoutMs > 0 ? { deadlineMs: timeoutMs } : {}),
+            issuedAt: Date.now(),
+            status: 'issued'
+        })
         return new Promise((resolve, reject) => {
             // Registered before sending: a response can arrive before sendPayload's promise settles.
-            this.responsePromiseMap.set(payload.id, { resolve, reject })
+            //
+            // Wrapped rather than recorded at each of the four places a call can settle - a reply, a
+            // refusal, the local timer, the link dropping. Those are the paths that get added to, and
+            // one that forgot to tell the registry would leave a tray showing a command still in
+            // flight for ever, which is worse than not having the tray.
+            this.responsePromiseMap.set(payload.id, {
+                resolve: (value: unknown) => {
+                    this.operations.resolved(payload.id, Date.now(), this.deferring.get(payload.id))
+                    this.deferring.delete(payload.id)
+                    resolve(value)
+                },
+                reject: (error: unknown) => {
+                    this.deferring.delete(payload.id)
+                    this.operations.rejected(payload.id, Date.now(), error)
+                    reject(error)
+                }
+            })
             // No timer at all when the timeout is zero. setTimeout(..., 0) is not "never" - it is
             // "next tick", so a disabled timeout was an instant one: the ttl was correctly omitted
             // from the wire while the local timer fired before the reply could possibly arrive.
@@ -631,6 +707,7 @@ export class RpcClientHandler extends MessageModule<Message<RpcMessage>, RpcMess
                     // Recorded only once the transport has accepted it, and only while the call is
                     // still pending - a reply may well have arrived and settled it already.
                     if (this.responsePromiseMap.has(payload.id)) this.sentRequests.add(payload.id)
+                    this.operations.sent(payload.id, Date.now())
                 },
                 (e) => {
                     // It never left, so whatever it would have done, it did not.

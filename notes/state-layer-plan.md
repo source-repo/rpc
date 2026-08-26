@@ -182,6 +182,16 @@ Two more caveats for a plant box rather than a tab: `gcTime` bounds by time and 
 
 ## Phase 4 — operations visibility
 
+**Done.** The registry is `client.operations` / `server.operations`, hooked at `callWith` exactly as planned, with no wire change and no contract change. Three things the plan did not settle and the build had to:
+
+- **The bound is three tiers rather than a slice.** Settled-and-certain goes first, then the oldest `unknown-outcome`, and **a call still in flight is never dropped** - so the registry may exceed `keep`. Evicting one would take a command off an operator's screen while it was still happening and leave nowhere to record the uncertain outcome it was about to become; it costs nothing, since the client already holds a promise per in-flight call.
+- **`Timeout` joins `UnknownOutcome` in the status.** The plan listed the status; what it did not say is which codes reach it. Both do, with the code kept beside it - they are the same fact about a plant reached by different routes, and a tray sorting on the status has to find them together. `mayHaveRun` is exported so a screen cannot keep a second opinion.
+- **`semantics` had to become a call option.** A client holds no schema, so "semantics where known" had nowhere to come from. It is now the caller's claim on `$with`, travelling nowhere and deciding nothing.
+
+The precondition is done with it, and it needed more than attaching a key: a key generated per *attempt* buys nothing, because that is what the request id already is - so the console mints one per **press**, holds it for a retry offered only where `mayHaveRun` says nobody knows, and drops it the moment anything else is committed. `console.call` gained a trailing optional `idempotencyKey`, because the method panel's calls are relayed and a key minted in a page reaches the wire only if that verb carries it. Every rule has a regression test checked against a build with the rule removed.
+
+**Not built, and now recorded rather than pending: command parking.** Unchanged from the argument below.
+
 **The tray survives; the park does not.**
 
 `client.operations`, in the shape `RpcComponentStore` already defines, holding one frozen entry per call: id, target, namespace, method, semantics where known, idempotency key, deadline, issued/sent/settled times, and a status of `issued | sent | deferred | succeeded | failed | unknown-outcome`. Hooked in exactly one place — `callWith` is already the single funnel for every call a client, a server-as-caller or a component channel makes — so a server gets the same registry with no second implementation. No wire change, no contract change.

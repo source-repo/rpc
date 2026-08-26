@@ -6,6 +6,7 @@ import { ComponentChannels, componentFacade, type RpcComponentChannelOptions, ty
 import { HostTopology, type HostTopologyOptions, type RpcRef } from './RPC/Topology.js'
 import { contextEvent, contextNamespace, HostContext, type RpcCapturedContext, type RpcContextProviderHandle, type RpcContextToken } from './RPC/Context.js'
 import { ContextResolver, type RpcContextStore } from './RPC/ContextResolver.js'
+import type { RpcOperations } from './RPC/Operations.js'
 import { RpcAuthenticator, RpcAuthorizer, type TrustedCertificateAuthority } from './RPC/Auth.js'
 import { validateAiGrants, type RpcAiGrants } from './RPC/Grants.js'
 import { RpcSchema } from './RPC/Schema.js'
@@ -202,6 +203,16 @@ export class RpcServerBase extends EventEmitter implements IManageRpc {
      * over MQTT means a second broker session, and over socket.io a second announced peer.
      */
     public caller: RpcClientHandler
+
+    /**
+     * What this server has asked other peers to do, as a caller.
+     *
+     * The same registry the client has and the same one `callWith` writes to - a server on a bus is
+     * rarely only a server, and its outward calls are exactly as uncertain as anybody else's.
+     */
+    get operations(): RpcOperations {
+        return this.caller.operations
+    }
     readyFlag = false
     switch?: Switch
     transports: Transport[] = []

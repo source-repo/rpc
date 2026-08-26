@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { ArgumentField, FieldState, initialText, toValue } from './ArgumentField'
+import { Uncertain, useCommanding } from './command'
 import { ConsoleService, DescribedMethod, ServerDescription, isOptional, requiredPart, typeText } from './types'
 
 /** How many times the repeat button calls. Enough for a p50 to mean something, few enough to wait for. */
@@ -111,6 +112,12 @@ export const MethodPanel = ({
         return args
     }
 
+    /**
+     * The key that makes a second press of Call another attempt at *this* command rather than a
+     * second one, and the offer to use it. Held here so it survives the outcome being drawn.
+     */
+    const commanding = useCommanding()
+
     const invoke = async (repeat = 1) => {
         let args: unknown[]
         try {
@@ -123,19 +130,37 @@ export const MethodPanel = ({
         setOutcome(null)
         const collected: number[] = []
         let last: { ok: boolean; text: string } | null = null
-        try {
-            for (let attempt = 0; attempt < repeat; attempt++) {
-                const answer = await service.call(peer, namespace, method.name, args)
-                collected.push(answer.ms)
-                last = answer.error
-                    ? { ok: false, text: `${answer.code ? answer.code + ': ' : ''}${answer.error}` }
-                    : { ok: true, text: `${JSON.stringify(answer.result, null, 2) ?? 'undefined'}\n\n// ${answer.ms} ms` }
-                // One that fails says so and stops: twenty identical failures are one finding.
-                if (answer.error) break
-            }
+
+        /**
+         * One attempt, under a key when there is one.
+         *
+         * The key travels as far as the console and no further on its own: the call to the plant is
+         * made by *that* process, so a key minted here reaches the wire only because the relaying
+         * `call` verb carries it.
+         */
+        const once = async (idempotencyKey?: string) => {
+            const answer = await service.call(peer, namespace, method.name, args, idempotencyKey)
+            collected.push(answer.ms)
+            last = answer.error
+                ? { ok: false, text: `${answer.code ? answer.code + ': ' : ''}${answer.error}` }
+                : { ok: true, text: `${JSON.stringify(answer.result, null, 2) ?? 'undefined'}\n\n// ${answer.ms} ms` }
             setOutcome(last)
-        } catch (e) {
-            setOutcome({ ok: false, text: (e as Error).message })
+            // Thrown rather than returned so one classification decides everything: the relay reports
+            // a failure as a value, and turning it back into an error here is what lets the same
+            // `mayHaveRun` the operations registry uses decide whether a retry is even offered.
+            if (answer.error) throw Object.assign(new Error(answer.error), { code: answer.code })
+        }
+
+        try {
+            // Repeating is deliberately **not** one command tried many times - the button says
+            // twenty calls and means twenty, which for a command or an undeclared method is twenty
+            // commands. So it carries no key, and offers no retry: there is no single intent to be
+            // another attempt at.
+            if (repeat > 1) for (let attempt = 0; attempt < repeat; attempt++) await once()
+            else await commanding.run(`${namespace}.${method.name}`, (idempotencyKey) => once(idempotencyKey))
+        } catch {
+            // Already on screen: `once` sets the outcome before it throws, and one that fails stops
+            // the repeat - twenty identical failures are one finding.
         } finally {
             setTimes((current) => [...current, ...collected].slice(-200))
             setBusy(false)
@@ -265,6 +290,7 @@ export const MethodPanel = ({
                         )}
                     </div>
                     {outcome && <pre className={outcome.ok ? 'result' : 'result bad'}>{outcome.text}</pre>}
+                    <Uncertain commanding={commanding} />
                 </div>
             )}
         </div>
