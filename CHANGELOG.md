@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### `@source-repo/signalr` publishes on a tag like everything else
+
+It was the one package the release workflow did not publish, so 5.1.0 moved every other package and left this one at 5.0.0 - published by hand once and then not. That is precisely the drift the versions-together rule exists to prevent, and it went unnoticed because nothing failed: a package that is simply absent from a job does not report anything.
+
+Same step and same guard as the others, so it rides every tag and a release that did not touch it publishes nothing.
+
 ### A component's state can outlive the process that held it
 
 The first phase of the online-change design: a component is a logical thing with a persistent address, and the process implementing it is not. **`@source-repo/continuity`** is what it keeps across that boundary — versioned snapshots of held state, adjacent forward migrations, and a record of every value that moved.

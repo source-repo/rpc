@@ -190,6 +190,26 @@ jobs:
                     npm publish --access public --provenance
                   fi
 
+            # The TypeScript half of reaching a .NET peer. It versions with the library rather than
+            # on its own, because it carries the flat frame to a C# hub and a client pinned to one
+            # shape of that frame is easier to reason about than one that says nothing about which
+            # library it agrees with - the same rule the CLI follows.
+            #
+            # Left out of this job until now, which is exactly the drift the rule exists to prevent:
+            # every other package moved to 5.1.0 on a tag and this one stayed at 5.0.0, published by
+            # hand and then not.
+            - name: Publish the SignalR client
+              working-directory: packages/signalr
+              env:
+                  NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+              run: |
+                  version=$(node -p "require('./package.json').version")
+                  if curl -fsSL -o /dev/null "https://registry.npmjs.org/@source-repo%2fsignalr/${version}"; then
+                    echo "@source-repo/signalr@${version} is already published"
+                  else
+                    npm publish --access public --provenance
+                  fi
+
     # Independent of npm: these are different packages on a different registry, and one being
     # down or rate-limited is not a reason the other cannot ship.
     #
