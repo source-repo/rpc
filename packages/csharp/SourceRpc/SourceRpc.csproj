@@ -9,11 +9,6 @@
     things three bindings would otherwise each reimplement slightly differently.
   -->
   <PropertyGroup>
-    <TargetFramework>net8.0</TargetFramework>
-    <Nullable>enable</Nullable>
-    <ImplicitUsings>enable</ImplicitUsings>
-    <LangVersion>12</LangVersion>
-    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
     <RootNamespace>SourceRpc</RootNamespace>
     <AssemblyName>SourceRpc</AssemblyName>
   </PropertyGroup>
@@ -21,22 +16,9 @@
   <PropertyGroup>
     <IsPackable>true</IsPackable>
     <PackageId>SourceRpc</PackageId>
-    <Version>5.0.0</Version>
-    <Authors>anderswestberg</Authors>
     <Description>Source RPC for .NET: the flat frame, the dispatcher, the client and the error model, with no transport bound in. Carried by SourceRpc.SignalR and whatever else implements ISourceRpcTransport.</Description>
-    <PackageTags>rpc;msgrpc;automation;iiot</PackageTags>
-    <PackageLicenseExpression>MIT</PackageLicenseExpression>
-    <PackageProjectUrl>https://github.com/source-repo/rpc</PackageProjectUrl>
-    <RepositoryUrl>https://github.com/source-repo/rpc</RepositoryUrl>
-    <RepositoryType>git</RepositoryType>
-    <PublishRepositoryUrl>true</PublishRepositoryUrl>
-    <IncludeSymbols>true</IncludeSymbols>
-    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
-    <EmbedUntrackedSources>true</EmbedUntrackedSources>
-    <GenerateDocumentationFile>true</GenerateDocumentationFile>
     <!-- See the note in SourceRpc.SignalR.csproj: the XML ships, but a member whose name has already
          said it does not also need a ceremonial sentence. -->
-    <NoWarn>$(NoWarn);CS1591</NoWarn>
   </PropertyGroup>
 
   <ItemGroup>

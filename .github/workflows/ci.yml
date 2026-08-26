@@ -163,6 +163,15 @@ jobs:
             # inotify instance, and a runner that has spent its allowance throws at startup with an
             # IOException naming inotify and nothing about this repository - which is a long way to
             # travel from the symptom. A test host reads no configuration it could usefully reload.
+            # The C# unit tests, which run nowhere else. Several of the behaviours they cover cannot
+            # be reached from the TypeScript suite at all: a duplicate idempotency claim is a race
+            # inside one process, and the router's takeover race needs two threads interleaved at a
+            # single line. A green interop suite says nothing about either.
+            - name: Test the C# packages
+              env:
+                  DOTNET_USE_POLLING_FILE_WATCHER: '1'
+              run: dotnet test packages/csharp/SourceRpc.sln -c Release
+
             - name: Start the C# peers
               env:
                   DOTNET_USE_POLLING_FILE_WATCHER: '1'

@@ -182,7 +182,25 @@ Counters, a duration histogram and spans, through `System.Diagnostics.Metrics` a
 
 `rpc.calls`, `rpc.call.duration`, `rpc.errors`, `rpc.frames.sent`, `rpc.frames.received`, `rpc.frames.rejected`, `rpc.routing.failures`, `rpc.connections`, `rpc.subscriptions`. Tagged with path and method, never with arguments or results: a dimension is a label on a time series, and plant data does not belong in one.
 
+## Releasing
+
+The four packages are published to NuGet by `.github/workflows/release.yml` on a version tag, alongside the npm packages and the CLI image:
+
+```
+git tag v5.1.0 && git push origin v5.1.0
+```
+
+Three things about that job are deliberate:
+
+- **The .NET version is not the tag.** It lives in `packages/csharp/Directory.Build.props` and moves when these packages actually change. A documentation fix to the TypeScript README is not a reason to publish four NuGet packages with nothing in them, so the job skips whatever is already on the registry and a tag that changed nothing here publishes nothing here.
+- **The packages are installed before they are pushed.** `smoke-test.sh` puts them in a fresh project with an empty cache and compiles against them. Packing proves a file was produced; it does not prove anyone can use it — a missing dependency or a type left internal packs perfectly and fails at whoever installs it first. A NuGet version, once pushed, cannot be replaced, so this is the last point where that is still fixable.
+- **Symbols go with them.** `dotnet nuget push` sends the matching `.snupkg`, which is what makes a stack trace from a plant resolve to a line of this repository.
+
+It needs one secret, `NUGET_API_KEY`, scoped to push these four IDs.
+
 ## Publishing to a local feed
+
+For development, before a tag exists.
 
 A NuGet feed is a folder. Registering one on the machine takes a line, and then `dotnet add package` finds these the same way it finds anything from nuget.org:
 
@@ -369,6 +387,8 @@ Anything still on a `ProjectReference` into `packages/signalr/csharp/` is pointi
 **`messageExpiryInterval` is not read on receive.** The TypeScript transport uses it to narrow a signed ttl, which is what makes "the broker may shorten a deadline, never extend it" true in both directions. Here a request that sat twenty-five seconds in the broker still runs with its full signed budget.
 
 **`mr-method` and `mr-event` share one slot in the signed canonical form.** Both implementations collapse them, so relabelling a signed event as a method keeps the signature valid and the frame is then dropped for want of a handler. The effect is suppression, which a hostile broker can achieve by discarding the frame anyway — but it is a genuine slot collision, and fixing it is a change to both languages rather than to this package.
+
+**Public API compatibility is not checked.** Nothing fails a build when a public signature changes, so a breaking change reaches a package only as somebody's compile error. `ApiCompat` or a public-API analyzer against a committed baseline is what would catch it — the release job would be the place to run it.
 
 **Cross-language conformance is not executable.** The wire formats are documented and the C# side is driven from TypeScript, which is a good deal better than two mocks agreeing - but TypeScript's behaviour is still the de facto specification. Shared fixtures both implementations consume, and a published feature matrix per language and transport, are what would fix that.
 

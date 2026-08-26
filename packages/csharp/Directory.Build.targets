@@ -1,0 +1,33 @@
+<Project>
+
+  <!--
+    The half of the shared build that has to be read *after* each project, not before.
+
+    Directory.Build.props is imported first, so anything conditioned on a property the project sets
+    - `IsPackable` here - sees it unset and evaluates false. That is not a subtle failure: every
+    package built cleanly and shipped as version 1.0.0, which is what NuGet uses when nobody said.
+  -->
+  <!-- Package metadata that is the same for all four, and would otherwise be pasted four times. -->
+  <PropertyGroup Condition="'$(IsPackable)' == 'true'">
+    <Version>$(SourceRpcVersion)</Version>
+    <Authors>anderswestberg</Authors>
+    <PackageTags>rpc;msgrpc;automation;iiot</PackageTags>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageProjectUrl>https://github.com/source-repo/rpc</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/source-repo/rpc</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PublishRepositoryUrl>true</PublishRepositoryUrl>
+    <!-- Shown on the package page. Every package carries one: a NuGet page with no readme is a
+         list of dependencies and a version number, which tells a reader nothing about whether it
+         is the package they want. -->
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <IncludeSymbols>true</IncludeSymbols>
+    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+    <EmbedUntrackedSources>true</EmbedUntrackedSources>
+  </PropertyGroup>
+
+  <ItemGroup Condition="'$(IsPackable)' == 'true'">
+    <None Include="README.md" Pack="true" PackagePath="\" />
+  </ItemGroup>
+
+</Project>

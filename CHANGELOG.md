@@ -2,6 +2,29 @@
 
 ## Unreleased
 
+### NuGet publishing is automated, and the C# tests now run in CI
+
+A version tag already published the npm packages and the CLI image; the four .NET packages were still built by hand and pushed to a folder on one workstation. They now ride the same tag.
+
+**The .NET version is deliberately not the tag.** It lives in `packages/csharp/Directory.Build.props` - one place rather than four csproj files, which is four places to edit and three chances to miss one - and moves when the C# packages actually change. A documentation fix to the TypeScript README should not publish four NuGet packages with nothing in them, so the job skips whatever is already on the registry, the same bargain the queue and docker packages already make.
+
+**The packages are installed before they are pushed.** `smoke-test.sh` puts all four into a fresh project with an empty NuGet cache and compiles against them. Packing proves a file was produced; it does not prove anyone can use it - a missing dependency, an unconsumable target framework or a type left internal all pack perfectly and fail at whoever installs them first. A NuGet version cannot be replaced once pushed, so this is the last point at which that is still fixable.
+
+Centralising the metadata broke two things that only inspecting the artifact would show, and both are worth recording because they failed silently:
+
+- Every package packed as **1.0.0**. `Directory.Build.props` is imported *before* the project body, so a block conditioned on `IsPackable` - which the project sets - saw it unset and evaluated false. The packable metadata moved to `Directory.Build.targets`, which is imported after.
+- Then every package shipped with **no XML documentation at all**, because `GenerateDocumentationFile` is read while compiling, long before `.targets`. Every doc comment in this repository would have been invisible to anyone consuming a package, and nothing failed. It is back in `.props`, where the compiler can see it.
+
+Each package now carries its own README, so a NuGet page says what the package is rather than listing its dependencies.
+
+**The C# unit tests now run in CI**, which they did not. CI built the test host and never ran the 43 tests - and several of the behaviours they cover cannot be reached from the TypeScript suite at all: a duplicate idempotency claim is a race inside one process, and the router's takeover race needs two threads interleaved at a single line. A green interop suite said nothing about either.
+
+Both workflow commands were run locally exactly as CI will run them, and the already-published guard was checked against the live registry. The four package IDs are unclaimed on nuget.org; the job needs a `NUGET_API_KEY` secret scoped to them, and cannot publish without one.
+
+Still not automated: public API compatibility. Nothing fails a build when a public signature changes, so a breaking change reaches a package as somebody's compile error - a baseline and `ApiCompat` in the release job is what would catch it.
+
+## Unreleased
+
 ### The rest of the review's pre-release list for the C# packages
 
 The six correctness defects landed first. These are the items the same review named as wanted before .NET is a supported installation path rather than a preview one - less dramatic, and mostly about a peer being able to *ask* for what it can already enforce.

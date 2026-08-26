@@ -1,4 +1,4 @@
-# Publish both packages to npm and the CLI image to GitHub Packages, on a version tag.
+# Publish the npm packages, the four NuGet packages and the CLI image, on a version tag.
 #
 #   git tag v3.0.0 && git push origin v3.0.0
 #
@@ -160,6 +160,77 @@ jobs:
                   else
                     npm publish --access public --provenance
                   fi
+
+    # Independent of npm: these are different packages on a different registry, and one being
+    # down or rate-limited is not a reason the other cannot ship.
+    #
+    # The .NET version is deliberately *not* required to match the tag. It lives in
+    # packages/csharp/Directory.Build.props and moves when the C# packages actually change - a
+    # documentation fix to the TypeScript README is not a reason to publish four NuGet packages
+    # with nothing in them. The already-published guard is what makes riding every tag free, the
+    # same bargain the queue and docker packages make above.
+    nuget:
+        needs: verify
+        runs-on: ubuntu-latest
+        permissions:
+            contents: read
+        steps:
+            - uses: actions/checkout@v7
+              with:
+                  ref: ${{ github.event.inputs.ref || github.ref }}
+            - uses: actions/setup-dotnet@v6
+              with:
+                  dotnet-version: '8.0.x'
+
+            # The unit tests, which are the only place several of these behaviours can be checked:
+            # a duplicate idempotency claim is a race inside one process, and the router's takeover
+            # race needs two threads interleaved at one line. Nothing driven over a wire reaches
+            # either, so a green interop suite says nothing about them.
+            - name: Test
+              env:
+                  DOTNET_USE_POLLING_FILE_WATCHER: '1'
+              run: dotnet test packages/csharp/SourceRpc.sln -c Release
+
+            - name: Pack
+              run: dotnet pack packages/csharp/SourceRpc.sln -c Release -o nupkg
+
+            # Installed into a fresh project from an empty cache, and compiled against. Packing
+            # proves a file was produced; it does not prove anyone can use it. A missing dependency,
+            # an unconsumable target framework or a type left internal all pack perfectly and fail
+            # at whoever installs them first - and on NuGet a version, once pushed, cannot be
+            # replaced. This is the last point at which that is still fixable.
+            - name: Smoke-test the packages
+              run: packages/csharp/smoke-test.sh nupkg
+
+            # Skipped rather than failed when the version is already there, for the reason the npm
+            # steps are: a published version is published, and stopping the release over one that
+            # somebody pushed by hand helps nobody.
+            - name: Publish to NuGet
+              env:
+                  NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
+              run: |
+                  if [ -z "${NUGET_API_KEY}" ]; then
+                    echo "NUGET_API_KEY is not set - nothing can be published"
+                    exit 1
+                  fi
+                  version=$(grep -oP '(?<=<SourceRpcVersion>)[^<]+' packages/csharp/Directory.Build.props)
+                  echo "SourceRpc ${version}"
+                  for package in SourceRpc SourceRpc.SignalR SourceRpc.Mqtt SourceRpc.SocketIo; do
+                    # Asked of the registry directly. `dotnet nuget push --skip-duplicate` would
+                    # also survive a repeat, but it cannot tell "already published" from a push
+                    # that silently did nothing, and this loop should be able to say which.
+                    if curl -fsSL -o /dev/null "https://api.nuget.org/v3-flatcontainer/${package,,}/${version}/${package,,}.nuspec" 2>/dev/null; then
+                      echo "  ${package} ${version} is already published"
+                    else
+                      # The symbols ride along: dotnet nuget push sends the matching .snupkg with
+                      # the package unless told not to, which is what makes a stack trace from a
+                      # plant resolve to a line of this repository.
+                      dotnet nuget push "nupkg/${package}.${version}.nupkg" \
+                        --source https://api.nuget.org/v3/index.json \
+                        --api-key "${NUGET_API_KEY}"
+                      echo "  published ${package} ${version}"
+                    fi
+                  done
 
     # After npm, because the image installs the published CLI rather than building the repository.
     container:
