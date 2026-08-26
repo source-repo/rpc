@@ -178,6 +178,20 @@ jobs:
                     npm publish --access public --provenance
                   fi
 
+            # Live values beside the source that declares them. Its own line, like the rest of the
+            # 0.x packages, and the same guard makes riding every tag free.
+            - name: Publish the diagnostics package
+              working-directory: packages/diagnostics
+              env:
+                  NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+              run: |
+                  version=$(node -p "require('./package.json').version")
+                  if curl -fsSL -o /dev/null "https://registry.npmjs.org/@source-repo%2fdiagnostics/${version}"; then
+                    echo "@source-repo/diagnostics@${version} is already published"
+                  else
+                    npm publish --access public --provenance
+                  fi
+
             - name: Publish the query package
               working-directory: packages/query
               env:

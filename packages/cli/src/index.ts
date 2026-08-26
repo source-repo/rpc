@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
-import { basename, resolve } from 'node:path'
+import { basename, dirname, resolve } from 'node:path'
 import {
     createDerivedAuthenticator,
     createTokenAuthenticator,
@@ -16,6 +16,7 @@ import {
     type RpcSchema
 } from '@source-repo/rpc'
 import { Diagnostic, extractSchema } from './extract.js'
+import { sealCatalogue } from './bindings.js'
 import { startConsole } from './console.js'
 import { startBroker } from './broker.js'
 import { startMcp } from './mcp.js'
@@ -72,6 +73,9 @@ const usage = `source-rpc <command> [options]          --version prints the CLI 
     --out <file>                default ./msgrpc.types.json   (extract)
     --against <file>            default ./msgrpc.types.json   (check)
     --keep-history              move the previous contract into history before writing
+    --bindings <file>           (extract) also write where each component's props and state are
+                                declared, so a viewer can put a live value beside the line that
+                                names it. Carries no values and no source, only positions.
     --peer <name>               (check) ask a live peer what it serves instead of reading source
                                 needs --broker or --hub
 
@@ -523,6 +527,7 @@ const VALUE_FLAGS = new Set([
     '--args',
     '--project',
     '--out',
+    '--bindings',
     '--against',
     '--port',
     '--host',
@@ -1315,7 +1320,7 @@ const main = () => {
         process.exit(command ? 1 : 0)
     }
 
-    const { schema, diagnostics } = extractSchema(project)
+    const { schema, diagnostics, bindings, files } = extractSchema(project)
     if (diagnostics.length) {
         // Refused rather than written with holes in it: a schema that degrades to `any` on the
         // parts it could not read still looks like protection while checking nothing.
@@ -1338,6 +1343,21 @@ const main = () => {
         writeFileSync(out, JSON.stringify(written, null, 2) + '\n')
         const count = Object.keys(schema.namespaces).length
         process.stdout.write(`source-rpc: wrote ${count} namespace${count === 1 ? '' : 's'} to ${out}\n`)
+
+        // Opt-in, and separate from the contract on purpose. A contract describes what a peer
+        // serves and travels to everyone who calls it; a source catalogue describes where that
+        // peer's own source says things, which is a different audience and a different secret.
+        const catalogueOut = argument(argv, '--bindings', '')
+        if (catalogueOut)
+            // Chained rather than awaited, because `main` is synchronous and hashing the files is
+            // not. The same shape the other asynchronous commands here already use.
+            void sealCatalogue(files, bindings, dirname(resolve(project)))
+                .then((catalogue) => {
+                    writeFileSync(resolve(catalogueOut), JSON.stringify(catalogue, null, 2) + '\n')
+                    const bound = Object.values(bindings).reduce((total, list) => total + list.length, 0)
+                    process.stdout.write(`source-rpc: wrote ${bound} source binding${bound === 1 ? '' : 's'} for revision ${catalogue.semanticRevisionId.slice(0, 12)} to ${resolve(catalogueOut)}\n`)
+                })
+                .catch(fail)
         return
     }
 

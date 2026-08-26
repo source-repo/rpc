@@ -1435,6 +1435,68 @@ textarea.control {
     color: var(--warn);
 }
 
+/* The component's own source, with live values beside the lines that declare them.
+   Monospace and dense on purpose: this is a program being read, and a line that wraps has stopped
+   being a line. The values sit at the end rather than inline, so the source still reads as source. */
+.source-view {
+    overflow: auto;
+}
+
+.source-listing {
+    margin: 0;
+    font-size: 12px;
+    line-height: 1.5;
+    overflow-x: auto;
+}
+
+/* Nothing is bound, because the file is not what is running. Dimmed so it reads as reference. */
+.source-listing.unbound {
+    opacity: 0.6;
+}
+
+.source-line {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    white-space: pre;
+}
+
+.source-number {
+    flex: none;
+    width: 3.5em;
+    text-align: right;
+    color: var(--muted);
+    user-select: none;
+}
+
+.source-text {
+    flex: none;
+}
+
+/* The live value. Set apart from the code rather than inside it: what is on the line was written by
+   somebody, and what is after it is what the machine currently holds. */
+.source-value {
+    flex: none;
+    margin-left: 12px;
+    padding: 0 6px;
+    border-radius: 3px;
+    background: color-mix(in srgb, var(--ok) 12%, transparent);
+    color: var(--ok);
+}
+
+/* Last known rather than current, which the panel's own header says at length and this says at a
+   glance - a value that has stopped being true must not look like one that has not. */
+.source-value.stale {
+    background: color-mix(in srgb, var(--warn) 12%, transparent);
+    color: var(--warn);
+}
+
+.source-value.redacted {
+    background: transparent;
+    border: 1px dashed var(--muted);
+    color: var(--muted);
+}
+
 /* The three freshness states of a pulled page, and they are deliberately not a traffic light.
    `current` is the only one that is a *fact* - the component has published nothing since the page
    was drawn - so it is the only one coloured. "May have changed" is ordinary and constant on a

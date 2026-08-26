@@ -2,6 +2,8 @@ import { existsSync, readFileSync } from 'node:fs'
 import { resolve as resolvePath, dirname, join } from 'node:path'
 import { ClassDeclaration, MethodDeclaration, Node, Project, Symbol as MorphSymbol, ts, Type } from 'ts-morph'
 import { SCHEMA_VERSION, type ComponentSchema, type MethodSchema, type NamespaceSchema, type RpcEffect, type RpcMethodSemantics, type RpcSchema, type TypeNode } from '@source-repo/rpc'
+import { bindingsFor } from './bindings.js'
+import type { RpcSourceBinding } from '@source-repo/diagnostics/catalogue'
 
 /**
  * Reads a contract out of TypeScript source.
@@ -25,6 +27,20 @@ export interface Diagnostic {
 export interface ExtractResult {
     schema: RpcSchema
     diagnostics: Diagnostic[]
+    /**
+     * Where each component's props and state are declared, for a viewer that wants to show a live
+     * value beside the line that names it.
+     *
+     * Produced by the same walk that produced the contract, from the same resolved types, because
+     * two walks would be two answers to "what paths does this component have" - and the one drawn
+     * on a screen beside source is the one an operator would act on.
+     *
+     * Unhashed here. `sealCatalogue` reads the files and names the revision, which is asynchronous
+     * and is the caller's to do only when it wants a catalogue.
+     */
+    bindings: { [componentType: string]: readonly RpcSourceBinding[] }
+    /** The files the walk actually read, which is what a bundle hash is taken over. */
+    files: readonly string[]
 }
 
 interface Context {
@@ -392,7 +408,7 @@ const eventsFromDeclaration = (declaration: ClassDeclaration, context: Context) 
  * resolved to concrete types is reported, never emitted as `any` - a snapshot schema that checks
  * nothing would sit in the contract looking exactly like one that checks everything.
  */
-const componentFromDeclaration = (declaration: ClassDeclaration, context: Context): ComponentSchema | undefined => {
+const componentFromDeclaration = (declaration: ClassDeclaration, context: Context): { schema: ComponentSchema; props: Type; state: Type } | undefined => {
     for (let type: Type | undefined = declaration.getType(); type; type = type.getBaseTypes()[0]) {
         const base = type.getBaseTypes()[0]
         if (!base) return undefined
@@ -408,9 +424,13 @@ const componentFromDeclaration = (declaration: ClassDeclaration, context: Contex
             return undefined
         }
         return {
-            snapshot: 1,
-            props: typeToNode(props, { ...at, where: `${context.where} component props` }),
-            state: typeToNode(state, { ...at, where: `${context.where} component state` })
+            schema: {
+                snapshot: 1,
+                props: typeToNode(props, { ...at, where: `${context.where} component props` }),
+                state: typeToNode(state, { ...at, where: `${context.where} component state` })
+            },
+            props,
+            state
         }
     }
     return undefined
@@ -510,6 +530,8 @@ export const extractSchema = (tsConfigFilePath: string): ExtractResult => {
     const diagnostics: Diagnostic[] = []
     const types: { [name: string]: TypeNode } = {}
     const namespaces: { [namespace: string]: NamespaceSchema } = {}
+    const bindings: { [componentType: string]: readonly RpcSourceBinding[] } = {}
+    const root = dirname(resolvePath(tsConfigFilePath))
 
     for (const sourceFile of project.getSourceFiles().filter((file) => own.has(resolvePath(file.getFilePath())))) {
         for (const declaration of sourceFile.getClasses()) {
@@ -534,11 +556,14 @@ export const extractSchema = (tsConfigFilePath: string): ExtractResult => {
             const events = eventsFromDeclaration(declaration, { ...context, where: declared.name })
             const component = componentFromDeclaration(declaration, { ...context, where: declared.name })
             const capabilities = capabilitiesFromDeclaration(declaration, { ...context, where: declared.name })
+            // From the same resolved types the contract came from, so the paths a viewer overlays
+            // and the paths the contract publishes cannot be two different answers.
+            if (component) bindings[declared.name] = bindingsFor(component.props, component.state, root)
             namespaces[declared.name] = {
                 ...(declared.version ? { version: declared.version } : {}),
                 methods,
                 ...(events ? { events } : {}),
-                ...(component ? { component } : {}),
+                ...(component ? { component: component.schema } : {}),
                 ...(capabilities ? { capabilities } : {})
             }
         }
@@ -552,5 +577,13 @@ export const extractSchema = (tsConfigFilePath: string): ExtractResult => {
         seen.add(key)
         return true
     })
-    return { schema: { schema: SCHEMA_VERSION, ...(Object.keys(types).length ? { types } : {}), namespaces }, diagnostics: unique }
+    return {
+        schema: { schema: SCHEMA_VERSION, ...(Object.keys(types).length ? { types } : {}), namespaces },
+        diagnostics: unique,
+        bindings,
+        // Every file a binding points into, plus every file the project owns - the first is what a
+        // viewer opens and the second is what makes the bundle hash describe the build rather than
+        // whichever files happened to declare a property.
+        files: [...own].sort()
+    }
 }

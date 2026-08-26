@@ -2,6 +2,8 @@ import { RefObject, useCallback, useEffect, useMemo, useState, useSyncExternalSt
 import { rpcComponent, type RpcCallOptions, type RpcComponentData, type RpcComponentLike, type RpcComponentStore, type RpcMethodSemantics, type RpcServer } from '@source-repo/rpc'
 import type { RpcDataCache } from '@source-repo/query'
 import { Uncertain, useCommanding } from './command'
+import { SourceView, type SourceDocument } from './SourceView'
+import { overlayRefusal, type RpcSourceBinding, type RpcSourceCatalogue, type RpcActiveSourceIdentity } from '@source-repo/diagnostics/catalogue'
 import { staticSource, storeSource, type EditAffordance } from './ValueTree'
 import { ScopeTree } from './ScopeTree'
 import { ValueGrid, type PageQuestion } from './ValueGrid'
@@ -44,6 +46,14 @@ import type { DescribedAction, DescribedComponent, DescribedMethod, TypeNode } f
  */
 
 type Store = RpcComponentStore<RpcComponentData, RpcComponentData>
+
+/** Just what the source view asks for, so the panel needs no generic over the diagnostics class. */
+type DiagnosticsProxy = {
+    bindings(componentType: string): Promise<readonly RpcSourceBinding[]>
+    activeSource(componentType: string): Promise<RpcActiveSourceIdentity | undefined>
+    source(fileId: string): Promise<{ fileId: string; text: string; contentHash: string }>
+    catalogue(): Promise<RpcSourceCatalogue>
+}
 
 /** How to call whatever claims a path: the method, and whether the path travels as an argument. */
 type Setter = { method: DescribedMethod; generic: boolean }
@@ -184,6 +194,16 @@ export const ComponentPanel = ({
     const commanding = useCommanding()
     const pending = commanding.pending
     const [period, setPeriod] = useState<number | undefined>(5000)
+    /**
+     * The component's own source, with its values beside the lines that declare them.
+     *
+     * Fetched on request rather than when the panel opens, because reading a peer's source is a
+     * disclosure with its own permission - and a panel that asked for it every time somebody looked
+     * at a setpoint would be asking for it on their behalf.
+     */
+    const [listing, setListing] = useState<{ document: SourceDocument; bindings: readonly RpcSourceBinding[]; refusal?: string } | null>(null)
+    const [sourceError, setSourceError] = useState<string | null>(null)
+    const [fetching, setFetching] = useState(false)
 
     const status = useChannelFact(store, statusOf, undefined)
 
@@ -292,6 +312,39 @@ export const ComponentPanel = ({
     }
 
     /**
+     * Ask the peer where this component's values are written, and for the file that says so.
+     *
+     * Two calls and a comparison. What makes it safe is the comparison: a value drawn beside source
+     * that is not the source that is running is a number somebody will act on, positioned by a line
+     * that means something else - so a mismatch shows the file with the reason and no values at all,
+     * rather than approximating.
+     */
+    const openSource = async () => {
+        const link = server.current
+        if (!link) return
+        setFetching(true)
+        setSourceError(null)
+        try {
+            const diagnostics = await link.proxy<DiagnosticsProxy>('diagnostics', peer)
+            const [bindings, identity] = await Promise.all([diagnostics.bindings(namespace), diagnostics.activeSource(namespace)])
+            if (!identity) throw new Error(`${peer} serves diagnostics and does not describe ${namespace}`)
+            const first = bindings.find((binding) => binding.spans.length > 0)
+            if (!first) throw new Error(`${namespace} declares no props or state this build could place in source`)
+            const file = await diagnostics.source(first.fileId)
+            // The node's own catalogue is what the comparison is against, and it is asked for here
+            // rather than carried: a viewer holding a catalogue from a previous deploy is exactly
+            // the case being guarded.
+            const catalogue = await diagnostics.catalogue()
+            const refusal = overlayRefusal(catalogue, identity, { fileId: file.fileId, contentHash: file.contentHash })
+            setListing({ document: { fileId: file.fileId, text: file.text }, bindings, ...(refusal ? { refusal } : {}) })
+        } catch (e) {
+            setSourceError((e as { message?: string }).message ?? String(e))
+        } finally {
+            setFetching(false)
+        }
+    }
+
+    /**
      * One page of one collection, *named* rather than fetched.
      *
      * The panel says which question a grid is showing and the cache decides what asking it costs -
@@ -395,8 +448,23 @@ export const ComponentPanel = ({
                         <ScopeTree nodes={tree} selected={scope.join('.')} onSelect={setScope} />
                     </div>
                     <div className="value-table">
-                        <h4>{scope.join('.')}</h4>
-                        <ValueGrid component={component} types={types} scope={scope} source={source} edit={edit} cache={data} pageQuestion={pageQuestion} period={period} actionsFor={(path) => actionsFor(component, path, methods)} onAction={(action, id, resource) => void runAction(action, id, resource)} />
+                        <h4>
+                            {listing ? listing.document.fileId : scope.join('.')}
+                            {/* Asked for rather than fetched when the panel opens: reading a peer's
+                                source is its own disclosure, and a panel that took it every time
+                                somebody looked at a setpoint would be taking it on their behalf. */}
+                            <button className="toggle" onClick={() => (listing ? setListing(null) : void openSource())} disabled={fetching} title="the component's own source, with these values beside the lines that declare them">
+                                {fetching ? 'reading…' : listing ? 'values' : 'source'}
+                            </button>
+                        </h4>
+                        {sourceError && <p className="component-error">{sourceError}</p>}
+                        {listing ? (
+                            // The same snapshot the grid draws from, so the source view opens no
+                            // channel of its own and can show nothing the grid could not.
+                            <SourceView document={listing.document} bindings={listing.bindings} source={source} stale={stale} refusal={listing.refusal} />
+                        ) : (
+                            <ValueGrid component={component} types={types} scope={scope} source={source} edit={edit} cache={data} pageQuestion={pageQuestion} period={period} actionsFor={(path) => actionsFor(component, path, methods)} onAction={(action, id, resource) => void runAction(action, id, resource)} />
+                        )}
                     </div>
                 </div>
             )}

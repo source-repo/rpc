@@ -8,6 +8,24 @@ It was the one package the release workflow did not publish, so 5.1.0 moved ever
 
 Same step and same guard as the others, so it rides every tag and a release that did not touch it publishes nothing.
 
+### Live values beside the source that declares them
+
+The oldest way of looking at a machine — the program on screen with what each thing currently is written next to it — and it needs no debugger, no instrumentation and no second data path.
+
+**That last part is the whole economy of it.** Props and state are already observable: a subscriber receives them, `authorize()` has already ruled on them, a projection has already narrowed them. So the only thing missing was *where each one is declared*, which is static, known at build time, and costs the running artifact nothing. Which makes the design's third acceptance criterion — that a user cannot obtain a field through source view that they could not obtain through ordinary authorised observation — a fact about the architecture rather than a check somebody has to remember to write.
+
+**`source-rpc extract --bindings <file>`** records it, from the same resolved types the contract came from, so the paths a viewer overlays and the paths the contract publishes cannot be two different answers. It descends through objects and stops at records and arrays: a record's keys are data, so `tags` has a declaration and `tags['tag.007']` does not, and inventing a span for it would put a value beside a line that says nothing about it.
+
+**`@source-repo/diagnostics`** serves it, and it is a *component* — because the design says so in the shape of its own contract. The illustrative `NodeDiagnostics` has `capabilities` and `activeSource` as readonly properties, and a readonly property a viewer watches is what an observable component already is here. So a redeploy that changes the running revision reaches every open editor without anybody polling. `source()` is a separate method because it is a separate permission: a viewer may be allowed to know that `state.setpoint` is declared at line 34 and not be allowed to read the file that says so. A node given no source root serves bindings and no text, and advertises `sourceAvailable: false` rather than failing when asked.
+
+**Nothing is drawn on the wrong source.** A value positioned by a line number from a file that has since been edited is worse than no value: it is a number somebody will act on, sitting beside a declaration that is no longer the one it came from. The revision and the file hash are compared before anything is overlaid, and the refusal is a **sentence** rather than a boolean, because three different problems live there — the file has been edited, the node has been redeployed, the file was never part of this build — and a viewer that answered "false" to all three would leave a person guessing.
+
+Every later phase's capability is advertised and `false` rather than omitted: a viewer that finds `exactPause` absent cannot tell *this node cannot* from *this protocol version had not thought of it*.
+
+The console has it behind a `source` button on a component panel, asked for rather than fetched when the panel opens — reading a peer's source is its own disclosure, and a panel that took it whenever somebody looked at a setpoint would be taking it on their behalf. Verified against a real peer serving the repository's own example: fifteen live values on the real `plant.ts`, and then, after a line was added to the file on the node, zero values, the listing dimmed, and the reason spelled out.
+
+One property fell out that nobody designed: `Zone` is one interface used by both oven zones, so the line declaring `temperature` carries **both** zones' values at once. That is correct, and more informative than the design anticipated.
+
 ### A component's state can outlive the process that held it
 
 The first phase of the online-change design: a component is a logical thing with a persistent address, and the process implementing it is not. **`@source-repo/continuity`** is what it keeps across that boundary — versioned snapshots of held state, adjacent forward migrations, and a record of every value that moved.
