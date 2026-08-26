@@ -2,6 +2,28 @@
 
 ## Unreleased
 
+### A handoff can now be *proved admissible*, which is not the same as performed
+
+The second phase of the online-change design. Phase 1 could take a component's values across a schema change; what it could not do was say what the running activation was still holding, so `admissibleForHandoff` refused. It no longer refuses by construction — it refuses when nobody has looked.
+
+**A barrier is not a new subsystem.** A component's methods already run on a serial execution queue, so `server.rpc.holdExecution(path)` puts a task on that queue and never resolves it. Calls that arrive queue behind it rather than being rejected, which is the whole difference between an online change and an outage: the plant keeps talking to a component that is briefly not answering. `quiescent` resolves when what was running has finished, `waiting()` says how many are stacked up behind, and `release()` lets them go. A path declared `parallel` or given a custom execution strategy is refused outright, because a barrier that held some of a component and not the rest would produce a snapshot of no instant at all.
+
+**The values and the work come from the same held breath.** `captureAtBarrier` reads the state and the obligations without releasing the barrier, and refuses rather than producing something that describes two moments: `not-quiescent` if the barrier is not held, `work-in-flight` if a handler is still running, `unsafe-outbound` if a non-repeatable command is out with an unknown outcome — the one case where neither assuming it ran nor assuming it did not is safe, which is the founding `TransportError`/`UnknownOutcome` distinction arriving where it finally has teeth. A refusal leaves the component running.
+
+**The honest limit is written down and tested rather than glossed.** The barrier orders work *the runtime delivered*. A component whose state changes from a raw timer, an event handler or a direct method call never went through the queue, and no barrier can detect it — there is a test that does exactly that and catches the component mid-handler, deliberately, to record that eligibility is a claim about a component's code rather than a property the runtime can verify.
+
+**An obligations manifest may be empty and may not be absent.** A component that owes nothing owes nothing, and saying so is a finding. A missing manifest means nobody looked, and a successor told it had assumed everything when nothing was recorded is the failure this phase exists to prevent — so the envelope carries the manifest inside its hash, and `admissibleForHandoff` refuses a handoff snapshot without one.
+
+**Silence is not a claim.** `planRestore` pairs the manifest against what the successor declares, and an obligation the successor says nothing about resolves to `unhonourable` — never `assumed`. A revision that has never heard of `mix-dwell` cannot be said to have preserved it. The five resolutions are different claims, not degrees of success: `assumed` (the same obligation, unchanged), `reestablished` (an equivalent one, and something observable differs), `completed`, `failed` (and whoever is owed the result is told), `unhonourable` (and the handoff does not happen). It refuses on the first thing nobody can honour rather than reporting a plan with a hole in it, because a partial plan reads as progress.
+
+**A timer has no default policy, and asking for one is the bug.** Every policy is right for something and catastrophic for something else: a dwell that restarts has doubled a bake, a watchdog that preserved its deadline fires the instant the successor comes up. `preserve-remaining`, `preserve-deadline`, `restart`, `fire-on-activation` and `refuse-if-overdue` are each named at the timer by somebody who knew what that timer was for, and `restart` and `fire-on-activation` resolve as `reestablished` rather than `assumed` because something observable changed and the provenance has to say so.
+
+The same rule reaches the rest. A lease is carried only where its issuer knows what a *logical* owner is — assuming otherwise hands the successor an authority the issuer does not believe it has. A re-established subscription has to say what the transport will do to it, because "recreated" without `exactly-once`, `at-least-once-deduplicated`, `at-least-once` or `gap-possible` is a claim of continuity the transport underneath has not made.
+
+**And the plan is proved twice.** `validateAtBarrier` re-runs it against the snapshot actually taken at the barrier and compares it with the one proved while preparing. A component that took on work in between, or finished something, is owed a different set of things — and the moment before a cutover is the worst possible time to find that out.
+
+Nine capture rules and eight restore rules, each checked against a build with the rule removed. What is still not here is the activation: running the successor beside the incumbent and cutting over under a fence is Phase 3, and a proved plan is permission to hand over rather than a handover.
+
 ### `@source-repo/signalr` publishes on a tag like everything else
 
 It was the one package the release workflow did not publish, so 5.1.0 moved every other package and left this one at 5.0.0 - published by hand once and then not. That is precisely the drift the versions-together rule exists to prevent, and it went unnoticed because nothing failed: a package that is simply absent from a job does not report anything.

@@ -146,6 +146,22 @@ const sameProjection = (a: readonly RpcProjectionEntry[] | undefined, b: readonl
     return a.every((entry, index) => canonicalText(entry) === canonicalText(b[index]))
 }
 
+/**
+ * An instance held at a barrier. See `holdExecution`.
+ *
+ * Deliberately not a promise of the whole handoff: this says only that one instance has stopped
+ * accepting new work at an ordered position, which is the fact a consistent capture is built on and
+ * the only fact this layer is in a position to state.
+ */
+export interface RpcExecutionHold {
+    /** Resolves once the calls that were already running have finished. Capture waits for this. */
+    readonly quiescent: Promise<void>
+    /** How many calls are waiting behind the barrier. They belong to whatever comes after it. */
+    waiting(): number
+    /** Let them run. Idempotent, because a refused handoff and a completed one both end here. */
+    release(): void
+}
+
 export type BindObject = {
     [index: string]: (...args: unknown[]) => unknown
 }
@@ -1437,6 +1453,53 @@ export class RpcServerHandler extends MessageModule<Message<RpcMessage>, RpcMess
 
     /** One promise chain per key. Entries go away once nothing is waiting, so idle costs nothing. */
     private executionQueues = new Map<string, Promise<void>>()
+
+    /**
+     * Hold an instance at a barrier: what is running finishes, what comes next waits.
+     *
+     * **A barrier is a task on the serial chain that never finishes**, which is why this is a dozen
+     * lines rather than a subsystem. The chain already exists and already orders one instance's
+     * commands; inserting an entry that resolves only when released gives exactly the property a
+     * consistent capture needs - one ordered position after which nothing new has been applied, and
+     * before which everything has.
+     *
+     * `quiescent` resolves when the calls that were already running have finished, which is the
+     * moment a capture may be taken. Nothing else is waited for: a call that arrives afterwards is
+     * behind the barrier by construction.
+     *
+     * **Only an instance that serialises as a whole can be held**, and the refusal is the honest
+     * one rather than a partial hold. A `parallel` instance has no chain to insert into, and an
+     * instance sharded by a key function has one chain per key - holding a single key would look
+     * like a barrier and would leave every other shard running into the capture.
+     *
+     * Released rather than left: a barrier nobody releases is an instance that has stopped
+     * answering, so a caller that takes one owns letting it go.
+     */
+    holdExecution(path: string): RpcExecutionHold {
+        const execution = this.manageRpc.at(path)?.execution
+        if (execution === 'parallel' || typeof execution === 'function')
+            throw new Error(
+                `${path} cannot be held at a barrier: it runs ${typeof execution === 'function' ? 'one queue per key' : 'in parallel'}, so there is no single ordered position after which nothing new has been applied`
+            )
+        const ahead = this.executionQueues.get(path) ?? Promise.resolve()
+        let let_go!: () => void
+        const held = new Promise<void>((resolve) => (let_go = resolve))
+        const tail = ahead.then(() => held)
+        this.executionQueues.set(path, tail)
+        let released = false
+        return {
+            quiescent: ahead,
+            waiting: () => this.executionWaiting.get(path) ?? 0,
+            release: () => {
+                if (released) return
+                released = true
+                let_go()
+                // Only when it is still ours. A call that queued behind the barrier owns the tail
+                // now, and deleting it would let the next arrival overtake it.
+                if (this.executionQueues.get(path) === tail) this.executionQueues.delete(path)
+            }
+        }
+    }
 
     private async serialise<T>(key: string, run: () => Promise<T>): Promise<T> {
         const ahead = this.executionQueues.get(key) ?? Promise.resolve()

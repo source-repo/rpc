@@ -1,4 +1,5 @@
 import { canonicalText, digestText } from '@source-repo/rpc'
+import type { RpcObligations } from './Obligations.js'
 
 /**
  * What a component keeps when the process implementing it is replaced.
@@ -101,6 +102,15 @@ export interface RpcSnapshotEnvelope<State = unknown> {
     readonly lastCommittedOutputSequence?: bigint
 
     readonly heldState: State
+    /**
+     * What the component had accepted, scheduled, awaited or promised at the barrier.
+     *
+     * Present on a `quiescent-handoff` capture and absent on a `held-state-only` one, and the two
+     * are captured in the same synchronous breath - a manifest taken a moment after the state would
+     * describe a component that had moved on, and a snapshot combining the two sides of a barrier
+     * is the one failure a consistent capture exists to prevent.
+     */
+    readonly obligations?: RpcObligations
     /** Every migration this state has been through, oldest first. Empty on a fresh capture. */
     readonly provenance: readonly RpcMigrationRecord[]
 
@@ -153,6 +163,7 @@ const hashedForm = <State>(draft: Omit<RpcSnapshotEnvelope<State>, 'snapshotId' 
     lastAppliedInputSequence: draft.lastAppliedInputSequence,
     lastCommittedOutputSequence: draft.lastCommittedOutputSequence,
     heldState: draft.heldState,
+    obligations: draft.obligations,
     provenance: draft.provenance,
     capturedAt: draft.capturedAt,
     parentSnapshotHash: draft.parentSnapshotHash
@@ -209,15 +220,23 @@ export const verifySnapshot = async <State>(snapshot: RpcSnapshotEnvelope<State>
 /**
  * Whether this snapshot is enough to restore an activation from, rather than only enough to migrate.
  *
- * **It is never enough in Phase 1**, and that is the point of the function existing now. A handoff
- * needs the obligations a running activation holds - the timers it owes, the calls it has out, the
- * subscriptions and leases it is answering for - and none of that is captured yet. Returning a
- * reason rather than `false` is what stops "we have snapshots" being read as "we can hand over".
+ * Two different claims, and the first cannot stand in for the second. A `held-state-only` capture
+ * says *these were the values*; a handoff needs *these were the values, at this position in the
+ * input, under this activation, with this work outstanding*.
+ *
+ * It answers with a reason rather than `false` because a caller that cannot hand over has to tell
+ * somebody which of these it is: a snapshot of the wrong kind, one missing the position that makes
+ * it an instant, or one with no record of what the old activation still owed. Those are three
+ * different problems and only one of them is fixable by taking another snapshot.
  */
 export const admissibleForHandoff = (snapshot: RpcSnapshotEnvelope): string | undefined => {
     if (snapshot.captureKind !== 'quiescent-handoff')
         return `${snapshot.snapshotId} is a ${snapshot.captureKind} capture: it says what the values were, not where the component had got to`
     for (const field of REQUIRED_FOR_HANDOFF)
         if (snapshot[field] === undefined) return `${snapshot.snapshotId} is missing ${field}, so it does not describe one instant`
-    return 'no activation may be restored from a snapshot yet: the obligations manifest is Phase 2, and a handoff without it would silently drop the work the old activation still owed'
+    // The manifest may be empty - a component that owes nothing owes nothing - but it may not be
+    // absent. Absent means nobody looked, and a successor told it had assumed everything when
+    // nothing was recorded is the failure this whole phase exists to prevent.
+    if (!snapshot.obligations) return `${snapshot.snapshotId} carries no obligations manifest, so nothing is known about the work the old activation still owed`
+    return undefined
 }

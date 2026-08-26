@@ -61,18 +61,33 @@ test('a handoff capture is a statement about one instant, or it is refused', asy
     t.is(whole.captureKind, 'quiescent-handoff')
 })
 
-test('no activation may be restored from a snapshot yet, and it says so rather than returning false', async (t) => {
-    // The point of the function existing in a phase that cannot hand over: "we have snapshots" must
-    // not be readable as "we can hand over". The obligations a running activation holds - its
-    // timers, its calls in flight, its leases - are not captured, and a handoff without them drops
-    // work the old activation still owed.
+test('a handoff is admissible only once somebody has looked at what was outstanding', async (t) => {
+    // The point of the function: "we have snapshots" must not be readable as "we can hand over". A
+    // held-state-only capture is a statement about values and not about an instant, and a
+    // quiescent-handoff one with no manifest is a component whose timers, calls in flight and
+    // leases nobody enumerated - a successor told it had assumed everything when nothing was
+    // recorded is the failure the whole capture path exists to prevent.
     const held = await sealSnapshot(await draft())
     t.regex(admissibleForHandoff(held)!, /says what the values were, not where the component had got to/)
 
-    const whole = await sealSnapshot(
+    const unexamined = await sealSnapshot(
         await draft({ captureKind: 'quiescent-handoff', activationEpoch: 7n, logicalTime: 1200n, lastAppliedInputSequence: 9000n, lastCommittedOutputSequence: 8999n })
     )
-    t.regex(admissibleForHandoff(whole)!, /obligations manifest is Phase 2/)
+    t.regex(admissibleForHandoff(unexamined)!, /carries no obligations manifest/)
+
+    // Empty is a finding. A component that owes nothing owes nothing, and saying so is the
+    // difference between an answer and a gap.
+    const examined = await sealSnapshot(
+        await draft({
+            captureKind: 'quiescent-handoff',
+            activationEpoch: 7n,
+            logicalTime: 1200n,
+            lastAppliedInputSequence: 9000n,
+            lastCommittedOutputSequence: 8999n,
+            obligations: { timers: [], outboundCalls: [], inboundWork: [], subscriptions: [], pendingPublications: [], leases: [], sequences: [], watchdogs: [] }
+        })
+    )
+    t.is(admissibleForHandoff(examined), undefined)
 })
 
 test('the hash names the content, and notices when the content moves', async (t) => {

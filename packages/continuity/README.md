@@ -1,8 +1,8 @@
 # @source-repo/continuity
 
-What a [Source RPC](https://github.com/source-repo/rpc) component keeps when the process implementing it is replaced: versioned state snapshots, adjacent forward migrations with reviewed defaults, and a record of every value that moved.
+What a [Source RPC](https://github.com/source-repo/rpc) component keeps when the process implementing it is replaced: versioned state snapshots, adjacent forward migrations with reviewed defaults, the work a running activation was holding, and a record of every value that moved.
 
-**Phase 1 of the online-change design, and it makes no claim of live process replacement.** What is here is the snapshot and the migration of held state — enough to take a component's state forward across a schema change and to prove afterwards which value came from where. Handing an activation over needs the obligations a running one holds, and that is the next phase; `admissibleForHandoff` refuses rather than letting a caller find the gap at the barrier.
+**Phases 1 and 2 of the online-change design.** What is here takes a component to the point where a handoff can be *proved admissible*: a barrier that makes it quiescent, a capture of state and outstanding work from one instant, and a restore plan in which every obligation the old activation held has been given a disposition somebody wrote down. What is not here is the activation itself — running the successor beside the incumbent and cutting over under a fence is Phase 3.
 
 ## Why held state is explicit
 
@@ -29,7 +29,57 @@ const snapshot = await sealSnapshot({
 
 A snapshot found on a disk, in a bucket or in a message has to be readable without whatever wrote it being present to explain, so every question a restorer will ask is answered on the envelope — and one that cannot answer them is refused where it is written rather than where it is used.
 
-**The two capture kinds are not degrees of completeness.** `held-state-only` says *these were the values*. `quiescent-handoff` says *these were the values, at this position in the input, under this activation*. The second is a statement about an instant, which is why a partial one cannot be written at all.
+**The two capture kinds are not degrees of completeness.** `held-state-only` says *these were the values*. `quiescent-handoff` says *these were the values, at this position in the input, under this activation, with this work outstanding*. The second is a statement about an instant, which is why a partial one cannot be written at all.
+
+## A barrier, and one instant
+
+A component is quiescent when nothing the runtime dispatched to it is running and nothing more will start. `holdExecution` puts a task on the serial execution queue a component's methods already run on and never resolves it, so calls that arrive queue behind it rather than being rejected — the plant keeps talking to a component that is briefly not answering, which is what makes the change online.
+
+```typescript
+const barrier = server.rpc.holdExecution('mixer')
+await barrier.quiescent               // what was running finished; nothing new started
+const result = await captureAtBarrier({ ... })
+barrier.release()                     // whatever queued behind it now runs
+```
+
+`captureAtBarrier` refuses rather than producing a snapshot that describes no instant: `not-quiescent` if the barrier is not held, `work-in-flight` if a handler is still running, `unsafe-outbound` if a non-repeatable command is out and its outcome is unknown — the one case where neither assuming it ran nor assuming it did not is safe. **A refusal leaves the component running.** Capture does not release the barrier either, because the values and the manifest have to come from the same held instant, and anything that ran in the gap would make them describe two.
+
+The honest limit is stated in the tests as well as here: **the barrier orders work the runtime delivered.** A component whose state is changed by a raw `setInterval`, an event handler or a direct method call did not go through the queue, and no barrier can know. That is why an *eligibility* claim is a claim about a component's code and not a property the runtime can verify.
+
+## Obligations: what the old activation was still holding
+
+State alone is not a handoff. A component that has a dwell timer running, a dispense command out, a lease on a hopper and a subscriber following its alarms owes four things that a successor holding only its values would silently drop.
+
+```typescript
+const ledger = new RpcObligationLedger()
+ledger.register({ kind: 'timer', id: 'mix-dwell', clock: 'monotonic', dueAt: 5_000n, capturedAt: 1_000n, policy: 'preserve-remaining' })
+ledger.register({ kind: 'outbound-call', id: 'dispense-7', target: 'hopper', method: 'dispense', semantics: 'non-repeatable-command', idempotencyKey: 'batch-19/dispense' })
+```
+
+The manifest may be **empty and may not be absent**. A component that owes nothing owes nothing, and saying so is a finding; a missing manifest means nobody looked, and `admissibleForHandoff` refuses it.
+
+## Every obligation gets a disposition, and nobody may infer one
+
+`planRestore` pairs the manifest with what the successor declares it can do, and refuses on the first thing nobody can honour rather than reporting a plan with a hole in it.
+
+```typescript
+const plan = planRestore(snapshot, [
+    { id: 'mix-dwell', resolution: 'assumed', timerPolicy: 'preserve-remaining' },
+    { id: 'alarms', resolution: 'reestablished', redelivery: 'at-least-once-deduplicated' }
+], { now: monotonicNow() })
+```
+
+Five resolutions, and they are different claims rather than degrees of success. **`assumed`** — the successor holds the same obligation, unchanged. **`reestablished`** — it holds an equivalent one, and something observable differs. **`completed`** — it was discharged during the handoff. **`failed`** — it could not be, and whoever is owed the result is told. **`unhonourable`** — nobody can, and the handoff does not happen.
+
+**Silence is not a claim.** An obligation the successor says nothing about is `unhonourable`, never `assumed`: a revision that has never heard of `mix-dwell` cannot be said to have preserved it, and a handoff that treated an unmentioned timer as carried across would hand a plant to a program that does not know it is holding a deadline.
+
+**A timer has no default policy**, because every policy is right for something and catastrophic for something else — a dwell that restarts has doubled a bake, a watchdog that preserved its deadline fires the instant the successor comes up. `preserve-remaining`, `preserve-deadline`, `restart`, `fire-on-activation` and `refuse-if-overdue` are each named at the timer, by somebody who knew what that timer was for.
+
+The same rule reaches the other kinds. A lease is carried only where its issuer knows what a logical owner is, because assuming otherwise hands the successor an authority the issuer does not believe it has. A re-established subscription must say what the transport will do to it — `exactly-once`, `at-least-once-deduplicated`, `at-least-once` or `gap-possible` — because "recreated" without that is a claim of continuity the transport underneath has not made.
+
+## The plan is proved twice
+
+`validateAtBarrier` re-runs the plan against the snapshot actually taken at the barrier and compares it with the one proved earlier. The earlier pass ran against whatever was current when preparation started; a component that took on work in between, or finished something, is owed a different set of things — and the moment before a cutover is the worst possible time to discover it.
 
 ## One reviewed transform per adjacent version
 
@@ -68,6 +118,8 @@ Every step records its id, its approval, the fields it transformed, the values i
 `golden/` holds one real snapshot per released state version, retained as a file rather than built by a test. A fixture the code constructs agrees with whatever the code now does, which is the one thing a regression test must not do. A golden snapshot demonstrates a known case; it does not by itself prove a transform is total.
 
 ## What is not here
+
+**Activation.** Nothing here runs the successor: shadow activation, the fence that makes exactly one activation authoritative, and the cutover itself are Phase 3. A proved plan is permission to hand over, not a handover.
 
 Reverse migrations. The pre-migration snapshot is what a rollback uses, and only until the new activation has begun authoritative work — after that, restoring it would lose history and might repeat effects. A reverse chain would look like a general undo and would not be one.
 
