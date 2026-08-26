@@ -17,12 +17,16 @@ public class OutcomeTests
     /// Taken from `packages/rpc/src/RPC/Messages.ts` and kept here rather than derived, because a
     /// derivation would agree with whatever this enum happens to say - which is exactly the failure
     /// being tested for.
+    ///
+    /// The last two are answered by *this* binding rather than by the TypeScript one, and they are
+    /// in the same list on purpose: the union is what travels, and a code only one side spells is a
+    /// code the other side cannot act on. Both were missing over there until this list was written.
     /// </summary>
     private static readonly string[] OnTheWire =
     [
         "ClassNotFound", "MethodNotFound", "Exception", "Timeout", "TransportError", "Unauthorized",
         "Forbidden", "InvalidParams", "IncompatibleVersion", "UnknownOutcome", "Busy", "Superseded",
-        "NotInControl", "OwnershipChanged"
+        "NotInControl", "OwnershipChanged", "LimitExceeded", "IdempotencyUnavailable"
     ];
 
     [Fact]

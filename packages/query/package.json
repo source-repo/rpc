@@ -44,7 +44,7 @@
         "prepack": "npm run clean && npm run build"
     },
     "dependencies": {
-        "@source-repo/rpc": "^5.0.0",
+        "@source-repo/rpc": "^5.1.0",
         "@tanstack/query-core": "^5.102.5"
     },
     "devDependencies": {

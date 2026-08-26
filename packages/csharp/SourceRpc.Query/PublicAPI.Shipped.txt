@@ -1,0 +1,62 @@
+#nullable enable
+SourceRpc.Query.RpcCallBudget
+SourceRpc.Query.RpcCallBudget.Exhausted.get -> bool
+SourceRpc.Query.RpcCallBudget.Next(string? idempotencyKey = null, string? ownerFence = null) -> SourceRpc.RpcCallOptions!
+SourceRpc.Query.RpcCallBudget.Remaining.get -> System.TimeSpan
+SourceRpc.Query.RpcCallBudget.RpcCallBudget(System.TimeSpan total, System.TimeProvider? time = null) -> void
+SourceRpc.Query.RpcCallBudget.Time.get -> System.TimeProvider!
+SourceRpc.Query.RpcCallBudget.Total.get -> System.TimeSpan
+SourceRpc.Query.RpcCallCache
+SourceRpc.Query.RpcCallCache.Cache.get -> ZiggyCreatures.Caching.Fusion.IFusionCache!
+SourceRpc.Query.RpcCallCache.ForgetAsync(SourceRpc.Query.RpcQuestion! question, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask
+SourceRpc.Query.RpcCallCache.ForgetPathAsync(string! target, string! path, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask
+SourceRpc.Query.RpcCallCache.ForgetPeerAsync(string! target, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask
+SourceRpc.Query.RpcCallCache.GetOrAskAsync<T>(SourceRpc.Query.RpcQuestion! question, System.Func<System.Threading.CancellationToken, System.Threading.Tasks.Task<T>!>! ask, ZiggyCreatures.Caching.Fusion.FusionCacheEntryOptions? options = null, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<T>
+SourceRpc.Query.RpcCallCache.RpcCallCache(ZiggyCreatures.Caching.Fusion.IFusionCache! cache) -> void
+SourceRpc.Query.RpcCanonical
+SourceRpc.Query.RpcQueryKey
+SourceRpc.Query.RpcQuestion
+SourceRpc.Query.RpcQuestion.<Clone>$() -> SourceRpc.Query.RpcQuestion!
+SourceRpc.Query.RpcQuestion.Arguments.get -> object?
+SourceRpc.Query.RpcQuestion.Arguments.init -> void
+SourceRpc.Query.RpcQuestion.Deconstruct(out string! Target, out string! Path, out string! Method, out object? Arguments) -> void
+SourceRpc.Query.RpcQuestion.Equals(SourceRpc.Query.RpcQuestion? other) -> bool
+SourceRpc.Query.RpcQuestion.Method.get -> string!
+SourceRpc.Query.RpcQuestion.Method.init -> void
+SourceRpc.Query.RpcQuestion.Path.get -> string!
+SourceRpc.Query.RpcQuestion.Path.init -> void
+SourceRpc.Query.RpcQuestion.RpcQuestion(string! Target, string! Path, string! Method, object? Arguments = null) -> void
+SourceRpc.Query.RpcQuestion.Target.get -> string!
+SourceRpc.Query.RpcQuestion.Target.init -> void
+SourceRpc.Query.RpcResilience
+SourceRpc.Query.RpcResilienceOptions
+SourceRpc.Query.RpcResilienceOptions.<Clone>$() -> SourceRpc.Query.RpcResilienceOptions!
+SourceRpc.Query.RpcResilienceOptions.Attempts.get -> int
+SourceRpc.Query.RpcResilienceOptions.Attempts.init -> void
+SourceRpc.Query.RpcResilienceOptions.Backoff.get -> System.TimeSpan
+SourceRpc.Query.RpcResilienceOptions.Backoff.init -> void
+SourceRpc.Query.RpcResilienceOptions.BackoffCap.get -> System.TimeSpan
+SourceRpc.Query.RpcResilienceOptions.BackoffCap.init -> void
+SourceRpc.Query.RpcResilienceOptions.Equals(SourceRpc.Query.RpcResilienceOptions? other) -> bool
+SourceRpc.Query.RpcResilienceOptions.RpcResilienceOptions() -> void
+SourceRpc.Query.RpcResilienceOptions.Semantics.get -> SourceRpc.RpcMethodSemantics?
+SourceRpc.Query.RpcResilienceOptions.Semantics.init -> void
+const SourceRpc.Query.RpcQueryKey.Root = "source-rpc" -> string!
+override SourceRpc.Query.RpcQuestion.Equals(object? obj) -> bool
+override SourceRpc.Query.RpcQuestion.GetHashCode() -> int
+override SourceRpc.Query.RpcQuestion.ToString() -> string!
+override SourceRpc.Query.RpcResilienceOptions.Equals(object? obj) -> bool
+override SourceRpc.Query.RpcResilienceOptions.GetHashCode() -> int
+override SourceRpc.Query.RpcResilienceOptions.ToString() -> string!
+static SourceRpc.Query.RpcCallCache.Create(System.TimeSpan? duration = null) -> SourceRpc.Query.RpcCallCache!
+static SourceRpc.Query.RpcCanonical.Text(object? value) -> string!
+static SourceRpc.Query.RpcQueryKey.For(SourceRpc.Query.RpcQuestion! question) -> string!
+static SourceRpc.Query.RpcQueryKey.PathTag(string! target, string! path) -> string!
+static SourceRpc.Query.RpcQueryKey.PeerTag(string! target) -> string!
+static SourceRpc.Query.RpcQuestion.operator !=(SourceRpc.Query.RpcQuestion? left, SourceRpc.Query.RpcQuestion? right) -> bool
+static SourceRpc.Query.RpcQuestion.operator ==(SourceRpc.Query.RpcQuestion? left, SourceRpc.Query.RpcQuestion? right) -> bool
+static SourceRpc.Query.RpcResilience.ExecuteAsync<T>(SourceRpc.Query.RpcCallBudget! budget, System.Func<SourceRpc.RpcCallOptions!, System.Threading.CancellationToken, System.Threading.Tasks.Task<T>!>! attempt, SourceRpc.Query.RpcResilienceOptions? options = null, string? idempotencyKey = null, string? ownerFence = null, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<T>!
+static SourceRpc.Query.RpcResilience.PipelineFor(SourceRpc.Query.RpcCallBudget! budget, SourceRpc.Query.RpcResilienceOptions? options = null) -> Polly.ResiliencePipeline!
+static SourceRpc.Query.RpcResilienceOptions.operator !=(SourceRpc.Query.RpcResilienceOptions? left, SourceRpc.Query.RpcResilienceOptions? right) -> bool
+static SourceRpc.Query.RpcResilienceOptions.operator ==(SourceRpc.Query.RpcResilienceOptions? left, SourceRpc.Query.RpcResilienceOptions? right) -> bool
+static readonly SourceRpc.Query.RpcCanonical.Absent -> object!

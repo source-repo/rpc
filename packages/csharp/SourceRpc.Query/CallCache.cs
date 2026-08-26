@@ -133,10 +133,17 @@ public sealed class RpcCallCache
     /// cache cannot know what a method did, and one that guessed would either re-ask everything - a
     /// round trip per entry, on the link least able to spare it - or nothing.
     /// </summary>
-    public ValueTask ForgetAsync(string target, string path, CancellationToken cancellationToken = default) =>
+    public ValueTask ForgetPathAsync(string target, string path, CancellationToken cancellationToken = default) =>
         _cache.RemoveByTagAsync(RpcQueryKey.PathTag(target, path), token: cancellationToken);
 
-    /// <summary>One question, forgotten.</summary>
+    /// <summary>
+    /// One question, forgotten.
+    ///
+    /// Named apart from <see cref="ForgetPathAsync"/> rather than overloading it, which the public
+    /// API analyzer refuses and is right to: two overloads that both carry optional parameters can
+    /// become ambiguous at a call site the moment either grows another one, and that is a break
+    /// discovered by whoever upgrades rather than by whoever wrote it.
+    /// </summary>
     public ValueTask ForgetAsync(RpcQuestion question, CancellationToken cancellationToken = default) =>
         _cache.RemoveAsync(RpcQueryKey.For(question), token: cancellationToken);
 }

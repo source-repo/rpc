@@ -42,6 +42,9 @@ public sealed class SignalRClientTransport : ISourceRpcTransport
     /// <inheritdoc/>
     public event Action<IReadOnlyCollection<string>>? PeersChanged;
 
+    /// <inheritdoc/>
+    public event Func<Task>? LinkEstablished;
+
     /// <summary>Connect to a hub at a URL.</summary>
     public SignalRClientTransport(string url, SourceRpcOptions options, ILogger? log = null)
         : this(options, () => Build(url, options), log)
@@ -165,6 +168,7 @@ public sealed class SignalRClientTransport : ISourceRpcTransport
                 new PresenceAnnouncement { Name = _options.Name, V = TransportContract.FrameVersion },
                 _closing.Token);
             _log.LogInformation("SourceRpc connected to the hub as {Peer}", _options.Name);
+            await Established();
         }
         catch (Exception e) when (_closing?.IsCancellationRequested == false)
         {
@@ -198,6 +202,26 @@ public sealed class SignalRClientTransport : ISourceRpcTransport
         {
             // One unreadable frame from the far end must not take this peer down.
             _log.LogError(e, "SourceRpc failed to handle an inbound frame");
+        }
+    }
+
+    /// <summary>
+    /// Tell whoever is above that the link is up, without letting them break it.
+    ///
+    /// Raised on every connection, not only the first: the hub gives a reconnected peer a new
+    /// connection id and has forgotten everything it knew, including that peer's subscriptions.
+    /// </summary>
+    private async Task Established()
+    {
+        if (LinkEstablished is not { } handler)
+            return;
+        try
+        {
+            await handler();
+        }
+        catch (Exception e)
+        {
+            _log.LogError(e, "SourceRpc failed to restore state after the link came up");
         }
     }
 

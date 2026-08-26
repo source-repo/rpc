@@ -48,43 +48,93 @@ public sealed record RpcOutcome(bool Failed, object? Value = null, string? Code 
 public interface IRpcIdempotencyStore
 {
     /// <summary>
-    /// Claim a key before running, or return the outcome already recorded for it.
+    /// Claim the right to run a command, or learn that somebody else has it.
     ///
-    /// Null means this attempt owns the command and should run it. Non-null means somebody already
-    /// did, and the caller should be answered from the record without running anything.
+    /// Three answers, and the middle one is the reason this is not a nullable outcome. A store that
+    /// can only say "here is the record" or "there is none" cannot distinguish *nobody has run this*
+    /// from *somebody is running it right now* - so two attempts arriving together both read the
+    /// absence of a record and both execute, which is the exact failure the store exists to prevent.
     /// </summary>
-    Task<RpcOutcome?> BeginAsync(string key, CancellationToken cancellationToken = default);
+    Task<RpcIdempotencyClaim> BeginAsync(string key, CancellationToken cancellationToken = default);
 
     /// <summary>Record what the command did. Called before the caller is answered.</summary>
     Task CompleteAsync(string key, RpcOutcome outcome, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Release a claim that will never complete, so an attempt that died does not hold the key for
+    /// ever. Only safe where the command certainly did not run - anything else should be recorded
+    /// as an outcome rather than released, because releasing invites the second execution.
+    /// </summary>
+    Task AbandonAsync(string key, CancellationToken cancellationToken = default) => Task.CompletedTask;
 }
 
 /// <summary>
-/// An in-memory idempotency store, for a process whose commands do not need to survive it.
+/// What a store says about a key: run it, wait for whoever is running it, or here is what it did.
 ///
-/// Honest about what it is: a restart forgets every outcome, so a retry that spans one runs the
-/// command again. That is the right trade for a host whose commands are cheap to repeat and the
-/// wrong one for a host that dispenses, advances a batch or starts a pump - those want something
-/// durable, which is why this is a class you must choose rather than the default.
+/// Mirrors the TypeScript store's `'acquired' | 'in-progress' | StoredRpcOutcome`, deliberately -
+/// one normative rule in two languages rather than two implementations that agree until they do not.
 /// </summary>
+public abstract record RpcIdempotencyClaim
+{
+    private RpcIdempotencyClaim() { }
+
+    /// <summary>Nobody else holds this key. Run the command, then record the outcome.</summary>
+    public sealed record Acquired : RpcIdempotencyClaim
+    {
+        public static readonly Acquired Instance = new();
+    }
+
+    /// <summary>Another attempt at this same command is running now. Do not run a second one.</summary>
+    public sealed record InProgress : RpcIdempotencyClaim
+    {
+        public static readonly InProgress Instance = new();
+    }
+
+    /// <summary>It already ran, and this is what it answered.</summary>
+    public sealed record Completed(RpcOutcome Outcome) : RpcIdempotencyClaim;
+}
+
 public sealed class InMemoryIdempotencyStore : IRpcIdempotencyStore
 {
-    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, RpcOutcome?> _outcomes = new();
+    /// <summary>
+    /// A claimed key with no outcome yet is *running*, which is a state the map has to be able to
+    /// hold. Storing a null outcome for it could not: a second attempt found the key present, read
+    /// the null, and could not tell it apart from "no record", so it ran the command too.
+    /// </summary>
+    private sealed record Entry(RpcOutcome? Outcome);
+
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, Entry> _entries = new();
 
     /// <inheritdoc/>
-    public Task<RpcOutcome?> BeginAsync(string key, CancellationToken cancellationToken = default)
+    public Task<RpcIdempotencyClaim> BeginAsync(string key, CancellationToken cancellationToken = default)
     {
+        var running = new Entry(null);
         // TryAdd rather than a read then a write: two attempts at one command arriving together must
         // not both find it absent and both decide to run it.
-        if (_outcomes.TryAdd(key, null))
-            return Task.FromResult<RpcOutcome?>(null);
-        return Task.FromResult(_outcomes.TryGetValue(key, out var outcome) ? outcome : null);
+        if (_entries.TryAdd(key, running))
+            return Task.FromResult<RpcIdempotencyClaim>(RpcIdempotencyClaim.Acquired.Instance);
+
+        return Task.FromResult<RpcIdempotencyClaim>(
+            _entries.TryGetValue(key, out var entry) && entry.Outcome is { } outcome
+                ? new RpcIdempotencyClaim.Completed(outcome)
+                // Present but not finished: somebody is running it. Answering "acquired" here is
+                // what let a duplicate execute alongside the original.
+                : RpcIdempotencyClaim.InProgress.Instance);
     }
 
     /// <inheritdoc/>
     public Task CompleteAsync(string key, RpcOutcome outcome, CancellationToken cancellationToken = default)
     {
-        _outcomes[key] = outcome;
+        _entries[key] = new Entry(outcome);
+        return Task.CompletedTask;
+    }
+
+    /// <inheritdoc/>
+    public Task AbandonAsync(string key, CancellationToken cancellationToken = default)
+    {
+        // Only ever called where the command certainly did not run, so the key becomes claimable
+        // again rather than locked for the life of the process.
+        _entries.TryRemove(key, out _);
         return Task.CompletedTask;
     }
 }

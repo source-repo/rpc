@@ -35,6 +35,11 @@ public sealed class RpcDispatcher
     private readonly ISourceRpcResponder? _responder;
     private readonly IRpcOwnership? _ownership;
     private readonly IRpcIdempotencyStore? _idempotency;
+
+    /// <summary>How many calls may run at once, so a burst is refused rather than absorbed.</summary>
+    private readonly SemaphoreSlim _running;
+
+    private readonly ISourceRpcAuthorization _authorization;
     private readonly SubscriptionTable _subscriptions;
     private readonly SourceRpcOptions _options;
     private readonly SourceRpcTelemetry _telemetry;
@@ -48,8 +53,10 @@ public sealed class RpcDispatcher
         ISourceRpcResponder? responder = null,
         ILogger? log = null,
         IRpcOwnership? ownership = null,
-        IRpcIdempotencyStore? idempotency = null)
+        IRpcIdempotencyStore? idempotency = null,
+        ISourceRpcAuthorization? authorization = null)
     {
+        _authorization = authorization ?? new AllowAllAuthorization();
         _ownership = ownership;
         _idempotency = idempotency;
         _options = options;
@@ -57,6 +64,7 @@ public sealed class RpcDispatcher
         _telemetry = telemetry;
         _responder = responder;
         _log = log ?? NullLogger.Instance;
+        _running = new SemaphoreSlim(options.Limits.MaxConcurrentCalls, options.Limits.MaxConcurrentCalls);
         telemetry.Subscriptions = () => _subscriptions.Count;
     }
 
@@ -83,15 +91,60 @@ public sealed class RpcDispatcher
     {
         _telemetry.FrameReceived(frame.Kind);
 
+        // Checked before anything acts on the frame, because the cheapest place to refuse a frame
+        // that is out of bounds is before it has cost anything.
+        if (Exceeds(frame) is { } broken)
+        {
+            _log.LogWarning("SourceRpc refused a frame from {Source}: {Reason}", frame.Src, broken);
+            _telemetry.FrameRejected(broken);
+            return frame.Reply("error", Error(broken), RpcErrorCode.LimitExceeded);
+        }
+
         return frame.Kind switch
         {
             "call" => await DispatchAsync(frame, caller),
-            "subscribe" or "unsubscribe" => Watch(frame, caller),
+            "subscribe" or "unsubscribe" => await Watch(frame, caller),
             _ => frame.Reply("error", Error($"this peer does not handle '{frame.Kind}' frames"), RpcErrorCode.MethodNotFound)
         };
     }
 
-    private async Task<RpcFrame> DispatchAsync(RpcFrame frame, RpcCaller caller)
+    /// <summary>
+    /// Why this frame is outside what this peer accepts, or null when it is within them.
+    ///
+    /// The hop count is the one that matters most in an ordinary network: a hub increments it when
+    /// it relays, and two peers each relaying for the other will otherwise pass one frame between
+    /// them for as long as the process lives - a loop nobody configured and nothing reports.
+    /// </summary>
+    private string? Exceeds(RpcFrame frame)
+    {
+        var limits = _options.Limits;
+        if (frame.Hops is { } hops && hops > limits.MaxHops)
+            return $"the frame has passed through {hops} relays, and this peer accepts {limits.MaxHops}";
+        if (frame.Path is { Length: > 0 } path && path.Length > limits.MaxIdentifierLength)
+            return "the path is longer than this peer accepts";
+        if (frame.Method is { Length: > 0 } method && method.Length > limits.MaxIdentifierLength)
+            return "the method name is longer than this peer accepts";
+        if (frame.Corr is { Length: > 0 } corr && corr.Length > limits.MaxIdentifierLength)
+            return "the correlation is longer than this peer accepts";
+        if (frame.Batch is { } batch)
+        {
+            if (batch.Length > limits.MaxBatchItems)
+                return $"the batch carries {batch.Length} frames, and this peer accepts {limits.MaxBatchItems}";
+            // Depth is checked by refusing a batch inside a batch rather than by recursing, which
+            // is the point: unpacking to find out how deep something goes is the thing being
+            // guarded against.
+            if (limits.MaxBatchDepth <= 1 && batch.Any(carried => carried.Batch is not null))
+                return "a batch may not carry another batch";
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// Run one call and produce its answer - or null, for the one case that has no answer: a
+    /// duplicate of a command already running under the same idempotency key, which is dropped
+    /// because its caller is already waiting on the attempt that holds the key.
+    /// </summary>
+    private async Task<RpcFrame?> DispatchAsync(RpcFrame frame, RpcCaller caller)
     {
         if (_responder is null)
             return frame.Reply("error", Error("this peer serves no methods"), RpcErrorCode.ClassNotFound);
@@ -124,6 +177,15 @@ public sealed class RpcDispatcher
         // to the world its caller observed; the deadline asks whether anyone is still waiting; the
         // idempotency store asks whether it has already been done. Running first and checking after
         // would answer all three too late.
+        // Asked before the fence and the deadline, because a caller with no business calling this
+        // at all should not have its command evaluated on any other ground first.
+        if (!await _authorization.CanInvokeAsync(invocation, caller.Cancellation))
+        {
+            _log.LogWarning("SourceRpc refused {Path}.{Method} from {Source}: not permitted", path, method, caller.Source);
+            _telemetry.FrameRejected("not permitted");
+            return frame.Reply("error", Error($"{caller.Source} may not call {path}.{method}"), RpcErrorCode.Forbidden);
+        }
+
         if (Fenced(frame, path) is { } fenced)
             return frame.Reply("error", Error(fenced), RpcErrorCode.OwnershipChanged);
 
@@ -133,28 +195,79 @@ public sealed class RpcDispatcher
             // cannot see and the broker cannot deduct.
             return frame.Reply("error", Error("the caller's deadline had passed before this ran"), RpcErrorCode.Timeout);
 
-        RpcOutcome? recorded = null;
-        if (frame.Idem is { Length: > 0 } key && _idempotency is not null)
+        var claimed = false;
+        if (frame.Idem is { Length: > 0 } key)
         {
-            try
+            if (_idempotency is null)
             {
-                recorded = await _idempotency.BeginAsync(key, caller.Cancellation);
+                // Refused rather than run unguarded. A caller sends a key precisely because running
+                // twice matters, and carrying it while enforcing nothing tells that caller a guard
+                // was applied when none was. `AllowUnenforcedIdempotencyKeys` opts back into the old
+                // behaviour for a network still being migrated.
+                if (!_options.AllowUnenforcedIdempotencyKeys)
+                {
+                    _log.LogWarning("SourceRpc refused {Path}.{Method}: it carried an idempotency key and no store is registered", path, method);
+                    return frame.Reply("error", Error("this peer has no idempotency store, so the key on this call cannot be honoured"), RpcErrorCode.IdempotencyUnavailable);
+                }
             }
-            catch (Exception e)
+            else
             {
-                // Refused rather than run. A store that cannot be reached is the one condition under
-                // which running risks the double execution it was installed to prevent.
-                _log.LogError(e, "SourceRpc idempotency store refused key {Key}", key);
-                return frame.Reply("error", Error("the idempotency store could not be reached"), RpcErrorCode.TransportError);
-            }
-            if (recorded is not null)
-            {
-                _log.LogDebug("SourceRpc answered {Path}.{Method} from the idempotency record for {Key}", path, method, key);
-                return recorded.Failed
-                    ? frame.Reply("error", Error(recorded.Message ?? "the command failed"), recorded.Code ?? nameof(RpcErrorCode.Exception))
-                    : frame.Reply("result", recorded.Value);
+                RpcIdempotencyClaim claim;
+                try
+                {
+                    claim = await _idempotency.BeginAsync(key, caller.Cancellation);
+                }
+                catch (Exception e)
+                {
+                    // Refused rather than run. A store that cannot be reached is the one condition
+                    // under which running risks the double execution it was installed to prevent -
+                    // and the caller is told the outcome is unknown rather than that the transport
+                    // failed, because "it failed" invites exactly the retry that must not happen.
+                    _log.LogError(e, "SourceRpc idempotency store refused key {Key}", key);
+                    return frame.Reply("error", Error("the idempotency store could not be reached, so this command was not run"), RpcErrorCode.UnknownOutcome);
+                }
+
+                switch (claim)
+                {
+                    case RpcIdempotencyClaim.Completed(var recorded):
+                        _log.LogDebug("SourceRpc answered {Path}.{Method} from the idempotency record for {Key}", path, method, key);
+                        return recorded.Failed
+                            ? frame.Reply("error", Error(recorded.Message ?? "the command failed"), recorded.Code ?? nameof(RpcErrorCode.Exception))
+                            : frame.Reply("result", recorded.Value);
+
+                    case RpcIdempotencyClaim.InProgress:
+                        // Dropped rather than answered, which is what the TypeScript side does and
+                        // for its reason: the caller is already waiting on the attempt that holds
+                        // the key, and two answers to one request would be worse than one.
+                        _log.LogDebug("SourceRpc dropped a duplicate of {Path}.{Method}: {Key} is already running", path, method, key);
+                        return null;
+
+                    default:
+                        claimed = true;
+                        break;
+                }
             }
         }
+
+        // Refused rather than queued, and refused *before* the claim would be taken. Transports
+        // deliberately do not await dispatch - a responder must be able to call out and receive the
+        // reply - so without a gate here a burst becomes as many concurrent invocations as arrive,
+        // and the first sign of trouble is memory rather than a message anybody can act on.
+        if (!_running.Wait(0))
+        {
+            _log.LogWarning("SourceRpc refused {Path}.{Method}: already running {Limit} calls", path, method, _options.Limits.MaxConcurrentCalls);
+            _telemetry.FrameRejected("at the concurrent call limit");
+            if (claimed && frame.Idem is { Length: > 0 } busyKey && _idempotency is not null)
+                // The claim goes back, because this certainly did not run.
+                await _idempotency.AbandonAsync(busyKey, CancellationToken.None);
+            return frame.Reply("error", Error("this peer is already running as many calls as it will run at once"), RpcErrorCode.Busy);
+        }
+
+        // Set before the responder runs, because Defer() is called from inside it. This is what
+        // finally closes a deferred command's idempotency claim: the answer is produced long after
+        // this method returns, so nothing here could record it.
+        if (claimed && frame.Idem is { Length: > 0 })
+            invocation.Settled = outcome => RecordAsync(frame, outcome, CancellationToken.None);
 
         var started = Stopwatch.GetTimestamp();
         RpcErrorCode? failure = null;
@@ -165,23 +278,36 @@ public sealed class RpcDispatcher
             // A method that answered with a receipt is answering later. The caller is told so now,
             // and whatever it produces goes down the link afterwards.
             if (result is RpcTicketReceipt receipt)
+            {
+                // The claim stays held until the deferred settles, which now records the outcome
+                // through invocation.Settled above. A retry meanwhile is dropped as in-progress,
+                // which is right: the command is running, and its caller is waiting for it.
                 return frame.Reply("result", receipt) with { Deferred = true };
+            }
 
-            await RecordAsync(frame, new RpcOutcome(Failed: false, Value: result), caller.Cancellation);
-            return frame.Reply("result", result);
+            return await RecordedAsync(frame, new RpcOutcome(Failed: false, Value: result), frame.Reply("result", result), caller.Cancellation);
         }
         catch (SourceRpcException e)
         {
             // Thrown on purpose, so the message was written for whoever reads it and travels.
             failure = e.Code;
-            await RecordAsync(frame, new RpcOutcome(Failed: true, Code: e.Code.ToString(), Message: e.Message), caller.Cancellation);
-            return frame.Reply("error", Error(e.Message), e.Code);
+            return await RecordedAsync(
+                frame,
+                new RpcOutcome(Failed: true, Code: e.Code.ToString(), Message: e.Message),
+                frame.Reply("error", Error(e.Message), e.Code),
+                caller.Cancellation);
         }
         catch (OperationCanceledException) when (caller.Cancellation.IsCancellationRequested)
         {
-            // Nobody is waiting: the caller went away. Answering a link that has gone is not a
-            // failure worth recording as one, and there is nothing to send it to.
+            // Nobody is waiting: the caller went away. There is nothing to send an answer to - but
+            // the command may have run before the cancellation was observed, so the key is recorded
+            // as unknown rather than left claimed. A retry then hears "it may have run" instead of
+            // running it again, which is the whole reason the caller sent a key.
             failure = RpcErrorCode.TransportError;
+            await RecordAsync(
+                frame,
+                new RpcOutcome(Failed: true, Code: nameof(RpcErrorCode.UnknownOutcome), Message: "the caller went away while this was running"),
+                CancellationToken.None);
             return frame.Reply("error", Error("the caller went away"), RpcErrorCode.TransportError);
         }
         catch (Exception e)
@@ -192,10 +318,18 @@ public sealed class RpcDispatcher
             // and a plant network is not the place to publish it.
             _log.LogError(e, "SourceRpc call {Path}.{Method} from {Source} threw", path, method, caller.Source);
             var detail = _options.IncludeExceptionDetail ? e.Message : "the method failed; see the server log";
-            return frame.Reply("error", Error(detail, e.GetType().Name), RpcErrorCode.Exception);
+            // Recorded like any other outcome. Leaving it unrecorded would hold the claim for ever,
+            // so every later retry of a command that failed once would be dropped rather than
+            // answered - and the caller would never learn what happened.
+            return await RecordedAsync(
+                frame,
+                new RpcOutcome(Failed: true, Code: nameof(RpcErrorCode.Exception), Message: detail),
+                frame.Reply("error", Error(detail, e.GetType().Name), RpcErrorCode.Exception),
+                caller.Cancellation);
         }
         finally
         {
+            _running.Release();
             var elapsed = Stopwatch.GetElapsedTime(started).TotalMilliseconds;
             _telemetry.CallCompleted(path, method, elapsed, failure);
             activity?.SetStatus(failure is null ? ActivityStatusCode.Ok : ActivityStatusCode.Error);
@@ -210,7 +344,7 @@ public sealed class RpcDispatcher
     /// whose body is the argument array holding the event name, so every request has one shape and a
     /// caller writes `proxy.on('built', handler)` without knowing anything different happens.
     /// </summary>
-    private RpcFrame Watch(RpcFrame frame, RpcCaller caller)
+    private async Task<RpcFrame> Watch(RpcFrame frame, RpcCaller caller)
     {
         var ev = frame.Arg<string>(0);
         if (string.IsNullOrEmpty(ev))
@@ -224,6 +358,16 @@ public sealed class RpcDispatcher
             // let somebody stop receiving events would be a strange thing to enforce.
             var dropped = _subscriptions.Remove(path, ev, caller.Source);
             return frame.Reply("result", dropped ? "ok" : "ok - was not subscribed");
+        }
+
+        // Authorised separately from calls, and that is the point of having it: a method can be
+        // write-protected while the events from the same instance carry the production data the
+        // method would have returned. Authorising only calls leaves that open.
+        if (!await _authorization.CanSubscribeAsync(caller.Source, caller.User, path, ev, caller.Cancellation))
+        {
+            _log.LogWarning("SourceRpc refused {Peer} watching {Path}.{Event}", caller.Source, path, ev);
+            _telemetry.FrameRejected("not permitted to subscribe");
+            return frame.Reply("error", Error($"{caller.Source} may not watch {path}.{ev}"), RpcErrorCode.Forbidden);
         }
 
         var added = _subscriptions.Add(path, ev, caller.Source);
@@ -262,20 +406,39 @@ public sealed class RpcDispatcher
     /// that ran and can be run again, which is the failure the store exists to prevent. So the
     /// record is the commit point rather than the reply.
     /// </summary>
-    private async Task RecordAsync(RpcFrame frame, RpcOutcome outcome, CancellationToken cancellationToken)
+    private async Task<bool> RecordAsync(RpcFrame frame, RpcOutcome outcome, CancellationToken cancellationToken)
     {
         if (frame.Idem is not { Length: > 0 } key || _idempotency is null)
-            return;
+            return true;
         try
         {
             await _idempotency.CompleteAsync(key, outcome, cancellationToken);
+            return true;
         }
         catch (Exception e)
         {
-            // The command has already run, so refusing now would be a lie. Logged loudly instead:
-            // what is lost is the protection against a *retry*, and somebody should know.
             _log.LogError(e, "SourceRpc ran {Path}.{Method} but could not record its outcome for {Key}", frame.Path, frame.Method, key);
+            return false;
         }
+    }
+
+    /// <summary>
+    /// Write the outcome down, and answer only if that worked.
+    ///
+    /// A command that ran but whose record was not committed is the one case where the ordinary
+    /// answer is a lie: the caller is told it succeeded, the guard against a *retry* is not in
+    /// place, and if the answer is then lost the retry runs the command a second time. So the
+    /// caller is told the outcome is unknown, which is the one thing that is certainly true, and
+    /// which says go and look rather than try again.
+    /// </summary>
+    private async Task<RpcFrame> RecordedAsync(RpcFrame frame, RpcOutcome outcome, RpcFrame answer, CancellationToken cancellationToken)
+    {
+        if (await RecordAsync(frame, outcome, cancellationToken))
+            return answer;
+        return frame.Reply(
+            "error",
+            Error("the command ran, but its outcome could not be recorded - it may or may not have taken effect, and it must not be blindly retried"),
+            RpcErrorCode.UnknownOutcome);
     }
 
     internal static object Error(string message, string? name = null) => new { name = name ?? "RpcError", message };

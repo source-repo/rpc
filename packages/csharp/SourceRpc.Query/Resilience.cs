@@ -61,7 +61,7 @@ public sealed class RpcCallBudget
     /// The idempotency key is carried unchanged, which is what makes the attempt an attempt rather
     /// than a second command.
     /// </summary>
-    public RpcCallOptions Next(string? idempotencyKey = null, string? ownerEpoch = null)
+    public RpcCallOptions Next(string? idempotencyKey = null, string? ownerFence = null)
     {
         var left = Remaining;
         if (left <= TimeSpan.Zero)
@@ -69,7 +69,7 @@ public sealed class RpcCallBudget
             // deadline* on this wire, so the call with no time left would become the one that may run
             // for ever - the exact inversion of the rule it was keeping.
             throw new SourceRpcException(RpcErrorCode.Timeout, "the deadline for this call passed before it could be issued");
-        return new RpcCallOptions { Timeout = left, IdempotencyKey = idempotencyKey, OwnerEpoch = ownerEpoch };
+        return new RpcCallOptions { Timeout = left, IdempotencyKey = idempotencyKey, OwnerFence = ownerFence };
     }
 }
 
@@ -159,12 +159,12 @@ public static class RpcResilience
         Func<RpcCallOptions, CancellationToken, Task<T>> attempt,
         RpcResilienceOptions? options = null,
         string? idempotencyKey = null,
-        string? ownerEpoch = null,
+        string? ownerFence = null,
         CancellationToken cancellationToken = default)
     {
         var pipeline = PipelineFor(budget, options);
         return await pipeline.ExecuteAsync(
-            async token => await attempt(budget.Next(idempotencyKey, ownerEpoch), token),
+            async token => await attempt(budget.Next(idempotencyKey, ownerFence), token),
             cancellationToken);
     }
 }

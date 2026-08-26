@@ -78,6 +78,8 @@ public static class RpcOutcomes
             or RpcErrorCode.MethodNotFound
             or RpcErrorCode.InvalidParams
             or RpcErrorCode.IncompatibleVersion
+            or RpcErrorCode.LimitExceeded
+            or RpcErrorCode.IdempotencyUnavailable
             or RpcErrorCode.Unauthorized
             or RpcErrorCode.Forbidden;
 
@@ -93,8 +95,13 @@ public static class RpcOutcomes
     /// held elsewhere, so retrying without acquiring refuses again while telling an operator the
     /// plant is flaky.
     ///
-    /// <see cref="RpcErrorCode.Busy"/> is deliberately absent: it means the mailbox was full and the
-    /// call certainly did not run, which is the one refusal genuinely worth waiting out.
+    /// <see cref="RpcErrorCode.Busy"/> is deliberately absent: it means this peer was already running
+    /// as many calls as it will, which is the one refusal genuinely worth waiting out.
+    ///
+    /// `LimitExceeded` and `IdempotencyUnavailable` are here for the same reason as the second group:
+    /// a frame that broke a protocol limit breaks it again unchanged, and a peer with no idempotency
+    /// store still has none a second later - so a retry gets the refusal again, having spent a round
+    /// trip to be told so.
     /// </summary>
     public static bool IsTerminalRefusal(RpcErrorCode code) =>
         code is RpcErrorCode.Unauthorized
@@ -103,6 +110,8 @@ public static class RpcOutcomes
             or RpcErrorCode.MethodNotFound
             or RpcErrorCode.InvalidParams
             or RpcErrorCode.IncompatibleVersion
+            or RpcErrorCode.LimitExceeded
+            or RpcErrorCode.IdempotencyUnavailable
             or RpcErrorCode.Superseded
             or RpcErrorCode.OwnershipChanged
             or RpcErrorCode.NotInControl;

@@ -9,11 +9,6 @@
     running an MQTT client should not carry a web framework to get a protocol.
   -->
   <PropertyGroup>
-    <TargetFramework>net8.0</TargetFramework>
-    <Nullable>enable</Nullable>
-    <ImplicitUsings>enable</ImplicitUsings>
-    <LangVersion>12</LangVersion>
-    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
     <RootNamespace>SourceRpc.SignalR</RootNamespace>
     <AssemblyName>SourceRpc.SignalR</AssemblyName>
   </PropertyGroup>
@@ -21,20 +16,7 @@
   <PropertyGroup>
     <IsPackable>true</IsPackable>
     <PackageId>SourceRpc.SignalR</PackageId>
-    <Version>5.0.0</Version>
-    <Authors>anderswestberg</Authors>
     <Description>Source RPC over ASP.NET Core SignalR: a hub that makes a .NET process reachable as a peer, and a client transport for one that dials out. Serves methods and publishes events over JSON or MessagePack.</Description>
-    <PackageTags>signalr;rpc;aspnetcore;msgrpc;automation</PackageTags>
-    <PackageLicenseExpression>MIT</PackageLicenseExpression>
-    <PackageProjectUrl>https://github.com/source-repo/rpc</PackageProjectUrl>
-    <RepositoryUrl>https://github.com/source-repo/rpc</RepositoryUrl>
-    <RepositoryType>git</RepositoryType>
-    <PublishRepositoryUrl>true</PublishRepositoryUrl>
-    <PackageReadmeFile>README.md</PackageReadmeFile>
-    <IncludeSymbols>true</IncludeSymbols>
-    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
-    <EmbedUntrackedSources>true</EmbedUntrackedSources>
-    <GenerateDocumentationFile>true</GenerateDocumentationFile>
     <!--
       The XML file ships so the reasoning in these types reaches a consumer's IntelliSense, which is
       most of what makes them readable. CS1591 - "missing XML comment for a publicly visible member"
@@ -42,12 +24,7 @@
       the ones whose names have already said it, and `/// The peer.` above `public string? Peer` is
       the mechanical comment this repository's style exists to avoid.
     -->
-    <NoWarn>$(NoWarn);CS1591</NoWarn>
   </PropertyGroup>
-
-  <ItemGroup>
-    <None Include="../README.md" Pack="true" PackagePath="/" />
-  </ItemGroup>
 
   <ItemGroup>
     <FrameworkReference Include="Microsoft.AspNetCore.App" />

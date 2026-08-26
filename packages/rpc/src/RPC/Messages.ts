@@ -96,6 +96,17 @@ export interface RpcCallInstanceMethodPayload extends RpcMessage {
     idempotencyKey?: string
 }
 
+/**
+ * What went wrong, as a code a caller can act on.
+ *
+ * **Both implementations have to spell every one of these**, and the reason is not tidiness. A code
+ * travels as a string and is matched by name, so one side missing a name does not narrow its
+ * understanding - it *misreads* it, silently, into whatever its fallback is. That went unnoticed in
+ * the .NET binding for four codes, three of which mean *it certainly did not run* and one of which
+ * means *nobody knows*, all four arriving as "the method ran and threw". `LimitExceeded` and
+ * `IdempotencyUnavailable` are the same lesson pointing the other way: they are answered by a C#
+ * peer and were absent here.
+ */
 export type RpcErrorCode =
     | 'ClassNotFound'
     | 'MethodNotFound'
@@ -141,6 +152,23 @@ export type RpcErrorCode =
      * topology and decides again under the new generation, which is the fence doing its job.
      */
     | 'OwnershipChanged'
+    /**
+     * The frame broke one of the target's protocol limits - too many hops, too large a batch, an
+     * identifier longer than anything legitimate. It certainly did not run, and the same frame
+     * breaks the same limit again.
+     *
+     * Answered by `SourceRpc` rather than by this implementation, which is why it is here: a code
+     * only one side spells is a code the other side cannot act on. See the note on the union above.
+     */
+    | 'LimitExceeded'
+    /**
+     * The call carried an idempotency key and the target has no store to enforce it with.
+     *
+     * Refused rather than run, which is the honest answer: accepting the key would tell a caller a
+     * guard was applied when none was, and a caller sends one precisely because running twice
+     * matters. Also answered by `SourceRpc` rather than here.
+     */
+    | 'IdempotencyUnavailable'
 
 /**
  * What a method does to the world, which decides what a caller may do about an uncertain answer.

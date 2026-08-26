@@ -1,0 +1,51 @@
+<Project>
+
+  <!--
+    The half of the shared build that has to be read *after* each project, not before.
+
+    Directory.Build.props is imported first, so anything conditioned on a property the project sets
+    - `IsPackable` here - sees it unset and evaluates false. That is not a subtle failure: every
+    package built cleanly and shipped as version 1.0.0, which is what NuGet uses when nobody said.
+  -->
+  <!-- Package metadata that is the same for all four, and would otherwise be pasted four times. -->
+  <PropertyGroup Condition="'$(IsPackable)' == 'true'">
+    <!-- The shared version, unless a package is on its own line - see SourceRpc.Query, which is
+         built against the core's public API rather than against its shape, so taking the core's
+         number would state an agreement it is not keeping. -->
+    <Version Condition="'$(PackageVersionOverride)' == ''">$(SourceRpcVersion)</Version>
+    <Version Condition="'$(PackageVersionOverride)' != ''">$(PackageVersionOverride)</Version>
+    <Authors>anderswestberg</Authors>
+    <PackageTags>rpc;msgrpc;automation;iiot</PackageTags>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageProjectUrl>https://github.com/source-repo/rpc</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/source-repo/rpc</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PublishRepositoryUrl>true</PublishRepositoryUrl>
+    <!-- Shown on the package page. Every package carries one: a NuGet page with no readme is a
+         list of dependencies and a version number, which tells a reader nothing about whether it
+         is the package they want. -->
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <IncludeSymbols>true</IncludeSymbols>
+    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+    <EmbedUntrackedSources>true</EmbedUntrackedSources>
+  </PropertyGroup>
+
+  <!--
+    Fails the build when a public signature changes without the change being written down.
+
+    Not style enforcement: these are packages, and a public surface that moves without anyone
+    noticing reaches a consumer as a compile error after they upgrade. The analyzer compares the
+    real surface against PublicAPI.Shipped.txt / PublicAPI.Unshipped.txt next to each project, so
+    adding an API is a deliberate line in a file that shows up in review.
+  -->
+  <ItemGroup Condition="'$(IsPackable)' == 'true'">
+    <PackageReference Include="Microsoft.CodeAnalysis.PublicApiAnalyzers" Version="3.11.0-beta1.24508.2" PrivateAssets="all" IncludeAssets="runtime; build; native; contentfiles; analyzers" />
+    <AdditionalFiles Include="PublicAPI.Shipped.txt" />
+    <AdditionalFiles Include="PublicAPI.Unshipped.txt" />
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(IsPackable)' == 'true'">
+    <None Include="README.md" Pack="true" PackagePath="\" />
+  </ItemGroup>
+
+</Project>

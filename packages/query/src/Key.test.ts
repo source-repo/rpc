@@ -125,7 +125,7 @@ test('nothing is retried unless the method said what it does', (t) => {
 })
 
 test('a refusal is not a failure, and asking again only gets it again', (t) => {
-    for (const code of ['Forbidden', 'Unauthorized', 'ClassNotFound', 'MethodNotFound', 'InvalidParams', 'IncompatibleVersion', 'Superseded', 'OwnershipChanged', 'NotInControl'])
+    for (const code of ['Forbidden', 'Unauthorized', 'ClassNotFound', 'MethodNotFound', 'InvalidParams', 'IncompatibleVersion', 'LimitExceeded', 'IdempotencyUnavailable', 'Superseded', 'OwnershipChanged', 'NotInControl'])
         t.true(isTerminalRefusal(Object.assign(new Error(code), { code })), code)
     // Busy means the mailbox was full and the call certainly did not run, which is the one refusal
     // worth waiting out.

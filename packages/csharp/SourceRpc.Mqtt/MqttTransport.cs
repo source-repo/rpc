@@ -59,6 +59,14 @@ public sealed class MqttTransportOptions
     public int MaxTrackedNonces { get; set; } = 5000;
 
     /// <summary>
+    /// Permit a reply address other than the requester's own response topic.
+    ///
+    /// Given the requesting peer and the topic it asked for. Off by default, because the addresses
+    /// a request could otherwise name are every topic on the network, other peers' included.
+    /// </summary>
+    public Func<string, string, bool>? AllowResponseTopic { get; set; }
+
+    /// <summary>
     /// How many reply addresses to hold at once.
     ///
     /// Bounded because a request whose exchange never ends - a peer with no handler for it, a
@@ -104,6 +112,9 @@ public sealed class MqttTransport : ISourceRpcTransport
 
     /// <inheritdoc/>
     public event Action<IReadOnlyCollection<string>>? PeersChanged;
+
+    /// <inheritdoc/>
+    public event Func<Task>? LinkEstablished;
 
     /// <summary>A frame that could not be read, announced rather than dropped.</summary>
     public event Action<string>? Rejected;
@@ -170,6 +181,22 @@ public sealed class MqttTransport : ISourceRpcTransport
                 _closing.Token);
 
             _log.LogInformation("SourceRpc peer {Peer} is on the broker at {Broker}", _options.Name, _mqtt.BrokerUrl);
+
+            // Raised after the subscriptions above are in place, so anything restored in response
+            // to it - this peer's own RPC subscriptions, above all - has somewhere to arrive.
+            // A broker forgets nothing about a peer's *topics*, but the peers it talks to have
+            // forgotten its RPC subscriptions, so they must be taken out again either way.
+            if (LinkEstablished is { } established)
+            {
+                try
+                {
+                    await established();
+                }
+                catch (Exception e)
+                {
+                    _log.LogError(e, "SourceRpc failed to restore state after the link came up");
+                }
+            }
         }
         catch (Exception e) when (_closing?.IsCancellationRequested == false)
         {
@@ -253,13 +280,13 @@ public sealed class MqttTransport : ISourceRpcTransport
             && frame.Corr is { Length: > 0 } corr
             && args.ApplicationMessage.ResponseTopic is { Length: > 0 } responseTopic)
         {
-            if (!IsOurs(responseTopic))
+            if (!MayReplyTo(responseTopic, frame.Src))
             {
                 _log.LogWarning("SourceRpc refused a reply address outside {Prefix}: {Topic}", _mqtt.Prefix, responseTopic);
                 Rejected?.Invoke($"reply address '{responseTopic}' is outside this network");
                 return Task.CompletedTask;
             }
-            Remember(corr, new PendingReply(responseTopic, args.ApplicationMessage.ContentType == "application/json"));
+            Remember(ReplyKey(frame.Src, corr), new PendingReply(responseTopic, args.ApplicationMessage.ContentType == "application/json"));
         }
 
         // Started, not awaited. MQTTnet waits for this callback before delivering the next message,
@@ -272,12 +299,27 @@ public sealed class MqttTransport : ISourceRpcTransport
         return Task.CompletedTask;
     }
 
-    /// <summary>A reply address this peer is willing to send to: inside its own prefix, and no wildcard.</summary>
-    private bool IsOurs(string topic) =>
-        topic.StartsWith(_mqtt.Prefix + "/", StringComparison.Ordinal)
-        && !topic.Contains('+', StringComparison.Ordinal)
-        && !topic.Contains('#', StringComparison.Ordinal)
-        && !topic.StartsWith("$", StringComparison.Ordinal);
+    /// <summary>
+    /// A reply address this peer is willing to send to: the requester's own response topic.
+    ///
+    /// Not "somewhere under our prefix", which is what this used to check and which is not a
+    /// restriction at all - another peer's request topic, event topic and presence topic are all
+    /// under the prefix too. A caller asking for its answer to be delivered to somebody else's
+    /// presence topic was accepted, and the answer's body then read as a presence update and
+    /// evicted that peer. The only address a request is entitled to name is its own.
+    ///
+    /// <see cref="MqttTransportOptions.AllowResponseTopic"/> exists for the deployments that
+    /// genuinely need another arrangement - a gateway collecting replies on one topic - because a
+    /// rule with no way out gets replaced by no rule at all.
+    /// </summary>
+    private bool MayReplyTo(string topic, string requester)
+    {
+        if (topic.Contains('+', StringComparison.Ordinal) || topic.Contains('#', StringComparison.Ordinal) || topic.StartsWith("$", StringComparison.Ordinal))
+            return false;
+        if (topic == Mqtt5Frame.TopicFor(_mqtt.Prefix, "rsp", requester))
+            return true;
+        return _mqtt.AllowResponseTopic?.Invoke(requester, topic) == true;
+    }
 
     /// <summary>
     /// Hold where one exchange's answer goes, bounded.
@@ -287,6 +329,16 @@ public sealed class MqttTransport : ISourceRpcTransport
     /// for ever. Oldest first, because the oldest correlation is the one least likely still to be
     /// waited on.
     /// </summary>
+    /// <summary>
+    /// What identifies one exchange: the peer at the far end of it, and the correlation they chose.
+    ///
+    /// The correlation alone is not enough. A caller picks it, so two callers can pick the same one
+    /// - and on a broker there is no connection to tell them apart, so the second request silently
+    /// overwrote the first one's return address and the first caller's answer went to the second
+    /// caller's topic.
+    /// </summary>
+    private static string ReplyKey(string peer, string correlation) => peer + "\u0000" + correlation;
+
     private void Remember(string correlation, PendingReply reply)
     {
         lock (_replyOrder)
@@ -339,8 +391,10 @@ public sealed class MqttTransport : ISourceRpcTransport
         if (announced != Mqtt5Frame.FrameVersion)
             return $"signed frame version '{announced}', which this build does not accept";
 
-        if (!_replays.Accept(nonce, timestamp))
-            return "stale or replayed";
+        // Cheap and stateless, so it runs before the expensive check: a frame from a wildly wrong
+        // clock is refused without an HMAC being computed for it.
+        if (!_replays.IsFresh(timestamp))
+            return "stale timestamp";
 
         // Rebuilt from the properties **as they arrived**, not from the parsed frame - so tampering
         // with any of them fails the signature rather than changing how the payload is read, where
@@ -395,6 +449,12 @@ public sealed class MqttTransport : ISourceRpcTransport
         }
         if (identity is null)
             return "bad signature";
+
+        // The nonce is burned only now, after the frame has been shown to be genuine. Committing it
+        // before verification let anyone who could observe a nonce suppress the real frame carrying
+        // it: send it first with a wrong signature, and the genuine one is refused as a replay.
+        if (!_replays.Remember(nonce, timestamp))
+            return "replayed";
         // Re-checked here rather than trusted: whoever the signature proves this is from must be
         // who the frame says it is from, or one peer's key admits frames in another peer's name.
         return identity == frame.Src ? null : "identity does not match source";
@@ -439,9 +499,14 @@ public sealed class MqttTransport : ISourceRpcTransport
         // taken, and released only on the reply that ends the exchange: a deferred method answers
         // twice, and forgetting on the receipt would send the real answer to a derived topic in
         // this peer's own encoding - where the caller is not listening.
-        PendingReply? pending = isReply && _replies.TryGetValue(frame.Corr!, out var held) ? held : null;
-        if (isReply && frame.Corr is { Length: > 0 } corr && Mqtt5Frame.IsFinalReply(frame))
-            _replies.TryRemove(corr, out _);
+        // Keyed by who asked as well as what they called it. MQTT callers choose their own
+        // correlation data, so two peers can pick the same string - and with the correlation alone
+        // as the key, the second request silently overwrote the first one's return address and the
+        // first caller's answer went to the second caller's topic.
+        var replyKey = isReply ? ReplyKey(frame.Tgt, frame.Corr!) : null;
+        PendingReply? pending = replyKey is not null && _replies.TryGetValue(replyKey, out var held) ? held : null;
+        if (replyKey is not null && Mqtt5Frame.IsFinalReply(frame))
+            _replies.TryRemove(replyKey, out _);
 
         var topic = pending?.Topic ?? Mqtt5Frame.TopicFor(_mqtt.Prefix, channel, frame.Tgt);
         var json = pending?.Json ?? _mqtt.Json;

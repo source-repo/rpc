@@ -13,11 +13,6 @@
     Forms tool can take part without pulling a web stack in behind it.
   -->
   <PropertyGroup>
-    <TargetFramework>net8.0</TargetFramework>
-    <Nullable>enable</Nullable>
-    <ImplicitUsings>enable</ImplicitUsings>
-    <LangVersion>12</LangVersion>
-    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
     <RootNamespace>SourceRpc.SocketIo</RootNamespace>
     <AssemblyName>SourceRpc.SocketIo</AssemblyName>
   </PropertyGroup>
@@ -25,20 +20,7 @@
   <PropertyGroup>
     <IsPackable>true</IsPackable>
     <PackageId>SourceRpc.SocketIo</PackageId>
-    <Version>5.0.0</Version>
-    <Authors>anderswestberg</Authors>
     <Description>Source RPC over socket.io, for a .NET peer that dials out to a TypeScript socket.io server. Client only - socket.io has no maintained .NET server.</Description>
-    <PackageTags>socketio;rpc;msgrpc;automation;iiot</PackageTags>
-    <PackageLicenseExpression>MIT</PackageLicenseExpression>
-    <PackageProjectUrl>https://github.com/source-repo/rpc</PackageProjectUrl>
-    <RepositoryUrl>https://github.com/source-repo/rpc</RepositoryUrl>
-    <RepositoryType>git</RepositoryType>
-    <PublishRepositoryUrl>true</PublishRepositoryUrl>
-    <IncludeSymbols>true</IncludeSymbols>
-    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
-    <EmbedUntrackedSources>true</EmbedUntrackedSources>
-    <GenerateDocumentationFile>true</GenerateDocumentationFile>
-    <NoWarn>$(NoWarn);CS1591</NoWarn>
   </PropertyGroup>
 
   <ItemGroup>

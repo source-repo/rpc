@@ -36,8 +36,12 @@ export class RpcDeadlinePassed extends Error {
  *
  * `Busy` is deliberately not here - it means the mailbox was full and the call certainly did not
  * run, which is the one refusal that is genuinely worth waiting out.
+ *
+ * `LimitExceeded` and `IdempotencyUnavailable` are answered by a .NET peer rather than by this
+ * implementation, and belong in the second group: a frame that broke a protocol limit breaks it
+ * again unchanged, and a peer with no idempotency store still has none a second later.
  */
-const TERMINAL: readonly RpcErrorCode[] = ['Forbidden', 'Unauthorized', 'ClassNotFound', 'MethodNotFound', 'InvalidParams', 'IncompatibleVersion', 'Superseded', 'OwnershipChanged', 'NotInControl']
+const TERMINAL: readonly RpcErrorCode[] = ['Forbidden', 'Unauthorized', 'ClassNotFound', 'MethodNotFound', 'InvalidParams', 'IncompatibleVersion', 'LimitExceeded', 'IdempotencyUnavailable', 'Superseded', 'OwnershipChanged', 'NotInControl']
 
 export const isTerminalRefusal = (error: unknown): boolean => {
     const code = (error as { code?: RpcErrorCode } | undefined)?.code

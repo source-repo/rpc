@@ -103,11 +103,29 @@ public sealed class RpcRouter
     }
 
     /// <summary>Forget a dropped connection, returning the peers that went with it.</summary>
+    /// <summary>
+    /// Drop everything a departing connection was the route for, and say what actually went.
+    ///
+    /// Removal is conditional on the route still being *this* connection's, which matters precisely
+    /// in the case the takeover behaviour exists to support. A reconnecting peer claims its own name
+    /// again, and the old connection's teardown is often still running: it had already listed
+    /// "plc-1" as one of its own, and an unconditional remove-by-name then deleted the route the new
+    /// connection had just installed. The peer would be announced offline and unreachable while
+    /// perfectly connected.
+    ///
+    /// Only routes genuinely removed are returned, so the hub announces offline and drops
+    /// subscriptions for those and no others.
+    /// </summary>
     public IReadOnlyCollection<string> Remove(string connectionId)
     {
-        var gone = _routes.Values.Where(route => route.ConnectionId == connectionId).Select(route => route.Name).ToList();
-        foreach (var name in gone)
-            _routes.TryRemove(name, out _);
+        var gone = new List<string>();
+        foreach (var route in _routes.Values.Where(route => route.ConnectionId == connectionId))
+        {
+            // Compares the value as well as the key, so a route replaced between the read above and
+            // this line is left alone: it belongs to whoever replaced it.
+            if (((ICollection<KeyValuePair<string, PeerRoute>>)_routes).Remove(new KeyValuePair<string, PeerRoute>(route.Name, route)))
+                gone.Add(route.Name);
+        }
         return gone;
     }
 }

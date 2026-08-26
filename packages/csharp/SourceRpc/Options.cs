@@ -55,52 +55,34 @@ public sealed class SourceRpcOptions
     /// </summary>
     public bool PinSourceToAuthenticatedIdentity { get; set; } = true;
 
+    /// <summary>
+    /// Refuse any peer that has not authenticated.
+    ///
+    /// Separate from <see cref="PinSourceToAuthenticatedIdentity"/>, and the distinction is easy to
+    /// lose: pinning says a name that *is* claimed must match the identity behind it, and says
+    /// nothing at all when there is no identity - so a connection that never authenticated passes
+    /// it. On a development network that is what you want. On a plant it means "pinning is on" and
+    /// "authentication is required" read alike and are not.
+    ///
+    /// Off by default, because turning it on where nothing authenticates refuses every peer.
+    /// </summary>
+    public bool RequireAuthenticatedPeers { get; set; }
+
     /// <summary>Delays before each attempt to (re)connect, in milliseconds. The last is repeated for ever.</summary>
     public int[] ReconnectDelaysMs { get; set; } = [0, 2000, 5000, 10000, 30000];
-}
-
-/// <summary>
-/// What a caller can say about one call, beyond which method it is.
-///
-/// Three fields the frame has always carried and no caller here could set, which is why they arrive
-/// together: a .NET peer could not name a command, could not fence one, and could not declare a
-/// deadline other than the process-wide one. The first two are what make a *retry* safe rather than
-/// a second command, so a resilience policy built without them would be a policy for doing a thing
-/// twice.
-/// </summary>
-public sealed record RpcCallOptions
-{
-    /// <summary>
-    /// Names the command, so a second attempt at it is recognised as the same one.
-    ///
-    /// The case this exists for: an operator presses "start pump", the answer is
-    /// <see cref="RpcErrorCode.UnknownOutcome"/>, and they press it again. Without a key those are
-    /// two commands and a peer with a durable idempotency store will run both; with one they are two
-    /// attempts at a command that runs once, and the second is answered from the record.
-    ///
-    /// It has to come from whatever identifies the intent - a work order, a batch step, a button
-    /// press. A value generated per *attempt* defeats the purpose, since that is what the
-    /// correlation id already is.
-    /// </summary>
-    public string? IdempotencyKey { get; init; }
 
     /// <summary>
-    /// How long this call waits, overriding <see cref="SourceRpcOptions.CallTimeout"/>. The same
-    /// number becomes the transmitted ttl, so what the far end is told is exactly what this caller
-    /// is going to do.
+    /// Carry an idempotency key without a store to enforce it, instead of refusing the call.
     ///
-    /// **What a retry policy recomputes.** A deadline is a budget across every attempt, not a fresh
-    /// clock for each: three attempts under a "ten second timeout" that each restart it is a caller
-    /// waiting thirty seconds having asked for ten. See `SourceRpc.Query`.
+    /// Off, because a caller sends a key precisely when running twice matters: accepting one and
+    /// enforcing nothing tells that caller a guard was applied when none was. On for a network in
+    /// the middle of being migrated, where refusing every keyed call at once is worse.
     /// </summary>
-    public TimeSpan? Timeout { get; init; }
+    public bool AllowUnenforcedIdempotencyKeys { get; set; }
 
     /// <summary>
-    /// Fence this call on the target's owner generation, as this caller last observed it.
-    ///
-    /// Reassign the owner and the call is refused <see cref="RpcErrorCode.OwnershipChanged"/> - the
-    /// in-flight half of what a lease check on the far end cannot see, since that asks *who holds it
-    /// now* and never *is this the generation the caller decided under*.
+    /// The bounds this peer puts on what arrives, so hostile traffic and an accidental loop are both
+    /// refused rather than absorbed.
     /// </summary>
-    public string? OwnerEpoch { get; init; }
+    public RpcLimits Limits { get; set; } = new();
 }

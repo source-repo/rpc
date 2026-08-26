@@ -78,6 +78,13 @@ public sealed class RpcInvocation
     /// travels - and a caller accepts the later answer only for a call it actually made, to the
     /// peer it made it to, which is what makes a forged result have nothing to attach itself to.
     /// </summary>
+    /// <summary>
+    /// Called when a deferred answer settles, so the dispatcher can record the outcome against the
+    /// idempotency key this call carried. Set by the dispatcher before the responder runs, because
+    /// <see cref="Defer{T}"/> is called from inside it.
+    /// </summary>
+    internal Func<RpcOutcome, Task>? Settled { get; set; }
+
     public RpcDeferred<T> Defer<T>(TimeSpan? expiresIn = null)
     {
         if (Reply is null)
@@ -89,16 +96,20 @@ public sealed class RpcInvocation
         var expiresAt = DateTimeOffset.UtcNow + (expiresIn ?? TimeSpan.FromMinutes(5));
         var reply = Reply;
         var frame = Frame;
-        return new RpcDeferred<T>(correlation, expiresAt, (outcome, value) =>
-            reply(new RpcFrame
-            {
-                Src = frame.Tgt,
-                Tgt = frame.Src,
-                Kind = "ticket",
-                Corr = correlation,
-                Outcome = outcome,
-                Body = value
-            }));
+        return new RpcDeferred<T>(
+            correlation,
+            expiresAt,
+            (outcome, value) =>
+                reply(new RpcFrame
+                {
+                    Src = frame.Tgt,
+                    Tgt = frame.Src,
+                    Kind = "ticket",
+                    Corr = correlation,
+                    Outcome = outcome,
+                    Body = value
+                }),
+            Settled);
     }
 
     /// <summary>
@@ -109,6 +120,20 @@ public sealed class RpcInvocation
     /// cast exception from the plumbing.
     /// </summary>
     public T? Arg<T>(int index) => Frame.Arg<T>(index);
+
+    /// <summary>
+    /// The argument at <paramref name="index"/>, or <see cref="RpcErrorCode.InvalidParams"/> saying
+    /// what could not be read.
+    ///
+    /// Reach for this rather than <see cref="Arg{T}"/> for anything the method acts on. `Arg` is
+    /// lenient by design and answers <c>default</c> when a value will not convert - which turns a
+    /// malformed setpoint into `0` and a malformed flag into `false`, and a machine will act on
+    /// both. Refusing is the answer a caller can do something about.
+    /// </summary>
+    public T? RequiredArg<T>(int index) => Frame.RequiredArg<T>(index);
+
+    /// <summary>The argument at <paramref name="index"/>, saying whether it could be read.</summary>
+    public bool TryGetArg<T>(int index, out T? value) => Frame.TryGetArg(index, out value);
 
     /// <summary>How many arguments the call carried, for a method that takes a variable number.</summary>
     public int ArgCount => Frame.ArgCount;
@@ -144,13 +169,13 @@ public interface ISourceRpcResponder
 /// The error codes a caller understands, which are the library's rather than this binding's: they
 /// are what a TypeScript peer turns back into a typed rejection, so the strings matter.
 ///
-/// **They matter in the other direction too, and that is why five of these were added rather than
+/// **They matter in the other direction too, and that is why three of these were added rather than
 /// designed.** A code arrives as a string and is parsed by name; one this enum does not have falls
 /// back to <see cref="Exception"/>, which says *the method ran and threw*. So a TypeScript peer
-/// answering `NotInControl`, `Busy`, `Superseded` or `UnknownOutcome` was telling a .NET caller the
-/// exact opposite of what it meant: three of those certainly did not run, and the fourth is the one
-/// nobody knows about. Every code a peer can put on the wire has to be spelled here or the wire is
-/// being misread rather than merely narrowed.
+/// answering `Superseded`, `NotInControl` or `IncompatibleVersion` - every one of which certainly
+/// did **not** run - was telling a .NET caller the opposite of what it meant. Every code a peer can
+/// put on the wire has to be spelled here or the wire is being misread rather than merely narrowed,
+/// and `SourceRpc.Tests` asserts the whole vocabulary against the union in `Messages.ts`.
 /// </summary>
 public enum RpcErrorCode
 {
@@ -169,40 +194,6 @@ public enum RpcErrorCode
     /// <summary>The frame could not be delivered - no route, or nothing listening.</summary>
     TransportError,
 
-    /// <summary>
-    /// The call was sent and its outcome is not known: it may have run, it may not.
-    ///
-    /// **The distinction this draws against <see cref="TransportError"/> is the library's founding
-    /// one.** "It failed" invites a retry; "I do not know" says to go and look, and for a
-    /// non-repeatable command that is the difference between one pump start and two. A predicate
-    /// that treats the two alike turns the distinction back into a spinner.
-    /// </summary>
-    UnknownOutcome,
-
-    /// <summary>
-    /// The instance's mailbox was full, so the call was refused before it could queue. It certainly
-    /// did not run, and waiting and asking again is reasonable - unlike <see cref="Superseded"/>.
-    /// </summary>
-    Busy,
-
-    /// <summary>
-    /// A newer call to the same conflatable method replaced this one while it waited. It certainly
-    /// did not run and must not be retried: the newer value won, which is what the method opted into.
-    /// </summary>
-    Superseded,
-
-    /// <summary>
-    /// The method requires the instance's authority and the caller does not hold it. It certainly
-    /// did not run, and retrying without acquiring will refuse again.
-    /// </summary>
-    NotInControl,
-
-    /// <summary>
-    /// The caller declared a contract version this peer has no history for. Asking again with the
-    /// same declaration gets the same answer.
-    /// </summary>
-    IncompatibleVersion,
-
     /// <summary>The caller is not authenticated.</summary>
     Unauthorized,
 
@@ -216,7 +207,64 @@ public enum RpcErrorCode
     /// The call carried an owner fence and this process's record of the owner is a different
     /// generation. It certainly did not run, and it must not be blindly retried.
     /// </summary>
-    OwnershipChanged
+    OwnershipChanged,
+
+    /// <summary>
+    /// The command may have run, and nothing here can tell whether it did.
+    ///
+    /// Deliberately not <see cref="TransportError"/>, which is the honest answer when a request
+    /// never left. The difference is the whole point: "it failed" invites a retry, "I do not know"
+    /// says go and look - and for a non-repeatable command that is the difference between one pump
+    /// start and two. Answered when the idempotency store cannot be reached, and when a command ran
+    /// but its outcome could not be written down.
+    /// </summary>
+    UnknownOutcome,
+
+    /// <summary>
+    /// This peer is already running as many calls as it will run at once, so this one was refused
+    /// before it could queue. It certainly did not run, and retrying later is reasonable.
+    /// </summary>
+    Busy,
+
+    /// <summary>
+    /// The frame broke one of this peer's protocol limits - too many hops, too large a batch, an
+    /// identifier longer than anything legitimate. It certainly did not run.
+    /// </summary>
+    LimitExceeded,
+
+    /// <summary>
+    /// The call carried an idempotency key and this process has no store to enforce it with.
+    ///
+    /// Refused rather than run: accepting the key would tell the caller a guard was applied when
+    /// none was, and the caller chose to send a key precisely because running twice matters.
+    /// </summary>
+    IdempotencyUnavailable,
+
+    // The three below read as though they belong beside OwnershipChanged, which is where they were
+    // written first. They are here instead because an enum member inserted in the middle renumbers
+    // every one after it - harmless on the wire, where a code travels by name, and a binary break
+    // for anything already compiled against the published package. The grouping was cosmetic; not
+    // renumbering a shipped enum is not.
+
+    /// <summary>
+    /// A newer call to the same conflatable method replaced this one while it waited. It certainly
+    /// did not run and must not be retried: the newer value won, which is what the method opted into
+    /// by declaring itself conflatable.
+    /// </summary>
+    Superseded,
+
+    /// <summary>
+    /// The method requires the instance's authority and the caller does not hold it. It certainly
+    /// did not run, and retrying without acquiring will refuse again - which on a screen reads as a
+    /// flaky plant rather than as a lease held elsewhere.
+    /// </summary>
+    NotInControl,
+
+    /// <summary>
+    /// The caller declared a contract version this peer has no history for. Asking again with the
+    /// same declaration gets the same answer.
+    /// </summary>
+    IncompatibleVersion
 }
 
 /// <summary>

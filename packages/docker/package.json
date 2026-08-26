@@ -1,6 +1,6 @@
 {
     "name": "@source-repo/docker",
-    "version": "5.0.0",
+    "version": "5.1.0",
     "description": "Read-only Docker observation for Source RPC networks: containers as a browsable resource, over the Engine API and nothing else",
     "keywords": [
         "docker",
@@ -50,7 +50,7 @@
         "prepack": "npm run clean && npm run build"
     },
     "dependencies": {
-        "@source-repo/rpc": "^5.0.0"
+        "@source-repo/rpc": "^5.1.0"
     },
     "devDependencies": {
         "@types/node": "^26.1.2",

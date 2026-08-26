@@ -1,0 +1,31 @@
+SourceRpc.SocketIo.SocketIoClientTransport
+SourceRpc.SocketIo.SocketIoClientTransport.Connected.get -> bool
+SourceRpc.SocketIo.SocketIoClientTransport.DisposeAsync() -> System.Threading.Tasks.ValueTask
+SourceRpc.SocketIo.SocketIoClientTransport.FrameReceived -> System.Func<SourceRpc.RpcFrame!, System.Threading.Tasks.Task!>?
+SourceRpc.SocketIo.SocketIoClientTransport.LinkEstablished -> System.Func<System.Threading.Tasks.Task!>?
+SourceRpc.SocketIo.SocketIoClientTransport.Name.get -> string!
+SourceRpc.SocketIo.SocketIoClientTransport.PeersChanged -> System.Action<System.Collections.Generic.IReadOnlyCollection<string!>!>?
+SourceRpc.SocketIo.SocketIoClientTransport.Rejected -> System.Action<string!>?
+SourceRpc.SocketIo.SocketIoClientTransport.SendAsync(SourceRpc.RpcFrame! frame, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task!
+SourceRpc.SocketIo.SocketIoClientTransport.SocketIoClientTransport(SourceRpc.SocketIo.SocketIoTransportOptions! socketIo, SourceRpc.SourceRpcOptions! options, Microsoft.Extensions.Logging.ILogger? log = null) -> void
+SourceRpc.SocketIo.SocketIoClientTransport.SocketIoClientTransport(string! url, SourceRpc.SourceRpcOptions! options, Microsoft.Extensions.Logging.ILogger? log = null) -> void
+SourceRpc.SocketIo.SocketIoClientTransport.StartAsync(System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task!
+SourceRpc.SocketIo.SocketIoFrameCodec
+SourceRpc.SocketIo.SocketIoFrameCodec.Json = 1 -> SourceRpc.SocketIo.SocketIoFrameCodec
+SourceRpc.SocketIo.SocketIoFrameCodec.MessagePack = 0 -> SourceRpc.SocketIo.SocketIoFrameCodec
+SourceRpc.SocketIo.SocketIoTransportOptions
+SourceRpc.SocketIo.SocketIoTransportOptions.AnnouncePresence.get -> bool
+SourceRpc.SocketIo.SocketIoTransportOptions.AnnouncePresence.set -> void
+SourceRpc.SocketIo.SocketIoTransportOptions.Auth.get -> object?
+SourceRpc.SocketIo.SocketIoTransportOptions.Auth.set -> void
+SourceRpc.SocketIo.SocketIoTransportOptions.Codec.get -> SourceRpc.SocketIo.SocketIoFrameCodec
+SourceRpc.SocketIo.SocketIoTransportOptions.Codec.set -> void
+SourceRpc.SocketIo.SocketIoTransportOptions.Configure.get -> System.Action<SocketIOClient.SocketIOOptions!>?
+SourceRpc.SocketIo.SocketIoTransportOptions.Configure.set -> void
+SourceRpc.SocketIo.SocketIoTransportOptions.EnginePath.get -> string?
+SourceRpc.SocketIo.SocketIoTransportOptions.EnginePath.set -> void
+SourceRpc.SocketIo.SocketIoTransportOptions.ReconnectionDelayMaxMs.get -> int
+SourceRpc.SocketIo.SocketIoTransportOptions.ReconnectionDelayMaxMs.set -> void
+SourceRpc.SocketIo.SocketIoTransportOptions.SocketIoTransportOptions() -> void
+SourceRpc.SocketIo.SocketIoTransportOptions.Url.get -> string!
+SourceRpc.SocketIo.SocketIoTransportOptions.Url.set -> void

@@ -1,0 +1,36 @@
+<Project>
+
+  <!--
+    What every .NET project here shares, so it is said once.
+
+    The version above all. It lived in four csproj files, which is four places to edit and three
+    chances to miss one - and a set of packages whose versions disagree is worse than one that is
+    behind, because a consumer resolves a mixture and the mixture is what nobody tested.
+
+    Deliberately **not** tied to the npm version. They release together when a change spans both,
+    and a documentation fix to the TypeScript README is not a reason to publish four NuGet packages
+    with nothing in them. The release workflow reads this file and skips whatever is already on the
+    registry, so a tag that changed nothing here publishes nothing here.
+  -->
+  <PropertyGroup>
+    <SourceRpcVersion>5.1.0</SourceRpcVersion>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>12</LangVersion>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+
+    <!-- Here rather than with the rest of the package metadata, and it matters: the compiler reads
+         this while building, which is long before Directory.Build.targets is imported. Setting it
+         there produced packages with no XML documentation in them at all - every doc comment in
+         this repository invisible to anyone consuming the package, and nothing failing to say so. -->
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <!-- The XML ships, but a member whose name has already said it does not also need a ceremonial
+         sentence, and CS1591 would demand one for every property on every frame record. -->
+    <NoWarn>$(NoWarn);CS1591</NoWarn>
+  </PropertyGroup>
+
+</Project>

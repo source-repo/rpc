@@ -73,7 +73,7 @@ public class CallCacheTests
 
         await cache.GetOrAskAsync(Readings(0), Ask);
         await cache.GetOrAskAsync(new RpcQuestion("oven3", "alarms", "current", null), Ask);
-        await cache.ForgetAsync("oven3", "plant");
+        await cache.ForgetPathAsync("oven3", "plant");
 
         Assert.Equal(3, await cache.GetOrAskAsync(Readings(0), Ask));
         Assert.Equal(2, await cache.GetOrAskAsync(new RpcQuestion("oven3", "alarms", "current", null), Ask));

@@ -30,14 +30,18 @@ public sealed class RpcHub : Hub
     private readonly ILogger<RpcHub> _log;
     private readonly IHubContext<RpcHub> _context;
 
+    private readonly ISourceRpcAuthorization _authorization;
+
     public RpcHub(
         RpcRouter peers,
         RpcDispatcher dispatcher,
         IOptions<SourceRpcOptions> options,
         SourceRpcTelemetry telemetry,
         ILogger<RpcHub> log,
-        IHubContext<RpcHub> context)
+        IHubContext<RpcHub> context,
+        ISourceRpcAuthorization? authorization = null)
     {
+        _authorization = authorization ?? new AllowAllAuthorization();
         _context = context;
         _peers = peers;
         _dispatcher = dispatcher;
@@ -79,12 +83,36 @@ public sealed class RpcHub : Hub
             throw new HubException(refusal);
         }
 
+        // Authenticated is not the same as permitted. This is where a policy gets to say that this
+        // identity, real though it is, may not hold this name.
+        if (!await _authorization.CanAnnounceAsync(Context.User, who.Name, Context.ConnectionAborted))
+        {
+            var denied = $"'{who.Name}' is not a name this connection may announce";
+            _log.LogWarning("SourceRpc refused presence for {Peer} on {ConnectionId}: {Reason}", who.Name, Context.ConnectionId, denied);
+            _telemetry.FrameRejected(denied);
+            throw new HubException(denied);
+        }
+
         _peers.Announce(who.Name, Context.ConnectionId, who.Shape);
         // What a bridge advertises. Registered here rather than learned from traffic, because
         // reachability comes from presence: a peer behind a bridge that has not spoken yet must
         // still be addressable, or a caller can only ever reach a peer that already called it.
         if (who.Carrying is { Length: > 0 })
-            _peers.SetCarried(Context.ConnectionId, who.Name, who.Carrying, _options.MaximumCarriedPeers);
+        {
+            // Filtered per name rather than accepted as a list. A bridge legitimately carrying one
+            // cell must not thereby be able to speak for another, and a count limit does not say
+            // anything about *which* names - it only says how many.
+            var permitted = new List<string>();
+            foreach (var carried in who.Carrying)
+            {
+                if (await _authorization.CanCarryAsync(Context.User, who.Name, carried, Context.ConnectionAborted))
+                    permitted.Add(carried);
+                else
+                    _log.LogWarning("SourceRpc refused {Bridge} carrying {Carried}", who.Name, carried);
+            }
+            if (permitted.Count > 0)
+                _peers.SetCarried(Context.ConnectionId, who.Name, [.. permitted], _options.MaximumCarriedPeers);
+        }
 
         await Clients.Others.SendAsync("presence", new PresenceUpdate { Peer = who.Name, State = "online", Shape = who.Shape });
 
@@ -181,9 +209,19 @@ public sealed class RpcHub : Hub
     private bool Vouches(string name, out string refusal)
     {
         refusal = "";
+        var identity = Context.User?.Identity;
+
+        // Asked before pinning, because it is the question pinning does not answer: pinning
+        // compares a claimed name with an identity, and has nothing to compare when the connection
+        // never authenticated. Failing closed here is what makes "authentication required" mean it.
+        if (_options.RequireAuthenticatedPeers && identity?.IsAuthenticated != true)
+        {
+            refusal = $"'{name}' has not authenticated, and this peer requires it";
+            return false;
+        }
+
         if (!_options.PinSourceToAuthenticatedIdentity)
             return true;
-        var identity = Context.User?.Identity;
         if (identity?.IsAuthenticated != true)
             return true;
         var authenticated = Context.UserIdentifier ?? identity.Name;

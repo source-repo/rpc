@@ -15,11 +15,6 @@
     timeout.
   -->
   <PropertyGroup>
-    <TargetFramework>net8.0</TargetFramework>
-    <Nullable>enable</Nullable>
-    <ImplicitUsings>enable</ImplicitUsings>
-    <LangVersion>12</LangVersion>
-    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
     <RootNamespace>SourceRpc.Query</RootNamespace>
     <AssemblyName>SourceRpc.Query</AssemblyName>
   </PropertyGroup>
@@ -28,33 +23,23 @@
     <IsPackable>true</IsPackable>
     <PackageId>SourceRpc.Query</PackageId>
     <!--
-      Its own version line, exactly as @source-repo/query has one and for the same reason: it is
-      built against the core's public API rather than against its shape, so pinning it to the core's
-      number would say something that is not true.
+      Its own version line, which is why it says so rather than taking SourceRpcVersion. The reason
+      is @source-repo/queue's: this is built against the core's public API rather than against its
+      shape, so pinning it to the core's number would state an agreement that is not being kept.
+      It is also the only one of these packages with dependencies of its own, which is the other
+      half of why its releases are not the core's.
     -->
-    <Version>0.1.0</Version>
-    <Authors>anderswestberg</Authors>
+    <PackageVersionOverride>0.1.0</PackageVersionOverride>
     <Description>The pull half of a Source RPC network for .NET: what a failure means, whether a call may be sent again, a deadline that is a budget across attempts, and a canonical cache key - over Polly and FusionCache.</Description>
-    <PackageTags>rpc;msgrpc;polly;fusioncache;resilience;automation;iiot</PackageTags>
-    <PackageLicenseExpression>MIT</PackageLicenseExpression>
-    <PackageProjectUrl>https://github.com/source-repo/rpc</PackageProjectUrl>
-    <RepositoryUrl>https://github.com/source-repo/rpc</RepositoryUrl>
-    <RepositoryType>git</RepositoryType>
-    <GenerateDocumentationFile>true</GenerateDocumentationFile>
-    <NoWarn>$(NoWarn);CS1591</NoWarn>
   </PropertyGroup>
 
   <ItemGroup>
-    <ProjectReference Include="../SourceRpc/SourceRpc.csproj" />
+    <ProjectReference Include="..\SourceRpc\SourceRpc.csproj" />
   </ItemGroup>
 
   <ItemGroup>
     <PackageReference Include="Polly.Core" Version="8.4.2" />
     <PackageReference Include="ZiggyCreatures.FusionCache" Version="2.7.1" />
-  </ItemGroup>
-
-  <ItemGroup>
-    <InternalsVisibleTo Include="SourceRpc.Tests" />
   </ItemGroup>
 
 </Project>

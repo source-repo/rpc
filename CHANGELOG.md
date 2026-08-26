@@ -1,6 +1,11 @@
 # Changelog
 
-## Unreleased
+## 5.1.0
+
+**Read this first if you hold a row stamp.** `RPC_STAMP_VERSION` moved from `sw1` to `sw2`, so every stamp minted before this release compares unequal to the row it was taken from. A caller holding one is told its row changed, re-reads and is right — which is the direction the version exists to guarantee — but it happens on the first write after the upgrade rather than at a moment anybody chose. The encoding change behind it is in the entry below.
+
+The .NET packages move to 5.1.0 with these, and **`SourceRpc.Query` and `@source-repo/query` are new at 0.1.0**, on their own version lines for the reason `@source-repo/queue` has one.
+
 
 ### The pull half: a page can be *confirmed current*, and a period can cost nothing
 
@@ -229,6 +234,90 @@ Such a frame now **confirms** rather than being discarded. The values, the revis
 `RpcComponentView` therefore gains **`confirmedAt`**, and `receivedAt` keeps the meaning it always had. `receivedAt` is when these values arrived; `confirmedAt` is when the feed last proved it is current. A reading taken at 14:03 whose feed answered a re-subscribe at 14:19 is both three quarters of an hour old and current, and the alternative — moving `receivedAt` on a confirmation — would have made a screen say a value had been updated when only the connection had. That is a small instance of exactly the conflation this channel exists to refuse, so it is two fields.
 
 The console prints both where they differ (`rev 41 · updated 14:03, confirmed 14:19`) and one where they do not, and the MCP `read_state` tool reports both. `@source-repo/sparkplug` stamps its metrics from `receivedAt` and is left alone deliberately: a confirmation is not a new measurement, and a re-birth should not restamp a value that has not moved.
+### The public surface of the C# packages cannot move by accident
+
+The last item on the review's release list. Nothing failed a build when a public signature changed, so a breaking change reached a package as somebody else's compile error after they upgraded - and the first anyone knew of it was that.
+
+Each packable project now carries a committed `PublicAPI.Shipped.txt`, and `Microsoft.CodeAnalysis.PublicApiAnalyzers` fails the build when the real surface differs from it. In either direction: `RS0016` for something public that is not written down, `RS0017` for something written down that is no longer public. The second matters as much as the first - a member quietly made `internal` is a breaking change that would otherwise leave no trace at all.
+
+Both directions were checked by making the change and watching the build fail: adding a property produced RS0016 naming it, and demoting `MaxHops` to internal produced RS0017. The baseline is 535 entries across the four packages, generated from the analyzer's own diagnostics rather than written by hand.
+
+`API-BASELINE.md` explains what to do when it fires, and the three cases are genuinely different: an API you meant to add is a line in `PublicAPI.Unshipped.txt`, an API you meant to change needs a major version, and an API you never meant to expose should be `internal` - which is what most of them are.
+
+The analyzer is a build-time dependency and does not appear in the packages; verified by reading the nuspec rather than assuming `PrivateAssets` did its job.
+
+
+### NuGet publishing is automated, and the C# tests now run in CI
+
+A version tag already published the npm packages and the CLI image; the four .NET packages were still built by hand and pushed to a folder on one workstation. They now ride the same tag.
+
+**The .NET version is deliberately not the tag.** It lives in `packages/csharp/Directory.Build.props` - one place rather than four csproj files, which is four places to edit and three chances to miss one - and moves when the C# packages actually change. A documentation fix to the TypeScript README should not publish four NuGet packages with nothing in them, so the job skips whatever is already on the registry, the same bargain the queue and docker packages already make.
+
+**The packages are installed before they are pushed.** `smoke-test.sh` puts all four into a fresh project with an empty NuGet cache and compiles against them. Packing proves a file was produced; it does not prove anyone can use it - a missing dependency, an unconsumable target framework or a type left internal all pack perfectly and fail at whoever installs them first. A NuGet version cannot be replaced once pushed, so this is the last point at which that is still fixable.
+
+Centralising the metadata broke two things that only inspecting the artifact would show, and both are worth recording because they failed silently:
+
+- Every package packed as **1.0.0**. `Directory.Build.props` is imported *before* the project body, so a block conditioned on `IsPackable` - which the project sets - saw it unset and evaluated false. The packable metadata moved to `Directory.Build.targets`, which is imported after.
+- Then every package shipped with **no XML documentation at all**, because `GenerateDocumentationFile` is read while compiling, long before `.targets`. Every doc comment in this repository would have been invisible to anyone consuming a package, and nothing failed. It is back in `.props`, where the compiler can see it.
+
+Each package now carries its own README, so a NuGet page says what the package is rather than listing its dependencies.
+
+**The C# unit tests now run in CI**, which they did not. CI built the test host and never ran the 43 tests - and several of the behaviours they cover cannot be reached from the TypeScript suite at all: a duplicate idempotency claim is a race inside one process, and the router's takeover race needs two threads interleaved at a single line. A green interop suite said nothing about either.
+
+Both workflow commands were run locally exactly as CI will run them, and the already-published guard was checked against the live registry. The four package IDs are unclaimed on nuget.org; the job needs a `NUGET_API_KEY` secret scoped to them, and cannot publish without one.
+
+Still not automated: public API compatibility. Nothing fails a build when a public signature changes, so a breaking change reaches a package as somebody's compile error - a baseline and `ApiCompat` in the release job is what would catch it.
+
+
+### The rest of the review's pre-release list for the C# packages
+
+The six correctness defects landed first. These are the items the same review named as wanted before .NET is a supported installation path rather than a preview one - less dramatic, and mostly about a peer being able to *ask* for what it can already enforce.
+
+**A caller can request the semantics, not only obey them.** `RpcCallOptions` carries a per-call deadline, an idempotency key, an owner fence and a contract version. Every one of those fields already travelled and the dispatcher already acted on them; a C# caller simply had no way to set any of them, which made a .NET peer able to enforce the framework's safety rules and unable to invoke them. The process that most wants an owner fence is the one issuing the command. The per-call timeout also arms the local timer with the number the frame carries, so what the far end is told and what the caller actually does cannot drift apart.
+
+**Bad wire data fails instead of becoming a plausible value.** Conversion returned `default` when a value would not convert - so a malformed integer arrived at a method as `0` and a malformed boolean as `false`. In control software that is worse than throwing: both are values a machine will act on, and a setpoint of zero is not a sensible reading of "the wire said something I could not parse". `RequiredArg<T>` and `TryGetArg<T>` join the lenient `Arg<T>`, results are read the same way, and one codec-neutral converter now owns the behaviour for both wire shapes. The tests run every case twice - once as MessagePack delivers it, once as JSON - because a method written against one shape and deployed on the other is the failure being prevented. Writing them found two real gaps in the converter itself: string enums under JSON, and element-wise array conversion.
+
+**Readiness is separate from starting.** `StartAsync` returns before there is a link, deliberately - a peer may start before the thing it connects to - but that made `await StartAsync(); await CallAsync(...)` fail with `TransportError` rather than wait. `WaitUntilConnectedAsync` waits, and cancelling it abandons only the wait: a startup timeout no longer turns a slow server into a peer that never reconnects. `StartAsync`'s token is documented as the lifetime it actually is.
+
+**Limits, because unbounded is the same as trusting the far end to be reasonable.** Hops, batch size and depth, identifier length, concurrent calls. The hop ceiling is the one an ordinary network reaches first: two peers each relaying for the other pass one frame between them for as long as the process lives, and nothing reports it. The concurrency gate prices a decision made earlier - transports do not await dispatch so a responder can call out and receive the reply, and unbounded fire-and-forget was the unpriced half of that. Beyond the ceiling a call is refused `Busy`, which certainly did not run.
+
+**Tickets end.** The expiry on a receipt was metadata that nothing acted on, so a peer that died mid-command left its caller awaiting `Result` for the life of the process. It is an armed timer now, and disposing the client ends whatever is still waiting. Both report `UnknownOutcome` rather than a failure, because *may have run* is the true thing and the one a caller can act on. Progress handlers are isolated the way event handlers are.
+
+**A deferred command finally closes its idempotency claim** - named as still open when the correctness fixes landed. The answer is produced long after the dispatcher returns, so nothing there could record it; the deferred object now records the outcome as it settles. A retry is dropped as in-progress while the command runs, and answered from the record once it has.
+
+**Event publishing left the SignalR package.** `ISourceRpcEvents` is in the core with a `TransportEvents` implementation over any transport, so a peer on a broker or a socket.io client can announce things rather than only serve methods. Fan-out isolates a failed send: one unreachable subscriber must not stop the ones after it hearing the event.
+
+**Authentication and authorization stopped being one setting.** Pinning a name to an authenticated identity says the name is not a lie; it says nothing when the connection never authenticated, so "pinning is on" read like "authentication is required" and was not. `RequireAuthenticatedPeers` fails closed. `ISourceRpcAuthorization` answers four questions - announce, carry, invoke, subscribe - and the last is not redundant: a method can be write-protected while the events from the same instance carry the data the method would have returned. Carried names are filtered one at a time, because a bridge legitimately carrying one cell must not thereby speak for another.
+
+43 C# tests, 26 C# interop tests, 27 SignalR, and the client smoke test.
+
+Still open, and named rather than absorbed: a C# peer cannot itself be a bridge; cross-language conformance is documented rather than executable, so TypeScript remains the de facto specification; a claim stranded by a process crash is held until the store expires it; MQTT presence is unsigned and wants a tested broker-ACL story; and method semantics are undeclared, so a key is honoured whenever one is sent rather than only where a method says repeating it is unsafe.
+
+
+### The C# packages: six correctness defects, found by review and each pinned by a test
+
+An external review of the framework at 5.0.1 marked the .NET packages **preview** for industrial command use, on three grounds. All three were real, and reproducing them turned up three more. None of these could be seen from the far end of a wire, which is why a cross-language suite that exercises every one of these semantics had them all passing.
+
+**Idempotency did not prevent a concurrent duplicate, which is the promise the whole mechanism exists for.** The store held a null outcome to mean "claimed but still running", and a second attempt could not tell that apart from "no record at all" - so it was told it owned the key and ran the command alongside the first. For a non-repeatable command that is two pump starts. The contract now answers `Acquired`, `InProgress` or `Completed`, matching the TypeScript store's `'acquired' | 'in-progress' | outcome` rather than inventing a second rule; a duplicate that finds a key in progress is dropped rather than answered, because its caller is already waiting on the attempt that holds it. With 64 attempts released together, exactly one now acquires.
+
+Three failures around it gained answers too. A store that cannot be reached, and a command that ran but whose outcome could not be written, both answer **`UnknownOutcome`** rather than success or `TransportError` - "it failed" invites a retry, "I do not know" says go and look, and for a non-repeatable command that is the whole difference. A key arriving where no store is registered is refused with **`IdempotencyUnavailable`**: carrying it and enforcing nothing told the caller a guard was applied when none was.
+
+**Replies were correlated by id but not by peer.** Any frame with a matching correlation completed the call, whoever sent it. A correlation is hard to guess and that is not permission to answer - on a broker it travels in `correlationData`, where the broker and anything subscribed to the topic can read it, so a relay, a tap or a compromised bridge could answer somebody else's exchange. Pending calls and tickets are now held with the peer they were sent to, and a reply from anywhere else is refused and counted.
+
+**Subscriptions were wrong in three ways at once.** Disposing any one handler told the far end to stop sending, so two subscribers to one event destroyed each other and the survivor went silent with nothing reported anywhere. The handler was registered only *after* the far end acknowledged, so an event emitted on acknowledgement was dropped. And nothing restored subscriptions after a reconnect, though the README promised a reconnecting peer keeps receiving - a peer's subscriptions live on its connection at the other end, so a reconnected client looked perfectly healthy and never received another event. Handlers are counted now, registered before the request goes out and rolled back if it fails, and taken out again on `ISourceRpcTransport.LinkEstablished` - a new signal every binding raises on every connection.
+
+**On MQTT, a reply address only had to be somewhere on the network.** The check was "starts with the prefix, no wildcard" - which admits another peer's request, event and presence topics, the last of which was the attack the code's own comment claimed it prevented. A request may now name only its own `rsp` topic, with `AllowResponseTopic` for deployments that genuinely need another arrangement.
+
+**The reply map was keyed by correlation alone**, and MQTT callers choose their own: two peers picking the same string meant the second silently overwrote the first one's return address, and the first caller's answer went to the second caller's topic. Keyed by peer and correlation now.
+
+**The replay nonce was committed before the signature was checked**, so anyone who could observe a nonce could burn it - send it first with a wrong signature and the genuine frame that follows is refused as a replay, turning the guard into a way to suppress traffic. The freshness window is still checked first, because it is cheap and refuses a wildly wrong clock without computing an HMAC; the nonce is now recorded only after the frame is known to be genuine.
+
+**The router removed routes by name without checking they were still that connection's.** A reconnecting peer takes its own name back, and the old connection's teardown is usually still running when it does - so the teardown deleted the route the new connection had just installed, announcing a connected peer offline and dropping its subscriptions. Removal is conditional on the exact route now. The race test fails on its second attempt against the old code.
+
+**There is now a C# test project.** Fifteen tests, and they exist because none of these are reachable from the TypeScript suite: a duplicate claim is a race inside one process, a lost handler is invisible from the far end, and the router race needs two threads interleaved at one line. Each fix was checked by reverting it and confirming the right test - and only the right test - fails.
+
+Still open from the same review, and named rather than absorbed: a deferred command holds its idempotency claim after the ticket settles; outbound calls cannot yet carry per-call deadlines, fences or keys; argument conversion still turns bad wire data into defaults instead of failing; dispatch is unbounded; and presence is unsigned on MQTT. Those are the next tranche, not this one.
+
 
 ### A store-backed node can accept writes, and the rule about writes is intact
 

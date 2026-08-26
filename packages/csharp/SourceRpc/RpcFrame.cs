@@ -149,18 +149,40 @@ public sealed record RpcFrame
     /// throwing - a caller that sent the wrong thing should get a domain error from the method, not
     /// a cast exception from the plumbing.
     /// </summary>
-    public T? Arg<T>(int index)
+    public T? Arg<T>(int index) => RpcConversion.Optional<T>(Raw(index));
+
+    /// <summary>
+    /// The argument at <paramref name="index"/>, or a refusal naming what could not be read.
+    ///
+    /// Prefer this for anything a method acts on. <see cref="Arg{T}"/> answers <c>default</c> when a
+    /// value cannot be converted, which quietly turns a malformed integer into `0` and a malformed
+    /// boolean into `false` - both perfectly plausible values, and both something a machine will do.
+    /// This one refuses with <see cref="RpcErrorCode.InvalidParams"/> instead, which is the answer
+    /// the caller can act on.
+    /// </summary>
+    public T? RequiredArg<T>(int index)
     {
-        switch (Body)
-        {
-            case JsonElement element when element.ValueKind == JsonValueKind.Array:
-                return index < element.GetArrayLength() ? element[index].Deserialize<T>() : default;
-            case System.Collections.IList list:
-                return index < list.Count ? Coerce<T>(list[index]) : default;
-            default:
-                return default;
-        }
+        if (index < 0 || index >= ArgCount)
+            throw new SourceRpcException(RpcErrorCode.InvalidParams, $"argument {index} was not sent");
+        return RpcConversion.Required<T>(Raw(index), $"argument {index}");
     }
+
+    /// <summary>The argument at <paramref name="index"/>, saying whether it could be read.</summary>
+    public bool TryGetArg<T>(int index, out T? value)
+    {
+        value = default;
+        return index >= 0 && index < ArgCount && RpcConversion.TryConvert(Raw(index), out value, out _);
+    }
+
+    /// <summary>One argument as the wire delivered it, whichever protocol that was.</summary>
+    private object? Raw(int index) =>
+        Body switch
+        {
+            JsonElement element when element.ValueKind == JsonValueKind.Array =>
+                index >= 0 && index < element.GetArrayLength() ? element[index] : null,
+            System.Collections.IList list => index >= 0 && index < list.Count ? list[index] : null,
+            _ => null
+        };
 
     /// <summary>
     /// How many arguments this frame carries, for a method that takes a variable number.
@@ -182,33 +204,6 @@ public sealed record RpcFrame
             System.Collections.IList list => list.Count,
             _ => 0
         };
-
-    /// <summary>
-    /// One boxed MessagePack value as the type a method asked for.
-    ///
-    /// MessagePack chooses the narrowest integer that holds a value, so a JavaScript `7` arrives as
-    /// a <see cref="byte"/> and `70000` as an <see cref="int"/> - the same parameter, a different
-    /// CLR type, decided by the magnitude of what somebody typed. ChangeType is what makes that
-    /// invisible to the method.
-    /// </summary>
-    private static T? Coerce<T>(object? value)
-    {
-        if (value is null)
-            return default;
-        if (value is T already)
-            return already;
-        var target = Nullable.GetUnderlyingType(typeof(T)) ?? typeof(T);
-        if (target == typeof(string))
-            return (T)(object)(value.ToString() ?? "");
-        try
-        {
-            return (T)Convert.ChangeType(value, target, CultureInfo.InvariantCulture);
-        }
-        catch (Exception e) when (e is InvalidCastException or FormatException or OverflowException)
-        {
-            return default;
-        }
-    }
 
     /// <summary>
     /// A reply carrying an error code.
