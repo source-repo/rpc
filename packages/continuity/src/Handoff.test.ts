@@ -82,6 +82,20 @@ const deferred = () => {
     }
 }
 
+/**
+ * Wait until the component is actually in the handler, rather than for long enough that it probably
+ * is. A sleep here is a race the whole suite loses under load: if the call has not reached the
+ * server when the barrier goes in, the queue is empty, the capture succeeds, and the test asserts
+ * the opposite of what it meant to.
+ */
+const running = async (mixer: { state: { dwelling: boolean } }) => {
+    for (let waited = 0; waited < 2000; waited += 5) {
+        if (mixer.state.dwelling) return
+        await sleep(5)
+    }
+    throw new Error('the component never entered its handler')
+}
+
 const ownerOf = (activationId: string, epoch: bigint, revisionId = 'rev-1'): RpcActivationOwner => ({ componentId: 'mixer1', activationId, revisionId, epoch })
 
 /**
@@ -333,8 +347,8 @@ test('a capture that cannot be taken blocks the handoff temporarily rather than 
     // A handler that outlasts the quiescence deadline. The plant is busy, which is a different
     // situation from the revisions disagreeing, and an operator who cannot tell them apart will
     // retry both when only one is worth retrying.
-    const running = stand.proxyA.startBatch(500)
-    await sleep(20)
+    const inFlight = stand.proxyA.startBatch(500)
+    await running(stand.mixerA)
     const { outcome } = await handoff(stand)
 
     t.true('abandoned' in outcome)
@@ -342,7 +356,7 @@ test('a capture that cannot be taken blocks the handoff temporarily rather than 
     t.is(outcome.abandoned.classification, 'temporarily-blocked')
     t.is(outcome.abandoned.reachedStage, 'capture')
     t.regex(outcome.abandoned.why, /partially executed handler/)
-    t.is(await running, 1, 'and the incumbent carried on, which is the correct outcome rather than a fallback')
+    t.is(await inFlight, 1, 'and the incumbent carried on, which is the correct outcome rather than a fallback')
     t.is((await stand.store.read('mixer1'))!.activationId, 'a')
 })
 

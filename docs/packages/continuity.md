@@ -18,6 +18,9 @@ npm install @source-repo/continuity
 - **A fence has two halves** — the local one is what the activation holds, and the one at the sink is the only one that survives a partition, because it does not require the stale activation to know anything.
 - **A store says what it can guarantee** — `linearizable`, `durable`, `fencedAtTheSink`, stated rather than implied; the in-memory reference store answers `false` to all three.
 - **Callers address a name** — a resolution carries the epoch it was taken under, and that is its shelf life; holding the address without it is a destination that stops being correct silently.
-- **It does not cross languages yet** — replacing a TypeScript activation with a C# one needs a canonical contract rather than two class layouts that happen to agree. Phase 4.
+- **It crosses languages** — a snapshot written here verifies to the same content hash in `SourceRpc.Continuity`, checked against fixtures both suites read verbatim rather than asserted.
+- **Positions cross as decimal strings** — JSON has one numeric type and it is a double, and a sequence position that rounds is a successor that reprocesses input or skips it. A position that arrived as a number is refused, never converted.
+- **Portable is stronger than cloneable** — a `Date`, a `Uint8Array`, a `Map` and a `bigint` all clone perfectly and none of them cross a language boundary as themselves.
+- **A manifest describes a revision and does not approve one** — an artifact that could authorise itself by asserting its own capabilities would make the approval path decorative.
 
 Full documentation: the [package README](https://github.com/source-repo/rpc/blob/main/packages/continuity/README.md). On npm: [@source-repo/continuity](https://www.npmjs.com/package/@source-repo/continuity).

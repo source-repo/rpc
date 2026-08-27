@@ -1,0 +1,130 @@
+{
+    "snapshotFormatVersion": 1,
+    "snapshotId": "cross-language-mixer-v1",
+    "captureKind": "quiescent-handoff",
+    "componentType": "mixer",
+    "componentId": "mixer1",
+    "sourceRevision": "ts-rev-1",
+    "stateSchemaId": "mixer.state",
+    "stateVersion": 2,
+    "stateSchemaHash": "ZAX9lO0Qlqxf7JzCcXzNXXwQdN-7RJ_wi-FTp9rn5GI",
+    "activationEpoch": "7",
+    "logicalTime": "1200",
+    "lastAppliedInputSequence": "9007199254740993",
+    "lastCommittedOutputSequence": "9007199254740992",
+    "heldState": {
+        "batches": 3,
+        "dwelling": true,
+        "recipe": {
+            "name": "stout",
+            "litres": 480.5
+        },
+        "tags": [
+            "line-2",
+            "night-shift"
+        ],
+        "lastOperator": null
+    },
+    "obligations": {
+        "timers": [
+            {
+                "kind": "timer",
+                "id": "mix-dwell",
+                "clock": "monotonic",
+                "dueAt": "5000",
+                "capturedAt": "1000",
+                "policy": "preserve-remaining",
+                "periodic": {
+                    "interval": "60000",
+                    "missedTickPolicy": "coalesce"
+                }
+            }
+        ],
+        "outboundCalls": [
+            {
+                "kind": "outbound-call",
+                "id": "dispense-7",
+                "target": "hopper",
+                "method": "dispense",
+                "semantics": "non-repeatable-command",
+                "idempotencyKey": "batch-19/dispense"
+            }
+        ],
+        "inboundWork": [
+            {
+                "kind": "inbound-work",
+                "id": "setpoint-441",
+                "from": "console",
+                "method": "setSetpoint",
+                "mutating": true
+            }
+        ],
+        "subscriptions": [
+            {
+                "kind": "subscription",
+                "id": "alarms",
+                "event": "alarm",
+                "lastAcknowledgedSequence": "9007199254740991"
+            }
+        ],
+        "pendingPublications": [
+            {
+                "kind": "publication",
+                "id": "batch-complete-18",
+                "event": "batchComplete",
+                "sequence": "18"
+            }
+        ],
+        "leases": [
+            {
+                "kind": "lease",
+                "id": "hopper-lock",
+                "issuer": "hopper",
+                "expiresAt": "1800000",
+                "issuerSupportsLogicalOwner": true
+            }
+        ],
+        "sequences": [
+            {
+                "kind": "sequence",
+                "id": "outbox",
+                "position": "9007199254740990"
+            }
+        ],
+        "watchdogs": [
+            {
+                "kind": "watchdog",
+                "id": "stir-watchdog",
+                "dueAt": "30000",
+                "policy": "fire-on-activation"
+            }
+        ]
+    },
+    "provenance": [
+        {
+            "stepId": "mixer.state/1-2/litres-are-decimal",
+            "schemaId": "mixer.state",
+            "fromVersion": 1,
+            "toVersion": 2,
+            "approval": {
+                "by": "process engineering",
+                "reference": "PR #517"
+            },
+            "transformed": [
+                "recipe.litres"
+            ],
+            "defaulted": [
+                {
+                    "path": "tags",
+                    "value": [],
+                    "why": "every mixer at v1 predates line tagging, and an empty list is the only reading that invents nothing"
+                }
+            ],
+            "inputHash": "V5Rl4jbTvvGGiJvKcXQxJRBjkNfRcnnbP2xX9Mm2p3o",
+            "outputHash": "sJKfPbcXeCbXCbBIUFOcRZTNkFUFY9BdEXHUdcYJKxE"
+        }
+    ],
+    "capturedAt": "2026-08-27T09:15:00.000Z",
+    "parentSnapshotHash": "V5Rl4jbTvvGGiJvKcXQxJRBjkNfRcnnbP2xX9Mm2p3o",
+    "contentHash": "McY0gkGLUUc6KlTfmIudWcLKdJ9nXG2S3qhO_iBMw9o"
+}

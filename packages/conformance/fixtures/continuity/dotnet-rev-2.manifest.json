@@ -1,0 +1,29 @@
+{
+    "componentType": "mixer",
+    "revisionId": "dotnet-rev-2",
+    "artifactType": "dotnet",
+    "artifactHash": "sha256-3f7c1d9a44e0b2c8f5a1e6d3b9c07428ae5f1902d6b34c8e7150fa2db93c6e41",
+    "contract": {
+        "id": "mixer",
+        "version": 2,
+        "schemaHash": "GtZ1pQfPX0hVYxK9oJ8mNrLsW3TcB6DuE2AaFvIyQnk"
+    },
+    "state": {
+        "schemaId": "mixer.state",
+        "version": 2,
+        "schemaHash": "ZAX9lO0Qlqxf7JzCcXzNXXwQdN-7RJ_wi-FTp9rn5GI"
+    },
+    "requiredCapabilities": [
+        "alarms.publish",
+        "hopper.lease",
+        "plant.write"
+    ],
+    "onlineChange": {
+        "supported": true,
+        "serialisedHandlers": true,
+        "runtimeManagedObligations": true,
+        "quiescenceDeadlineMs": 2000
+    },
+    "manifestVersion": 1,
+    "manifestHash": "v4cabJGjDJIqz9dHPCmZ-S52RpEkJO1A_JOv4L7jzF0"
+}

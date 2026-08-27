@@ -2,7 +2,7 @@
 
 A .NET process as a peer on a Source RPC network — serving methods, publishing events, and calling out to other peers. It speaks the same protocol the TypeScript library speaks, in whichever of its two spellings the carrier calls for: the flat frame of [`docs/flat-frame-spec.md`](../../docs/flat-frame-spec.md) on a connection, and the `mr-` property layout of [`docs/mqtt5-frame-spec.md`](../../docs/mqtt5-frame-spec.md) on a broker.
 
-## Five packages, and why
+## Six packages, and why
 
 | package | what is in it | depends on |
 | --- | --- | --- |
@@ -11,6 +11,7 @@ A .NET process as a peer on a Source RPC network — serving methods, publishing
 | **`SourceRpc.Mqtt`** | a peer on a broker — no server to write, because the broker is the middle | MQTTnet |
 | **`SourceRpc.SocketIo`** | a client for a .NET process that dials into a TypeScript socket.io server | SocketIOClient |
 | **`SourceRpc.Query`** | the pull half: what a failure means, whether a call may be sent again, a budget across attempts, a canonical key | Polly, FusionCache |
+| **`SourceRpc.Continuity`** | reading, verifying and taking over a component's state written by another language | none beyond the core |
 
 The split is the point. A SignalR hub needs ASP.NET Core; an MQTT client on a device does not, and should not carry a web framework to get a protocol. The core takes `MessagePack.Annotations`, `Microsoft.Extensions.Logging.Abstractions` and `System.Diagnostics.DiagnosticSource` and nothing else - it is transport-free rather than dependency-free, which is the claim that matters for a device. So everything that decides what a frame *means* lives in `SourceRpc`, and a binding is a small class that moves frames.
 
@@ -205,12 +206,27 @@ var readings = await RpcResilience.ExecuteAsync(
 
 **`ShouldHandle` reads the error vocabulary rather than the exception type.** A `TransportError` is retried even for a non-repeatable command — it never left, so it has had no effect to repeat — and an `UnknownOutcome` is not retried for anything the caller did not declare repeatable. Undeclared means undeclared: absent semantics retries nothing.
 
-The cache is keyed by `RpcCanonical`, a port of the TypeScript encoder rather than an equivalent of it — two callers who built the same arguments differently are asking one question, and on this link asking twice is a screen that takes twice as long to draw. Its expected strings in `SourceRpc.Tests` were produced by the TypeScript implementation, and the first of them is a substring of the literal `packages/rpc/src/DataWrites.test.ts` pins for the row stamp, so the two suites hold each other.
+The cache is keyed by `SourceRpc.RpcCanonical`, a port of the TypeScript encoder rather than an equivalent of it — two callers who built the same arguments differently are asking one question, and on this link asking twice is a screen that takes twice as long to draw. Its expected strings in `SourceRpc.Tests` were produced by the TypeScript implementation, and the first of them is a substring of the literal `packages/rpc/src/DataWrites.test.ts` pins for the row stamp, so the two suites hold each other.
 
 Two of FusionCache's features are worth naming because this repository arrived at them independently before adopting them, which is the strongest reason to take a dependency rather than the weakest. **Fail-safe** reuses an expired entry when the factory fails — the rule the console's polling loop already had, that a link which dropped is not a collection that emptied. And **a soft timeout** answers with the stale value while the refresh continues, which is what a screen on a slow link wants.
 
 **What is deliberately not here is freshness from the publisher.** A page drawn at the revision a component channel currently holds is *confirmed current* rather than merely recently fetched, and that is unavailable in .NET until a peer here can observe a component at all. Until then this is an age window, labelled as one.
 
+## Taking over a component another language was running
+
+`SourceRpc.Continuity` reads a Source RPC component's snapshot, verifies it, and decides whether this revision may replace the one that wrote it. The acceptance criterion the design sets is a .NET activation replacing a TypeScript one under the same logical identity, state, contract, sequence position and authority envelope — and the whole thing rests on one property.
+
+**A snapshot written by one language verifies to the same content hash in the other.** It is checked rather than asserted: `packages/conformance/fixtures/continuity` holds three documents read verbatim by this suite and by the TypeScript one. Two implementations that both compute a digest are not two implementations of one digest until a single file has been asked of both.
+
+**Positions cross as decimal strings, and a position that arrived as a JSON number is refused rather than converted.** JSON has one numeric type and it is a double: `9007199254740993` round-trips as `9007199254740992`, silently, and a successor starting at a rounded sequence position reprocesses input or skips it with no way to tell afterwards which. Nothing at the point of reading can tell whether a given value survived, so converting it would launder a rounding error into an authoritative position. The fixture carries three such values on purpose.
+
+**Nothing is defaulted.** An unknown capture kind, an unknown timer policy, a snapshot format ahead of this reader — each is a refusal naming the field. A reader lenient enough to take this document is lenient enough to take one that says something else, and this runs in a process about to become authoritative for plant.
+
+**Silence is not a claim.** An obligation the incumbent recorded and this revision says nothing about is `Unhonourable`, never `Assumed`. The rule matters more here than within one language: there is no compiler in common with the incumbent, so everything this revision knows about the work outstanding is what the snapshot says.
+
+**A manifest describes a revision and does not approve one.** `RpcRevisionManifest` carries what an artifact claims — contract hash, state schema hash, required capabilities, whether it serialises its handlers. `Reconcile` measures it against a snapshot and `Authorised` against an identity policy the deployment owns, because an artifact that could authorise itself by asserting its own capabilities would make the approval path decorative.
+
+`RpcCanonical` moved from `SourceRpc.Query` to `SourceRpc` for this, and `SourceRpc.Query` 0.2.0 no longer carries it. A forwarder was tried and is worse: with both namespaces in scope — which is every real consumer of that package — two types of the name are visible and every call site becomes CS0104. Removing it is source-compatible for anyone who already has `using SourceRpc;`.
 ## Telemetry
 
 Counters, a duration histogram and spans, through `System.Diagnostics.Metrics` and `ActivitySource` — the BCL's own instruments, so there is no OpenTelemetry dependency here and a host that wants traces adds the meter and source to its own exporter:

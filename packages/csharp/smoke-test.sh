@@ -42,18 +42,21 @@ for package in SourceRpc SourceRpc.SignalR SourceRpc.Mqtt SourceRpc.SocketIo; do
     echo "  installed $package"
 done
 
-# On its own version line, so it cannot ride the loop above. Its version comes from the package it
-# was just built as, for the same reason the shared one does: reading the csproj would test what the
-# repository says rather than what was actually produced.
-queryVersion="$(basename "$(ls "$packages"/SourceRpc.Query.[0-9]*.nupkg | head -1)" .nupkg)"
-queryVersion="${queryVersion#SourceRpc.Query.}"
-dotnet add package SourceRpc.Query --version "$queryVersion" >/dev/null
-echo "  installed SourceRpc.Query $queryVersion"
+# On version lines of their own, so they cannot ride the loop above. Each version comes from the
+# package that was just built, for the same reason the shared one does: reading the csproj would test
+# what the repository says rather than what was actually produced.
+for own in SourceRpc.Query SourceRpc.Continuity; do
+    ownVersion="$(basename "$(ls "$packages"/$own.[0-9]*.nupkg | head -1)" .nupkg)"
+    ownVersion="${ownVersion#$own.}"
+    dotnet add package "$own" --version "$ownVersion" >/dev/null
+    echo "  installed $own $ownVersion"
+done
 
 # Compiled against, not merely restored. A package can resolve and still be unusable - the types
 # public, the assembly loadable and the reference actually satisfying the compiler is the claim.
 cat > Program.cs <<'CS'
 using SourceRpc;
+using SourceRpc.Continuity;
 using SourceRpc.Mqtt;
 using SourceRpc.Query;
 using SourceRpc.SignalR;
@@ -82,6 +85,28 @@ var budget = new RpcCallBudget(TimeSpan.FromSeconds(5));
 if (budget.Remaining <= TimeSpan.Zero) throw new Exception("the budget is wrong");
 if (RpcCanonical.Text(new { b = 2, a = 1 }) != """["o",[["a",["d",1]],["b",["d",2]]]]""") throw new Exception("the canonical encoder is wrong");
 if (!RpcOutcomes.MayHaveRun(RpcErrorCode.UnknownOutcome)) throw new Exception("the outcome rules are wrong");
+
+// And the cross-language half, which is the one a consumer reaches for with a file in hand: if the
+// reader packed but the canonical encoder it depends on did not travel, this is where that shows.
+var portable = @"{
+    ""snapshotFormatVersion"": 1,
+    ""snapshotId"": ""smoke"",
+    ""captureKind"": ""held-state-only"",
+    ""componentType"": ""oven"",
+    ""componentId"": ""oven3"",
+    ""sourceRevision"": ""rev-1"",
+    ""stateSchemaId"": ""oven.state"",
+    ""stateVersion"": 1,
+    ""stateSchemaHash"": ""hash"",
+    ""heldState"": { ""setpoint"": 180 },
+    ""provenance"": [],
+    ""capturedAt"": ""2026-08-27T09:15:00.000Z"",
+    ""contentHash"": ""not-the-hash""
+}";
+var smoke = RpcPortableSnapshot.Read(portable);
+if (smoke.ComponentId != "oven3") throw new Exception("the snapshot reader is wrong");
+if (RpcSnapshots.Verify(smoke) is null) throw new Exception("a snapshot with the wrong hash verified");
+if (RpcSnapshots.AdmissibleForHandoff(smoke) is null) throw new Exception("a held-state-only capture was admissible for handoff");
 
 Console.WriteLine("SMOKE-OK");
 CS

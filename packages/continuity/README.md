@@ -2,7 +2,7 @@
 
 What a [Source RPC](https://github.com/source-repo/rpc) component keeps when the process implementing it is replaced: versioned state snapshots, adjacent forward migrations with reviewed defaults, the work a running activation was holding, and a record of every value that moved — and then the replacement itself, under a fence.
 
-**Phases 1 to 3 of the online-change design.** A component is a logical thing with a persistent address; the process implementing it is not. What is here takes one process out and puts another in while callers keep talking to the same name, or refuses and says exactly why. What is not here is doing it across languages, which needs a canonical contract rather than two class layouts that happen to agree — that is Phase 4.
+**The online-change design, phases 1 to 4.** A component is a logical thing with a persistent address; the process implementing it is not, and it need not even be in the same language. What is here takes one process out and puts another in while callers keep talking to the same name, or refuses and says exactly why.
 
 ## Why held state is explicit
 
@@ -167,9 +167,36 @@ Between the barrier and the swap there is a window in which the incumbent has st
 
 Abandoning a handoff returns what was held to the incumbent rather than dropping it. A failed change and a lossy one are different things, and only the second cannot be recovered.
 
+## Leaving the language
+
+`toPortable` and `fromPortable` are the form a snapshot takes when it is written down, and `SourceRpc.Continuity` is what reads it at the other end. One property carries the rest: **a snapshot written here verifies to the same content hash there.** The fixtures in `packages/conformance/fixtures/continuity` are read verbatim by both suites, because two implementations that both compute a digest are not two implementations of one digest until a single file has been asked of both.
+
+**Positions cross as decimal strings.** JSON has one numeric type and it is an IEEE-754 double: `lastAppliedInputSequence` past 2^53 rounds, silently, and a successor that starts at a rounded position reprocesses input or skips it — with no indication at the time and no way to tell afterwards which happened. A position that arrived as a JSON *number* is refused rather than converted, because nothing at that point can tell whether the value survived and converting it would launder a rounding error into an authoritative sequence position.
+
+**Held state must be portable, which is stronger than cloneable.** Phase 1's rule was that state must survive `structuredClone`, because a closure cannot be handed to another process. This one is that it must survive JSON: a `Date`, a `Uint8Array`, a `Map` and a `bigint` all clone perfectly and none of them cross a language boundary as themselves. `toPortable` refuses, names the path, and says what to hold instead — a component that wants to be replaceable by one written in another language holds its state in the vocabulary its declared schema can describe.
+
+## A revision says what it is
+
+```typescript
+const manifest = await sealManifest({
+    componentType: 'mixer',
+    revisionId: 'dotnet-rev-2',
+    artifactType: 'dotnet',
+    artifactHash: 'sha256-…',
+    contract: { id: 'mixer', version: 2, schemaHash: '…' },
+    state: { schemaId: 'mixer.state', version: 2, schemaHash: '…' },
+    requiredCapabilities: ['plant.write', 'hopper.lease'],
+    onlineChange: { supported: true, serialisedHandlers: true, runtimeManagedObligations: true, quiescenceDeadlineMs: 2000 }
+})
+```
+
+Across languages nothing is checked by anything unless it is written down. Two artifacts that share no compiler, no type system and no runtime share a component type, a contract hash and a state schema hash — and if those agree the successor holds the same description of the same values. `reconcile` says whether they do, and reports a state *version* difference separately from a mismatch of identity, because the first is what migration is for and the second is never migratable.
+
+**The manifest describes the revision. It does not grant authority.** It is emitted by the artifact, and an artifact that could authorise itself by asserting its own capabilities would make the approval path decorative. `authorised` measures it against an identity policy the deployment owns, and refuses with four different sentences because they are four different conversations: the wrong type is a mistake, an unapproved artifact needs a deployment approval, a capability outside the envelope needs the envelope widened by whoever owns the identity, and an identity not eligible for online change needs a controlled restart instead.
+
 ## What is not here
 
-**Cross-language handoff.** Replacing a TypeScript activation with a C# one needs a canonical contract and state schema independent of either language's class layout — stable field identifiers, integer widths, absent versus null, enum evolution. Phase 4.
+**A journal, and replay-assisted recovery.** Phase 3's `failed-after-commit` says *recover forward* and leaves what that means to the deployment. A journal of applied inputs is what would make it a procedure rather than an instruction, and it is the remaining piece of the design's fourth phase.
 
 Reverse migrations. The pre-migration snapshot is what a rollback uses, and only until the new activation has begun authoritative work — after that, restoring it would lose history and might repeat effects. A reverse chain would look like a general undo and would not be one.
 

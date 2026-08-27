@@ -25,6 +25,19 @@
   <ItemGroup>
     <ProjectReference Include="..\SourceRpc\SourceRpc.csproj" />
     <ProjectReference Include="..\SourceRpc.Query\SourceRpc.Query.csproj" />
+    <ProjectReference Include="..\SourceRpc.Continuity\SourceRpc.Continuity.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!--
+      The same files the TypeScript suite reads, copied rather than duplicated.
+
+      They are the specification of the cross-language claim: a snapshot written by one language
+      verifies to the same content hash in the other. A copy of them here that drifted would leave
+      both suites green and the claim false, which is exactly the failure they exist to catch - so
+      the path reaches across the repository into `packages/conformance` on purpose.
+    -->
+    <Content Include="..\..\conformance\fixtures\continuity\*.json" CopyToOutputDirectory="PreserveNewest" Link="fixtures\%(Filename)%(Extension)" />
   </ItemGroup>
 
 </Project>

@@ -1,1 +1,4 @@
 #nullable enable
+SourceRpc.RpcCanonical
+static readonly SourceRpc.RpcCanonical.Absent -> object!
+static SourceRpc.RpcCanonical.Text(object? value) -> string!

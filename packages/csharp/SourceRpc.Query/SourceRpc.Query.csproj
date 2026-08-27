@@ -28,8 +28,15 @@
       shape, so pinning it to the core's number would state an agreement that is not being kept.
       It is also the only one of these packages with dependencies of its own, which is the other
       half of why its releases are not the core's.
+
+      0.2.0 removes SourceRpc.Query.RpcCanonical, which moved to SourceRpc.RpcCanonical when a
+      second consumer arrived that must not pay for Polly and FusionCache to read a file. A
+      forwarder was tried first and is worse: with `using SourceRpc;` and `using SourceRpc.Query;`
+      both present - which is every real consumer of this package - two types of that name are
+      visible and every call site becomes CS0104. Removing it is source-compatible for anyone who
+      already has `using SourceRpc;`, and that is nearly everyone.
     -->
-    <PackageVersionOverride>0.1.0</PackageVersionOverride>
+    <PackageVersionOverride>0.2.0</PackageVersionOverride>
     <Description>The pull half of a Source RPC network for .NET: what a failure means, whether a call may be sent again, a deadline that is a budget across attempts, and a canonical cache key - over Polly and FusionCache.</Description>
   </PropertyGroup>
 

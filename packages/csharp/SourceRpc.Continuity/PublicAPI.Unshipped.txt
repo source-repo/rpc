@@ -1,0 +1,509 @@
+#nullable enable
+const SourceRpc.Continuity.RpcManifests.Version = 1 -> int
+const SourceRpc.Continuity.RpcSnapshotFormat.Version = 1 -> int
+override SourceRpc.Continuity.RpcContractReference.Equals(object? obj) -> bool
+override SourceRpc.Continuity.RpcContractReference.GetHashCode() -> int
+override SourceRpc.Continuity.RpcContractReference.ToString() -> string!
+override SourceRpc.Continuity.RpcDefaultedValue.Equals(object? obj) -> bool
+override SourceRpc.Continuity.RpcDefaultedValue.GetHashCode() -> int
+override SourceRpc.Continuity.RpcDefaultedValue.ToString() -> string!
+override SourceRpc.Continuity.RpcIdentityPolicy.Equals(object? obj) -> bool
+override SourceRpc.Continuity.RpcIdentityPolicy.GetHashCode() -> int
+override SourceRpc.Continuity.RpcIdentityPolicy.ToString() -> string!
+override SourceRpc.Continuity.RpcInboundWorkObligation.Equals(object? obj) -> bool
+override SourceRpc.Continuity.RpcInboundWorkObligation.GetHashCode() -> int
+override SourceRpc.Continuity.RpcInboundWorkObligation.ToString() -> string!
+override SourceRpc.Continuity.RpcLeaseObligation.Equals(object? obj) -> bool
+override SourceRpc.Continuity.RpcLeaseObligation.GetHashCode() -> int
+override SourceRpc.Continuity.RpcLeaseObligation.ToString() -> string!
+override SourceRpc.Continuity.RpcMigrationApproval.Equals(object? obj) -> bool
+override SourceRpc.Continuity.RpcMigrationApproval.GetHashCode() -> int
+override SourceRpc.Continuity.RpcMigrationApproval.ToString() -> string!
+override SourceRpc.Continuity.RpcMigrationRecord.Equals(object? obj) -> bool
+override SourceRpc.Continuity.RpcMigrationRecord.GetHashCode() -> int
+override SourceRpc.Continuity.RpcMigrationRecord.ToString() -> string!
+override SourceRpc.Continuity.RpcObligations.Equals(object? obj) -> bool
+override SourceRpc.Continuity.RpcObligations.GetHashCode() -> int
+override SourceRpc.Continuity.RpcObligations.ToString() -> string!
+override SourceRpc.Continuity.RpcOnlineChangeProfile.Equals(object? obj) -> bool
+override SourceRpc.Continuity.RpcOnlineChangeProfile.GetHashCode() -> int
+override SourceRpc.Continuity.RpcOnlineChangeProfile.ToString() -> string!
+override SourceRpc.Continuity.RpcOutboundCallObligation.Equals(object? obj) -> bool
+override SourceRpc.Continuity.RpcOutboundCallObligation.GetHashCode() -> int
+override SourceRpc.Continuity.RpcOutboundCallObligation.ToString() -> string!
+override SourceRpc.Continuity.RpcPeriodicTimer.Equals(object? obj) -> bool
+override SourceRpc.Continuity.RpcPeriodicTimer.GetHashCode() -> int
+override SourceRpc.Continuity.RpcPeriodicTimer.ToString() -> string!
+override SourceRpc.Continuity.RpcPublicationObligation.Equals(object? obj) -> bool
+override SourceRpc.Continuity.RpcPublicationObligation.GetHashCode() -> int
+override SourceRpc.Continuity.RpcPublicationObligation.ToString() -> string!
+override SourceRpc.Continuity.RpcReconciliation.Equals(object? obj) -> bool
+override SourceRpc.Continuity.RpcReconciliation.GetHashCode() -> int
+override SourceRpc.Continuity.RpcReconciliation.ToString() -> string!
+override SourceRpc.Continuity.RpcRestoreClock.Equals(object? obj) -> bool
+override SourceRpc.Continuity.RpcRestoreClock.GetHashCode() -> int
+override SourceRpc.Continuity.RpcRestoreClock.ToString() -> string!
+override SourceRpc.Continuity.RpcRestoreDeclaration.Equals(object? obj) -> bool
+override SourceRpc.Continuity.RpcRestoreDeclaration.GetHashCode() -> int
+override SourceRpc.Continuity.RpcRestoreDeclaration.ToString() -> string!
+override SourceRpc.Continuity.RpcRestorePlanEntry.Equals(object? obj) -> bool
+override SourceRpc.Continuity.RpcRestorePlanEntry.GetHashCode() -> int
+override SourceRpc.Continuity.RpcRestorePlanEntry.ToString() -> string!
+override SourceRpc.Continuity.RpcRestorePlan.Equals(object? obj) -> bool
+override SourceRpc.Continuity.RpcRestorePlan.GetHashCode() -> int
+override SourceRpc.Continuity.RpcRestorePlan.ToString() -> string!
+override SourceRpc.Continuity.RpcRevisionManifest.Equals(object? obj) -> bool
+override SourceRpc.Continuity.RpcRevisionManifest.GetHashCode() -> int
+override SourceRpc.Continuity.RpcRevisionManifest.ToString() -> string!
+override SourceRpc.Continuity.RpcSequenceObligation.Equals(object? obj) -> bool
+override SourceRpc.Continuity.RpcSequenceObligation.GetHashCode() -> int
+override SourceRpc.Continuity.RpcSequenceObligation.ToString() -> string!
+override SourceRpc.Continuity.RpcSnapshotEnvelope.Equals(object? obj) -> bool
+override SourceRpc.Continuity.RpcSnapshotEnvelope.GetHashCode() -> int
+override SourceRpc.Continuity.RpcSnapshotEnvelope.ToString() -> string!
+override SourceRpc.Continuity.RpcStateReference.Equals(object? obj) -> bool
+override SourceRpc.Continuity.RpcStateReference.GetHashCode() -> int
+override SourceRpc.Continuity.RpcStateReference.ToString() -> string!
+override SourceRpc.Continuity.RpcSubscriptionObligation.Equals(object? obj) -> bool
+override SourceRpc.Continuity.RpcSubscriptionObligation.GetHashCode() -> int
+override SourceRpc.Continuity.RpcSubscriptionObligation.ToString() -> string!
+override SourceRpc.Continuity.RpcTimerObligation.Equals(object? obj) -> bool
+override SourceRpc.Continuity.RpcTimerObligation.GetHashCode() -> int
+override SourceRpc.Continuity.RpcTimerObligation.ToString() -> string!
+override SourceRpc.Continuity.RpcWatchdogObligation.Equals(object? obj) -> bool
+override SourceRpc.Continuity.RpcWatchdogObligation.GetHashCode() -> int
+override SourceRpc.Continuity.RpcWatchdogObligation.ToString() -> string!
+SourceRpc.Continuity.RpcArtifactType
+SourceRpc.Continuity.RpcArtifactType.DotNet = 1 -> SourceRpc.Continuity.RpcArtifactType
+SourceRpc.Continuity.RpcArtifactType.JavaScript = 0 -> SourceRpc.Continuity.RpcArtifactType
+SourceRpc.Continuity.RpcArtifactType.Native = 3 -> SourceRpc.Continuity.RpcArtifactType
+SourceRpc.Continuity.RpcArtifactType.SourceIr = 4 -> SourceRpc.Continuity.RpcArtifactType
+SourceRpc.Continuity.RpcArtifactType.Wasm = 2 -> SourceRpc.Continuity.RpcArtifactType
+SourceRpc.Continuity.RpcCanonicalDigest
+SourceRpc.Continuity.RpcCaptureKind
+SourceRpc.Continuity.RpcCaptureKind.HeldStateOnly = 0 -> SourceRpc.Continuity.RpcCaptureKind
+SourceRpc.Continuity.RpcCaptureKind.QuiescentHandoff = 1 -> SourceRpc.Continuity.RpcCaptureKind
+SourceRpc.Continuity.RpcClockKind
+SourceRpc.Continuity.RpcClockKind.Monotonic = 1 -> SourceRpc.Continuity.RpcClockKind
+SourceRpc.Continuity.RpcClockKind.Simulation = 0 -> SourceRpc.Continuity.RpcClockKind
+SourceRpc.Continuity.RpcClockKind.Wall = 2 -> SourceRpc.Continuity.RpcClockKind
+SourceRpc.Continuity.RpcContractReference
+SourceRpc.Continuity.RpcContractReference.<Clone>$() -> SourceRpc.Continuity.RpcContractReference!
+SourceRpc.Continuity.RpcContractReference.Equals(SourceRpc.Continuity.RpcContractReference? other) -> bool
+SourceRpc.Continuity.RpcContractReference.Id.get -> string!
+SourceRpc.Continuity.RpcContractReference.Id.init -> void
+SourceRpc.Continuity.RpcContractReference.RpcContractReference() -> void
+SourceRpc.Continuity.RpcContractReference.SchemaHash.get -> string!
+SourceRpc.Continuity.RpcContractReference.SchemaHash.init -> void
+SourceRpc.Continuity.RpcContractReference.Version.get -> int
+SourceRpc.Continuity.RpcContractReference.Version.init -> void
+SourceRpc.Continuity.RpcDefaultedValue
+SourceRpc.Continuity.RpcDefaultedValue.<Clone>$() -> SourceRpc.Continuity.RpcDefaultedValue!
+SourceRpc.Continuity.RpcDefaultedValue.Equals(SourceRpc.Continuity.RpcDefaultedValue? other) -> bool
+SourceRpc.Continuity.RpcDefaultedValue.Path.get -> string!
+SourceRpc.Continuity.RpcDefaultedValue.Path.init -> void
+SourceRpc.Continuity.RpcDefaultedValue.RpcDefaultedValue() -> void
+SourceRpc.Continuity.RpcDefaultedValue.Value.get -> System.Text.Json.JsonElement
+SourceRpc.Continuity.RpcDefaultedValue.Value.init -> void
+SourceRpc.Continuity.RpcDefaultedValue.Why.get -> string!
+SourceRpc.Continuity.RpcDefaultedValue.Why.init -> void
+SourceRpc.Continuity.RpcIdentityPolicy
+SourceRpc.Continuity.RpcIdentityPolicy.ApprovedArtifacts.get -> System.Collections.Generic.IReadOnlyList<string!>!
+SourceRpc.Continuity.RpcIdentityPolicy.ApprovedArtifacts.init -> void
+SourceRpc.Continuity.RpcIdentityPolicy.CapabilityEnvelope.get -> System.Collections.Generic.IReadOnlyList<string!>!
+SourceRpc.Continuity.RpcIdentityPolicy.CapabilityEnvelope.init -> void
+SourceRpc.Continuity.RpcIdentityPolicy.<Clone>$() -> SourceRpc.Continuity.RpcIdentityPolicy!
+SourceRpc.Continuity.RpcIdentityPolicy.ComponentId.get -> string!
+SourceRpc.Continuity.RpcIdentityPolicy.ComponentId.init -> void
+SourceRpc.Continuity.RpcIdentityPolicy.ComponentType.get -> string!
+SourceRpc.Continuity.RpcIdentityPolicy.ComponentType.init -> void
+SourceRpc.Continuity.RpcIdentityPolicy.Equals(SourceRpc.Continuity.RpcIdentityPolicy? other) -> bool
+SourceRpc.Continuity.RpcIdentityPolicy.OnlineChangePermitted.get -> bool
+SourceRpc.Continuity.RpcIdentityPolicy.OnlineChangePermitted.init -> void
+SourceRpc.Continuity.RpcIdentityPolicy.RpcIdentityPolicy() -> void
+SourceRpc.Continuity.RpcInboundWorkObligation
+SourceRpc.Continuity.RpcInboundWorkObligation.<Clone>$() -> SourceRpc.Continuity.RpcInboundWorkObligation!
+SourceRpc.Continuity.RpcInboundWorkObligation.Equals(SourceRpc.Continuity.RpcInboundWorkObligation? other) -> bool
+SourceRpc.Continuity.RpcInboundWorkObligation.From.get -> string!
+SourceRpc.Continuity.RpcInboundWorkObligation.From.init -> void
+SourceRpc.Continuity.RpcInboundWorkObligation.Id.get -> string!
+SourceRpc.Continuity.RpcInboundWorkObligation.Id.init -> void
+SourceRpc.Continuity.RpcInboundWorkObligation.Method.get -> string!
+SourceRpc.Continuity.RpcInboundWorkObligation.Method.init -> void
+SourceRpc.Continuity.RpcInboundWorkObligation.Mutating.get -> bool
+SourceRpc.Continuity.RpcInboundWorkObligation.Mutating.init -> void
+SourceRpc.Continuity.RpcInboundWorkObligation.RpcInboundWorkObligation() -> void
+SourceRpc.Continuity.RpcLeaseObligation
+SourceRpc.Continuity.RpcLeaseObligation.<Clone>$() -> SourceRpc.Continuity.RpcLeaseObligation!
+SourceRpc.Continuity.RpcLeaseObligation.Equals(SourceRpc.Continuity.RpcLeaseObligation? other) -> bool
+SourceRpc.Continuity.RpcLeaseObligation.ExpiresAt.get -> long
+SourceRpc.Continuity.RpcLeaseObligation.ExpiresAt.init -> void
+SourceRpc.Continuity.RpcLeaseObligation.Id.get -> string!
+SourceRpc.Continuity.RpcLeaseObligation.Id.init -> void
+SourceRpc.Continuity.RpcLeaseObligation.Issuer.get -> string!
+SourceRpc.Continuity.RpcLeaseObligation.Issuer.init -> void
+SourceRpc.Continuity.RpcLeaseObligation.IssuerSupportsLogicalOwner.get -> bool
+SourceRpc.Continuity.RpcLeaseObligation.IssuerSupportsLogicalOwner.init -> void
+SourceRpc.Continuity.RpcLeaseObligation.RpcLeaseObligation() -> void
+SourceRpc.Continuity.RpcManifests
+SourceRpc.Continuity.RpcMigrationApproval
+SourceRpc.Continuity.RpcMigrationApproval.By.get -> string!
+SourceRpc.Continuity.RpcMigrationApproval.By.init -> void
+SourceRpc.Continuity.RpcMigrationApproval.<Clone>$() -> SourceRpc.Continuity.RpcMigrationApproval!
+SourceRpc.Continuity.RpcMigrationApproval.Equals(SourceRpc.Continuity.RpcMigrationApproval? other) -> bool
+SourceRpc.Continuity.RpcMigrationApproval.Reference.get -> string!
+SourceRpc.Continuity.RpcMigrationApproval.Reference.init -> void
+SourceRpc.Continuity.RpcMigrationApproval.RpcMigrationApproval() -> void
+SourceRpc.Continuity.RpcMigrationRecord
+SourceRpc.Continuity.RpcMigrationRecord.Approval.get -> SourceRpc.Continuity.RpcMigrationApproval!
+SourceRpc.Continuity.RpcMigrationRecord.Approval.init -> void
+SourceRpc.Continuity.RpcMigrationRecord.<Clone>$() -> SourceRpc.Continuity.RpcMigrationRecord!
+SourceRpc.Continuity.RpcMigrationRecord.Defaulted.get -> System.Collections.Generic.IReadOnlyList<SourceRpc.Continuity.RpcDefaultedValue!>!
+SourceRpc.Continuity.RpcMigrationRecord.Defaulted.init -> void
+SourceRpc.Continuity.RpcMigrationRecord.Equals(SourceRpc.Continuity.RpcMigrationRecord? other) -> bool
+SourceRpc.Continuity.RpcMigrationRecord.FromVersion.get -> int
+SourceRpc.Continuity.RpcMigrationRecord.FromVersion.init -> void
+SourceRpc.Continuity.RpcMigrationRecord.InputHash.get -> string!
+SourceRpc.Continuity.RpcMigrationRecord.InputHash.init -> void
+SourceRpc.Continuity.RpcMigrationRecord.OutputHash.get -> string!
+SourceRpc.Continuity.RpcMigrationRecord.OutputHash.init -> void
+SourceRpc.Continuity.RpcMigrationRecord.RpcMigrationRecord() -> void
+SourceRpc.Continuity.RpcMigrationRecord.SchemaId.get -> string!
+SourceRpc.Continuity.RpcMigrationRecord.SchemaId.init -> void
+SourceRpc.Continuity.RpcMigrationRecord.StepId.get -> string!
+SourceRpc.Continuity.RpcMigrationRecord.StepId.init -> void
+SourceRpc.Continuity.RpcMigrationRecord.ToVersion.get -> int
+SourceRpc.Continuity.RpcMigrationRecord.ToVersion.init -> void
+SourceRpc.Continuity.RpcMigrationRecord.Transformed.get -> System.Collections.Generic.IReadOnlyList<string!>!
+SourceRpc.Continuity.RpcMigrationRecord.Transformed.init -> void
+SourceRpc.Continuity.RpcNames
+SourceRpc.Continuity.RpcObligations
+SourceRpc.Continuity.RpcObligations.All.get -> System.Collections.Generic.IReadOnlyList<object!>!
+SourceRpc.Continuity.RpcObligations.<Clone>$() -> SourceRpc.Continuity.RpcObligations!
+SourceRpc.Continuity.RpcObligations.Equals(SourceRpc.Continuity.RpcObligations? other) -> bool
+SourceRpc.Continuity.RpcObligations.InboundWork.get -> System.Collections.Generic.IReadOnlyList<SourceRpc.Continuity.RpcInboundWorkObligation!>!
+SourceRpc.Continuity.RpcObligations.InboundWork.init -> void
+SourceRpc.Continuity.RpcObligations.Leases.get -> System.Collections.Generic.IReadOnlyList<SourceRpc.Continuity.RpcLeaseObligation!>!
+SourceRpc.Continuity.RpcObligations.Leases.init -> void
+SourceRpc.Continuity.RpcObligations.OutboundCalls.get -> System.Collections.Generic.IReadOnlyList<SourceRpc.Continuity.RpcOutboundCallObligation!>!
+SourceRpc.Continuity.RpcObligations.OutboundCalls.init -> void
+SourceRpc.Continuity.RpcObligations.PendingPublications.get -> System.Collections.Generic.IReadOnlyList<SourceRpc.Continuity.RpcPublicationObligation!>!
+SourceRpc.Continuity.RpcObligations.PendingPublications.init -> void
+SourceRpc.Continuity.RpcObligations.RpcObligations() -> void
+SourceRpc.Continuity.RpcObligations.Sequences.get -> System.Collections.Generic.IReadOnlyList<SourceRpc.Continuity.RpcSequenceObligation!>!
+SourceRpc.Continuity.RpcObligations.Sequences.init -> void
+SourceRpc.Continuity.RpcObligations.Subscriptions.get -> System.Collections.Generic.IReadOnlyList<SourceRpc.Continuity.RpcSubscriptionObligation!>!
+SourceRpc.Continuity.RpcObligations.Subscriptions.init -> void
+SourceRpc.Continuity.RpcObligations.Timers.get -> System.Collections.Generic.IReadOnlyList<SourceRpc.Continuity.RpcTimerObligation!>!
+SourceRpc.Continuity.RpcObligations.Timers.init -> void
+SourceRpc.Continuity.RpcObligations.Watchdogs.get -> System.Collections.Generic.IReadOnlyList<SourceRpc.Continuity.RpcWatchdogObligation!>!
+SourceRpc.Continuity.RpcObligations.Watchdogs.init -> void
+SourceRpc.Continuity.RpcOnlineChangeProfile
+SourceRpc.Continuity.RpcOnlineChangeProfile.<Clone>$() -> SourceRpc.Continuity.RpcOnlineChangeProfile!
+SourceRpc.Continuity.RpcOnlineChangeProfile.Equals(SourceRpc.Continuity.RpcOnlineChangeProfile? other) -> bool
+SourceRpc.Continuity.RpcOnlineChangeProfile.QuiescenceDeadlineMs.get -> int
+SourceRpc.Continuity.RpcOnlineChangeProfile.QuiescenceDeadlineMs.init -> void
+SourceRpc.Continuity.RpcOnlineChangeProfile.RpcOnlineChangeProfile() -> void
+SourceRpc.Continuity.RpcOnlineChangeProfile.RuntimeManagedObligations.get -> bool
+SourceRpc.Continuity.RpcOnlineChangeProfile.RuntimeManagedObligations.init -> void
+SourceRpc.Continuity.RpcOnlineChangeProfile.SerialisedHandlers.get -> bool
+SourceRpc.Continuity.RpcOnlineChangeProfile.SerialisedHandlers.init -> void
+SourceRpc.Continuity.RpcOnlineChangeProfile.Supported.get -> bool
+SourceRpc.Continuity.RpcOnlineChangeProfile.Supported.init -> void
+SourceRpc.Continuity.RpcOutboundCallObligation
+SourceRpc.Continuity.RpcOutboundCallObligation.<Clone>$() -> SourceRpc.Continuity.RpcOutboundCallObligation!
+SourceRpc.Continuity.RpcOutboundCallObligation.Equals(SourceRpc.Continuity.RpcOutboundCallObligation? other) -> bool
+SourceRpc.Continuity.RpcOutboundCallObligation.IdempotencyKey.get -> string?
+SourceRpc.Continuity.RpcOutboundCallObligation.IdempotencyKey.init -> void
+SourceRpc.Continuity.RpcOutboundCallObligation.Id.get -> string!
+SourceRpc.Continuity.RpcOutboundCallObligation.Id.init -> void
+SourceRpc.Continuity.RpcOutboundCallObligation.Method.get -> string!
+SourceRpc.Continuity.RpcOutboundCallObligation.Method.init -> void
+SourceRpc.Continuity.RpcOutboundCallObligation.RpcOutboundCallObligation() -> void
+SourceRpc.Continuity.RpcOutboundCallObligation.Semantics.get -> SourceRpc.RpcMethodSemantics?
+SourceRpc.Continuity.RpcOutboundCallObligation.Semantics.init -> void
+SourceRpc.Continuity.RpcOutboundCallObligation.Target.get -> string!
+SourceRpc.Continuity.RpcOutboundCallObligation.Target.init -> void
+SourceRpc.Continuity.RpcPeriodicTimer
+SourceRpc.Continuity.RpcPeriodicTimer.<Clone>$() -> SourceRpc.Continuity.RpcPeriodicTimer!
+SourceRpc.Continuity.RpcPeriodicTimer.Equals(SourceRpc.Continuity.RpcPeriodicTimer? other) -> bool
+SourceRpc.Continuity.RpcPeriodicTimer.Interval.get -> long
+SourceRpc.Continuity.RpcPeriodicTimer.Interval.init -> void
+SourceRpc.Continuity.RpcPeriodicTimer.MissedTickPolicy.get -> string!
+SourceRpc.Continuity.RpcPeriodicTimer.MissedTickPolicy.init -> void
+SourceRpc.Continuity.RpcPeriodicTimer.RpcPeriodicTimer() -> void
+SourceRpc.Continuity.RpcPortableSnapshot
+SourceRpc.Continuity.RpcPortableSnapshot.RefusedException
+SourceRpc.Continuity.RpcPortableSnapshot.RefusedException.Path.get -> string?
+SourceRpc.Continuity.RpcPortableSnapshot.RefusedException.RefusedException(string! message, string? path = null) -> void
+SourceRpc.Continuity.RpcPublicationObligation
+SourceRpc.Continuity.RpcPublicationObligation.<Clone>$() -> SourceRpc.Continuity.RpcPublicationObligation!
+SourceRpc.Continuity.RpcPublicationObligation.Equals(SourceRpc.Continuity.RpcPublicationObligation? other) -> bool
+SourceRpc.Continuity.RpcPublicationObligation.Event.get -> string!
+SourceRpc.Continuity.RpcPublicationObligation.Event.init -> void
+SourceRpc.Continuity.RpcPublicationObligation.Id.get -> string!
+SourceRpc.Continuity.RpcPublicationObligation.Id.init -> void
+SourceRpc.Continuity.RpcPublicationObligation.RpcPublicationObligation() -> void
+SourceRpc.Continuity.RpcPublicationObligation.Sequence.get -> long
+SourceRpc.Continuity.RpcPublicationObligation.Sequence.init -> void
+SourceRpc.Continuity.RpcReconciliation
+SourceRpc.Continuity.RpcReconciliation.Agreed.get -> bool
+SourceRpc.Continuity.RpcReconciliation.Agreed.init -> void
+SourceRpc.Continuity.RpcReconciliation.<Clone>$() -> SourceRpc.Continuity.RpcReconciliation!
+SourceRpc.Continuity.RpcReconciliation.Equals(SourceRpc.Continuity.RpcReconciliation? other) -> bool
+SourceRpc.Continuity.RpcReconciliation.MigrationNeeded.get -> bool
+SourceRpc.Continuity.RpcReconciliation.MigrationNeeded.init -> void
+SourceRpc.Continuity.RpcReconciliation.RpcReconciliation() -> void
+SourceRpc.Continuity.RpcReconciliation.Why.get -> string?
+SourceRpc.Continuity.RpcReconciliation.Why.init -> void
+SourceRpc.Continuity.RpcRedelivery
+SourceRpc.Continuity.RpcRedelivery.AtLeastOnce = 2 -> SourceRpc.Continuity.RpcRedelivery
+SourceRpc.Continuity.RpcRedelivery.AtLeastOnceDeduplicated = 1 -> SourceRpc.Continuity.RpcRedelivery
+SourceRpc.Continuity.RpcRedelivery.ExactlyOnce = 0 -> SourceRpc.Continuity.RpcRedelivery
+SourceRpc.Continuity.RpcRedelivery.GapPossible = 3 -> SourceRpc.Continuity.RpcRedelivery
+SourceRpc.Continuity.RpcResolution
+SourceRpc.Continuity.RpcResolution.Assumed = 0 -> SourceRpc.Continuity.RpcResolution
+SourceRpc.Continuity.RpcResolution.Completed = 2 -> SourceRpc.Continuity.RpcResolution
+SourceRpc.Continuity.RpcResolution.Failed = 3 -> SourceRpc.Continuity.RpcResolution
+SourceRpc.Continuity.RpcResolution.Reestablished = 1 -> SourceRpc.Continuity.RpcResolution
+SourceRpc.Continuity.RpcResolution.Unhonourable = 4 -> SourceRpc.Continuity.RpcResolution
+SourceRpc.Continuity.RpcRestore
+SourceRpc.Continuity.RpcRestoreClock
+SourceRpc.Continuity.RpcRestoreClock.<Clone>$() -> SourceRpc.Continuity.RpcRestoreClock!
+SourceRpc.Continuity.RpcRestoreClock.Equals(SourceRpc.Continuity.RpcRestoreClock? other) -> bool
+SourceRpc.Continuity.RpcRestoreClock.Now.get -> long
+SourceRpc.Continuity.RpcRestoreClock.Now.init -> void
+SourceRpc.Continuity.RpcRestoreClock.RpcRestoreClock() -> void
+SourceRpc.Continuity.RpcRestoreDeclaration
+SourceRpc.Continuity.RpcRestoreDeclaration.<Clone>$() -> SourceRpc.Continuity.RpcRestoreDeclaration!
+SourceRpc.Continuity.RpcRestoreDeclaration.Equals(SourceRpc.Continuity.RpcRestoreDeclaration? other) -> bool
+SourceRpc.Continuity.RpcRestoreDeclaration.Id.get -> string!
+SourceRpc.Continuity.RpcRestoreDeclaration.Id.init -> void
+SourceRpc.Continuity.RpcRestoreDeclaration.Redelivery.get -> SourceRpc.Continuity.RpcRedelivery?
+SourceRpc.Continuity.RpcRestoreDeclaration.Redelivery.init -> void
+SourceRpc.Continuity.RpcRestoreDeclaration.Resolution.get -> SourceRpc.Continuity.RpcResolution
+SourceRpc.Continuity.RpcRestoreDeclaration.Resolution.init -> void
+SourceRpc.Continuity.RpcRestoreDeclaration.RpcRestoreDeclaration() -> void
+SourceRpc.Continuity.RpcRestoreDeclaration.TimerPolicy.get -> SourceRpc.Continuity.RpcTimerPolicy?
+SourceRpc.Continuity.RpcRestoreDeclaration.TimerPolicy.init -> void
+SourceRpc.Continuity.RpcRestorePlan
+SourceRpc.Continuity.RpcRestorePlan.Admissible.get -> bool
+SourceRpc.Continuity.RpcRestorePlan.Admissible.init -> void
+SourceRpc.Continuity.RpcRestorePlan.<Clone>$() -> SourceRpc.Continuity.RpcRestorePlan!
+SourceRpc.Continuity.RpcRestorePlan.Entries.get -> System.Collections.Generic.IReadOnlyList<SourceRpc.Continuity.RpcRestorePlanEntry!>!
+SourceRpc.Continuity.RpcRestorePlan.Entries.init -> void
+SourceRpc.Continuity.RpcRestorePlanEntry
+SourceRpc.Continuity.RpcRestorePlanEntry.<Clone>$() -> SourceRpc.Continuity.RpcRestorePlanEntry!
+SourceRpc.Continuity.RpcRestorePlanEntry.Equals(SourceRpc.Continuity.RpcRestorePlanEntry? other) -> bool
+SourceRpc.Continuity.RpcRestorePlanEntry.Id.get -> string!
+SourceRpc.Continuity.RpcRestorePlanEntry.Id.init -> void
+SourceRpc.Continuity.RpcRestorePlanEntry.Kind.get -> string!
+SourceRpc.Continuity.RpcRestorePlanEntry.Kind.init -> void
+SourceRpc.Continuity.RpcRestorePlanEntry.Redelivery.get -> SourceRpc.Continuity.RpcRedelivery?
+SourceRpc.Continuity.RpcRestorePlanEntry.Redelivery.init -> void
+SourceRpc.Continuity.RpcRestorePlanEntry.Resolution.get -> SourceRpc.Continuity.RpcResolution
+SourceRpc.Continuity.RpcRestorePlanEntry.Resolution.init -> void
+SourceRpc.Continuity.RpcRestorePlanEntry.RpcRestorePlanEntry() -> void
+SourceRpc.Continuity.RpcRestorePlanEntry.TimerPolicy.get -> SourceRpc.Continuity.RpcTimerPolicy?
+SourceRpc.Continuity.RpcRestorePlanEntry.TimerPolicy.init -> void
+SourceRpc.Continuity.RpcRestorePlanEntry.Why.get -> string!
+SourceRpc.Continuity.RpcRestorePlanEntry.Why.init -> void
+SourceRpc.Continuity.RpcRestorePlan.Equals(SourceRpc.Continuity.RpcRestorePlan? other) -> bool
+SourceRpc.Continuity.RpcRestorePlan.RpcRestorePlan() -> void
+SourceRpc.Continuity.RpcRestorePlan.Why.get -> string?
+SourceRpc.Continuity.RpcRestorePlan.Why.init -> void
+SourceRpc.Continuity.RpcRevisionManifest
+SourceRpc.Continuity.RpcRevisionManifest.ArtifactHash.get -> string!
+SourceRpc.Continuity.RpcRevisionManifest.ArtifactHash.init -> void
+SourceRpc.Continuity.RpcRevisionManifest.ArtifactType.get -> SourceRpc.Continuity.RpcArtifactType
+SourceRpc.Continuity.RpcRevisionManifest.ArtifactType.init -> void
+SourceRpc.Continuity.RpcRevisionManifest.<Clone>$() -> SourceRpc.Continuity.RpcRevisionManifest!
+SourceRpc.Continuity.RpcRevisionManifest.ComponentType.get -> string!
+SourceRpc.Continuity.RpcRevisionManifest.ComponentType.init -> void
+SourceRpc.Continuity.RpcRevisionManifest.Contract.get -> SourceRpc.Continuity.RpcContractReference!
+SourceRpc.Continuity.RpcRevisionManifest.Contract.init -> void
+SourceRpc.Continuity.RpcRevisionManifest.Equals(SourceRpc.Continuity.RpcRevisionManifest? other) -> bool
+SourceRpc.Continuity.RpcRevisionManifest.ManifestHash.get -> string!
+SourceRpc.Continuity.RpcRevisionManifest.ManifestHash.init -> void
+SourceRpc.Continuity.RpcRevisionManifest.ManifestVersion.get -> int
+SourceRpc.Continuity.RpcRevisionManifest.ManifestVersion.init -> void
+SourceRpc.Continuity.RpcRevisionManifest.OnlineChange.get -> SourceRpc.Continuity.RpcOnlineChangeProfile!
+SourceRpc.Continuity.RpcRevisionManifest.OnlineChange.init -> void
+SourceRpc.Continuity.RpcRevisionManifest.RequiredCapabilities.get -> System.Collections.Generic.IReadOnlyList<string!>!
+SourceRpc.Continuity.RpcRevisionManifest.RequiredCapabilities.init -> void
+SourceRpc.Continuity.RpcRevisionManifest.RevisionId.get -> string!
+SourceRpc.Continuity.RpcRevisionManifest.RevisionId.init -> void
+SourceRpc.Continuity.RpcRevisionManifest.RpcRevisionManifest() -> void
+SourceRpc.Continuity.RpcRevisionManifest.State.get -> SourceRpc.Continuity.RpcStateReference!
+SourceRpc.Continuity.RpcRevisionManifest.State.init -> void
+SourceRpc.Continuity.RpcSequenceObligation
+SourceRpc.Continuity.RpcSequenceObligation.<Clone>$() -> SourceRpc.Continuity.RpcSequenceObligation!
+SourceRpc.Continuity.RpcSequenceObligation.Equals(SourceRpc.Continuity.RpcSequenceObligation? other) -> bool
+SourceRpc.Continuity.RpcSequenceObligation.Id.get -> string!
+SourceRpc.Continuity.RpcSequenceObligation.Id.init -> void
+SourceRpc.Continuity.RpcSequenceObligation.Position.get -> long
+SourceRpc.Continuity.RpcSequenceObligation.Position.init -> void
+SourceRpc.Continuity.RpcSequenceObligation.RpcSequenceObligation() -> void
+SourceRpc.Continuity.RpcSnapshotEnvelope
+SourceRpc.Continuity.RpcSnapshotEnvelope.ActivationEpoch.get -> long?
+SourceRpc.Continuity.RpcSnapshotEnvelope.ActivationEpoch.init -> void
+SourceRpc.Continuity.RpcSnapshotEnvelope.CapturedAt.get -> string!
+SourceRpc.Continuity.RpcSnapshotEnvelope.CapturedAt.init -> void
+SourceRpc.Continuity.RpcSnapshotEnvelope.CaptureKind.get -> SourceRpc.Continuity.RpcCaptureKind
+SourceRpc.Continuity.RpcSnapshotEnvelope.CaptureKind.init -> void
+SourceRpc.Continuity.RpcSnapshotEnvelope.<Clone>$() -> SourceRpc.Continuity.RpcSnapshotEnvelope!
+SourceRpc.Continuity.RpcSnapshotEnvelope.ComponentId.get -> string!
+SourceRpc.Continuity.RpcSnapshotEnvelope.ComponentId.init -> void
+SourceRpc.Continuity.RpcSnapshotEnvelope.ComponentType.get -> string!
+SourceRpc.Continuity.RpcSnapshotEnvelope.ComponentType.init -> void
+SourceRpc.Continuity.RpcSnapshotEnvelope.ContentHash.get -> string!
+SourceRpc.Continuity.RpcSnapshotEnvelope.ContentHash.init -> void
+SourceRpc.Continuity.RpcSnapshotEnvelope.Equals(SourceRpc.Continuity.RpcSnapshotEnvelope? other) -> bool
+SourceRpc.Continuity.RpcSnapshotEnvelope.HeldState.get -> System.Text.Json.JsonElement
+SourceRpc.Continuity.RpcSnapshotEnvelope.HeldState.init -> void
+SourceRpc.Continuity.RpcSnapshotEnvelope.LastAppliedInputSequence.get -> long?
+SourceRpc.Continuity.RpcSnapshotEnvelope.LastAppliedInputSequence.init -> void
+SourceRpc.Continuity.RpcSnapshotEnvelope.LastCommittedOutputSequence.get -> long?
+SourceRpc.Continuity.RpcSnapshotEnvelope.LastCommittedOutputSequence.init -> void
+SourceRpc.Continuity.RpcSnapshotEnvelope.LogicalTime.get -> long?
+SourceRpc.Continuity.RpcSnapshotEnvelope.LogicalTime.init -> void
+SourceRpc.Continuity.RpcSnapshotEnvelope.Obligations.get -> SourceRpc.Continuity.RpcObligations?
+SourceRpc.Continuity.RpcSnapshotEnvelope.Obligations.init -> void
+SourceRpc.Continuity.RpcSnapshotEnvelope.ParentSnapshotHash.get -> string?
+SourceRpc.Continuity.RpcSnapshotEnvelope.ParentSnapshotHash.init -> void
+SourceRpc.Continuity.RpcSnapshotEnvelope.Provenance.get -> System.Collections.Generic.IReadOnlyList<SourceRpc.Continuity.RpcMigrationRecord!>!
+SourceRpc.Continuity.RpcSnapshotEnvelope.Provenance.init -> void
+SourceRpc.Continuity.RpcSnapshotEnvelope.RpcSnapshotEnvelope() -> void
+SourceRpc.Continuity.RpcSnapshotEnvelope.SnapshotFormatVersion.get -> int
+SourceRpc.Continuity.RpcSnapshotEnvelope.SnapshotFormatVersion.init -> void
+SourceRpc.Continuity.RpcSnapshotEnvelope.SnapshotId.get -> string!
+SourceRpc.Continuity.RpcSnapshotEnvelope.SnapshotId.init -> void
+SourceRpc.Continuity.RpcSnapshotEnvelope.SourceRevision.get -> string!
+SourceRpc.Continuity.RpcSnapshotEnvelope.SourceRevision.init -> void
+SourceRpc.Continuity.RpcSnapshotEnvelope.StateSchemaHash.get -> string!
+SourceRpc.Continuity.RpcSnapshotEnvelope.StateSchemaHash.init -> void
+SourceRpc.Continuity.RpcSnapshotEnvelope.StateSchemaId.get -> string!
+SourceRpc.Continuity.RpcSnapshotEnvelope.StateSchemaId.init -> void
+SourceRpc.Continuity.RpcSnapshotEnvelope.StateVersion.get -> int
+SourceRpc.Continuity.RpcSnapshotEnvelope.StateVersion.init -> void
+SourceRpc.Continuity.RpcSnapshotFormat
+SourceRpc.Continuity.RpcSnapshotJson
+SourceRpc.Continuity.RpcSnapshots
+SourceRpc.Continuity.RpcStateReference
+SourceRpc.Continuity.RpcStateReference.<Clone>$() -> SourceRpc.Continuity.RpcStateReference!
+SourceRpc.Continuity.RpcStateReference.Equals(SourceRpc.Continuity.RpcStateReference? other) -> bool
+SourceRpc.Continuity.RpcStateReference.RpcStateReference() -> void
+SourceRpc.Continuity.RpcStateReference.SchemaHash.get -> string!
+SourceRpc.Continuity.RpcStateReference.SchemaHash.init -> void
+SourceRpc.Continuity.RpcStateReference.SchemaId.get -> string!
+SourceRpc.Continuity.RpcStateReference.SchemaId.init -> void
+SourceRpc.Continuity.RpcStateReference.Version.get -> int
+SourceRpc.Continuity.RpcStateReference.Version.init -> void
+SourceRpc.Continuity.RpcSubscriptionObligation
+SourceRpc.Continuity.RpcSubscriptionObligation.<Clone>$() -> SourceRpc.Continuity.RpcSubscriptionObligation!
+SourceRpc.Continuity.RpcSubscriptionObligation.Equals(SourceRpc.Continuity.RpcSubscriptionObligation? other) -> bool
+SourceRpc.Continuity.RpcSubscriptionObligation.Event.get -> string!
+SourceRpc.Continuity.RpcSubscriptionObligation.Event.init -> void
+SourceRpc.Continuity.RpcSubscriptionObligation.Id.get -> string!
+SourceRpc.Continuity.RpcSubscriptionObligation.Id.init -> void
+SourceRpc.Continuity.RpcSubscriptionObligation.LastAcknowledgedSequence.get -> long?
+SourceRpc.Continuity.RpcSubscriptionObligation.LastAcknowledgedSequence.init -> void
+SourceRpc.Continuity.RpcSubscriptionObligation.RpcSubscriptionObligation() -> void
+SourceRpc.Continuity.RpcTimerObligation
+SourceRpc.Continuity.RpcTimerObligation.CapturedAt.get -> long
+SourceRpc.Continuity.RpcTimerObligation.CapturedAt.init -> void
+SourceRpc.Continuity.RpcTimerObligation.Clock.get -> SourceRpc.Continuity.RpcClockKind
+SourceRpc.Continuity.RpcTimerObligation.Clock.init -> void
+SourceRpc.Continuity.RpcTimerObligation.<Clone>$() -> SourceRpc.Continuity.RpcTimerObligation!
+SourceRpc.Continuity.RpcTimerObligation.DueAt.get -> long
+SourceRpc.Continuity.RpcTimerObligation.DueAt.init -> void
+SourceRpc.Continuity.RpcTimerObligation.Equals(SourceRpc.Continuity.RpcTimerObligation? other) -> bool
+SourceRpc.Continuity.RpcTimerObligation.Id.get -> string!
+SourceRpc.Continuity.RpcTimerObligation.Id.init -> void
+SourceRpc.Continuity.RpcTimerObligation.Periodic.get -> SourceRpc.Continuity.RpcPeriodicTimer?
+SourceRpc.Continuity.RpcTimerObligation.Periodic.init -> void
+SourceRpc.Continuity.RpcTimerObligation.Policy.get -> SourceRpc.Continuity.RpcTimerPolicy
+SourceRpc.Continuity.RpcTimerObligation.Policy.init -> void
+SourceRpc.Continuity.RpcTimerObligation.RpcTimerObligation() -> void
+SourceRpc.Continuity.RpcTimerPolicy
+SourceRpc.Continuity.RpcTimerPolicy.FireOnActivation = 3 -> SourceRpc.Continuity.RpcTimerPolicy
+SourceRpc.Continuity.RpcTimerPolicy.PreserveDeadline = 0 -> SourceRpc.Continuity.RpcTimerPolicy
+SourceRpc.Continuity.RpcTimerPolicy.PreserveRemaining = 1 -> SourceRpc.Continuity.RpcTimerPolicy
+SourceRpc.Continuity.RpcTimerPolicy.RefuseIfOverdue = 4 -> SourceRpc.Continuity.RpcTimerPolicy
+SourceRpc.Continuity.RpcTimerPolicy.Restart = 2 -> SourceRpc.Continuity.RpcTimerPolicy
+SourceRpc.Continuity.RpcWatchdogObligation
+SourceRpc.Continuity.RpcWatchdogObligation.<Clone>$() -> SourceRpc.Continuity.RpcWatchdogObligation!
+SourceRpc.Continuity.RpcWatchdogObligation.DueAt.get -> long
+SourceRpc.Continuity.RpcWatchdogObligation.DueAt.init -> void
+SourceRpc.Continuity.RpcWatchdogObligation.Equals(SourceRpc.Continuity.RpcWatchdogObligation? other) -> bool
+SourceRpc.Continuity.RpcWatchdogObligation.Id.get -> string!
+SourceRpc.Continuity.RpcWatchdogObligation.Id.init -> void
+SourceRpc.Continuity.RpcWatchdogObligation.Policy.get -> SourceRpc.Continuity.RpcTimerPolicy
+SourceRpc.Continuity.RpcWatchdogObligation.Policy.init -> void
+SourceRpc.Continuity.RpcWatchdogObligation.RpcWatchdogObligation() -> void
+static readonly SourceRpc.Continuity.RpcSnapshotJson.Options -> System.Text.Json.JsonSerializerOptions!
+static SourceRpc.Continuity.RpcCanonicalDigest.Digest(object? value) -> string!
+static SourceRpc.Continuity.RpcCanonicalDigest.Text(object? value) -> string!
+static SourceRpc.Continuity.RpcContractReference.operator !=(SourceRpc.Continuity.RpcContractReference? left, SourceRpc.Continuity.RpcContractReference? right) -> bool
+static SourceRpc.Continuity.RpcContractReference.operator ==(SourceRpc.Continuity.RpcContractReference? left, SourceRpc.Continuity.RpcContractReference? right) -> bool
+static SourceRpc.Continuity.RpcDefaultedValue.operator !=(SourceRpc.Continuity.RpcDefaultedValue? left, SourceRpc.Continuity.RpcDefaultedValue? right) -> bool
+static SourceRpc.Continuity.RpcDefaultedValue.operator ==(SourceRpc.Continuity.RpcDefaultedValue? left, SourceRpc.Continuity.RpcDefaultedValue? right) -> bool
+static SourceRpc.Continuity.RpcIdentityPolicy.operator !=(SourceRpc.Continuity.RpcIdentityPolicy? left, SourceRpc.Continuity.RpcIdentityPolicy? right) -> bool
+static SourceRpc.Continuity.RpcIdentityPolicy.operator ==(SourceRpc.Continuity.RpcIdentityPolicy? left, SourceRpc.Continuity.RpcIdentityPolicy? right) -> bool
+static SourceRpc.Continuity.RpcInboundWorkObligation.operator !=(SourceRpc.Continuity.RpcInboundWorkObligation? left, SourceRpc.Continuity.RpcInboundWorkObligation? right) -> bool
+static SourceRpc.Continuity.RpcInboundWorkObligation.operator ==(SourceRpc.Continuity.RpcInboundWorkObligation? left, SourceRpc.Continuity.RpcInboundWorkObligation? right) -> bool
+static SourceRpc.Continuity.RpcLeaseObligation.operator !=(SourceRpc.Continuity.RpcLeaseObligation? left, SourceRpc.Continuity.RpcLeaseObligation? right) -> bool
+static SourceRpc.Continuity.RpcLeaseObligation.operator ==(SourceRpc.Continuity.RpcLeaseObligation? left, SourceRpc.Continuity.RpcLeaseObligation? right) -> bool
+static SourceRpc.Continuity.RpcManifests.ArtifactName(SourceRpc.Continuity.RpcArtifactType type) -> string!
+static SourceRpc.Continuity.RpcManifests.Authorised(SourceRpc.Continuity.RpcRevisionManifest! manifest, SourceRpc.Continuity.RpcIdentityPolicy! policy) -> string?
+static SourceRpc.Continuity.RpcManifests.Read(string! json) -> SourceRpc.Continuity.RpcRevisionManifest!
+static SourceRpc.Continuity.RpcManifests.Reconcile(SourceRpc.Continuity.RpcRevisionManifest! manifest, SourceRpc.Continuity.RpcSnapshotEnvelope! snapshot) -> SourceRpc.Continuity.RpcReconciliation!
+static SourceRpc.Continuity.RpcManifests.Verify(SourceRpc.Continuity.RpcRevisionManifest! manifest) -> string?
+static SourceRpc.Continuity.RpcMigrationApproval.operator !=(SourceRpc.Continuity.RpcMigrationApproval? left, SourceRpc.Continuity.RpcMigrationApproval? right) -> bool
+static SourceRpc.Continuity.RpcMigrationApproval.operator ==(SourceRpc.Continuity.RpcMigrationApproval? left, SourceRpc.Continuity.RpcMigrationApproval? right) -> bool
+static SourceRpc.Continuity.RpcMigrationRecord.operator !=(SourceRpc.Continuity.RpcMigrationRecord? left, SourceRpc.Continuity.RpcMigrationRecord? right) -> bool
+static SourceRpc.Continuity.RpcMigrationRecord.operator ==(SourceRpc.Continuity.RpcMigrationRecord? left, SourceRpc.Continuity.RpcMigrationRecord? right) -> bool
+static SourceRpc.Continuity.RpcNames.Clock(SourceRpc.Continuity.RpcClockKind kind) -> string!
+static SourceRpc.Continuity.RpcNames.Policy(SourceRpc.Continuity.RpcTimerPolicy policy) -> string!
+static SourceRpc.Continuity.RpcNames.Redelivery(SourceRpc.Continuity.RpcRedelivery redelivery) -> string!
+static SourceRpc.Continuity.RpcNames.Semantics(SourceRpc.RpcMethodSemantics semantics) -> string!
+static SourceRpc.Continuity.RpcObligations.operator !=(SourceRpc.Continuity.RpcObligations? left, SourceRpc.Continuity.RpcObligations? right) -> bool
+static SourceRpc.Continuity.RpcObligations.operator ==(SourceRpc.Continuity.RpcObligations? left, SourceRpc.Continuity.RpcObligations? right) -> bool
+static SourceRpc.Continuity.RpcOnlineChangeProfile.operator !=(SourceRpc.Continuity.RpcOnlineChangeProfile? left, SourceRpc.Continuity.RpcOnlineChangeProfile? right) -> bool
+static SourceRpc.Continuity.RpcOnlineChangeProfile.operator ==(SourceRpc.Continuity.RpcOnlineChangeProfile? left, SourceRpc.Continuity.RpcOnlineChangeProfile? right) -> bool
+static SourceRpc.Continuity.RpcOutboundCallObligation.operator !=(SourceRpc.Continuity.RpcOutboundCallObligation? left, SourceRpc.Continuity.RpcOutboundCallObligation? right) -> bool
+static SourceRpc.Continuity.RpcOutboundCallObligation.operator ==(SourceRpc.Continuity.RpcOutboundCallObligation? left, SourceRpc.Continuity.RpcOutboundCallObligation? right) -> bool
+static SourceRpc.Continuity.RpcPeriodicTimer.operator !=(SourceRpc.Continuity.RpcPeriodicTimer? left, SourceRpc.Continuity.RpcPeriodicTimer? right) -> bool
+static SourceRpc.Continuity.RpcPeriodicTimer.operator ==(SourceRpc.Continuity.RpcPeriodicTimer? left, SourceRpc.Continuity.RpcPeriodicTimer? right) -> bool
+static SourceRpc.Continuity.RpcPortableSnapshot.Read(string! json) -> SourceRpc.Continuity.RpcSnapshotEnvelope!
+static SourceRpc.Continuity.RpcPortableSnapshot.Read(System.Text.Json.JsonElement root) -> SourceRpc.Continuity.RpcSnapshotEnvelope!
+static SourceRpc.Continuity.RpcPublicationObligation.operator !=(SourceRpc.Continuity.RpcPublicationObligation? left, SourceRpc.Continuity.RpcPublicationObligation? right) -> bool
+static SourceRpc.Continuity.RpcPublicationObligation.operator ==(SourceRpc.Continuity.RpcPublicationObligation? left, SourceRpc.Continuity.RpcPublicationObligation? right) -> bool
+static SourceRpc.Continuity.RpcReconciliation.operator !=(SourceRpc.Continuity.RpcReconciliation? left, SourceRpc.Continuity.RpcReconciliation? right) -> bool
+static SourceRpc.Continuity.RpcReconciliation.operator ==(SourceRpc.Continuity.RpcReconciliation? left, SourceRpc.Continuity.RpcReconciliation? right) -> bool
+static SourceRpc.Continuity.RpcRestoreClock.operator !=(SourceRpc.Continuity.RpcRestoreClock? left, SourceRpc.Continuity.RpcRestoreClock? right) -> bool
+static SourceRpc.Continuity.RpcRestoreClock.operator ==(SourceRpc.Continuity.RpcRestoreClock? left, SourceRpc.Continuity.RpcRestoreClock? right) -> bool
+static SourceRpc.Continuity.RpcRestoreDeclaration.operator !=(SourceRpc.Continuity.RpcRestoreDeclaration? left, SourceRpc.Continuity.RpcRestoreDeclaration? right) -> bool
+static SourceRpc.Continuity.RpcRestoreDeclaration.operator ==(SourceRpc.Continuity.RpcRestoreDeclaration? left, SourceRpc.Continuity.RpcRestoreDeclaration? right) -> bool
+static SourceRpc.Continuity.RpcRestorePlanEntry.operator !=(SourceRpc.Continuity.RpcRestorePlanEntry? left, SourceRpc.Continuity.RpcRestorePlanEntry? right) -> bool
+static SourceRpc.Continuity.RpcRestorePlanEntry.operator ==(SourceRpc.Continuity.RpcRestorePlanEntry? left, SourceRpc.Continuity.RpcRestorePlanEntry? right) -> bool
+static SourceRpc.Continuity.RpcRestorePlan.operator !=(SourceRpc.Continuity.RpcRestorePlan? left, SourceRpc.Continuity.RpcRestorePlan? right) -> bool
+static SourceRpc.Continuity.RpcRestorePlan.operator ==(SourceRpc.Continuity.RpcRestorePlan? left, SourceRpc.Continuity.RpcRestorePlan? right) -> bool
+static SourceRpc.Continuity.RpcRestore.Plan(SourceRpc.Continuity.RpcSnapshotEnvelope! snapshot, System.Collections.Generic.IReadOnlyList<SourceRpc.Continuity.RpcRestoreDeclaration!>! declarations, SourceRpc.Continuity.RpcRestoreClock! clock) -> SourceRpc.Continuity.RpcRestorePlan!
+static SourceRpc.Continuity.RpcRestore.ValidateAtBarrier(SourceRpc.Continuity.RpcSnapshotEnvelope! atBarrier, System.Collections.Generic.IReadOnlyList<SourceRpc.Continuity.RpcRestoreDeclaration!>! declarations, SourceRpc.Continuity.RpcRestoreClock! clock, SourceRpc.Continuity.RpcRestorePlan! earlier) -> (bool Agreed, string? Why)
+static SourceRpc.Continuity.RpcRevisionManifest.operator !=(SourceRpc.Continuity.RpcRevisionManifest? left, SourceRpc.Continuity.RpcRevisionManifest? right) -> bool
+static SourceRpc.Continuity.RpcRevisionManifest.operator ==(SourceRpc.Continuity.RpcRevisionManifest? left, SourceRpc.Continuity.RpcRevisionManifest? right) -> bool
+static SourceRpc.Continuity.RpcSequenceObligation.operator !=(SourceRpc.Continuity.RpcSequenceObligation? left, SourceRpc.Continuity.RpcSequenceObligation? right) -> bool
+static SourceRpc.Continuity.RpcSequenceObligation.operator ==(SourceRpc.Continuity.RpcSequenceObligation? left, SourceRpc.Continuity.RpcSequenceObligation? right) -> bool
+static SourceRpc.Continuity.RpcSnapshotEnvelope.operator !=(SourceRpc.Continuity.RpcSnapshotEnvelope? left, SourceRpc.Continuity.RpcSnapshotEnvelope? right) -> bool
+static SourceRpc.Continuity.RpcSnapshotEnvelope.operator ==(SourceRpc.Continuity.RpcSnapshotEnvelope? left, SourceRpc.Continuity.RpcSnapshotEnvelope? right) -> bool
+static SourceRpc.Continuity.RpcSnapshots.AdmissibleForHandoff(SourceRpc.Continuity.RpcSnapshotEnvelope! snapshot) -> string?
+static SourceRpc.Continuity.RpcSnapshots.Verify(SourceRpc.Continuity.RpcSnapshotEnvelope! snapshot) -> string?
+static SourceRpc.Continuity.RpcStateReference.operator !=(SourceRpc.Continuity.RpcStateReference? left, SourceRpc.Continuity.RpcStateReference? right) -> bool
+static SourceRpc.Continuity.RpcStateReference.operator ==(SourceRpc.Continuity.RpcStateReference? left, SourceRpc.Continuity.RpcStateReference? right) -> bool
+static SourceRpc.Continuity.RpcSubscriptionObligation.operator !=(SourceRpc.Continuity.RpcSubscriptionObligation? left, SourceRpc.Continuity.RpcSubscriptionObligation? right) -> bool
+static SourceRpc.Continuity.RpcSubscriptionObligation.operator ==(SourceRpc.Continuity.RpcSubscriptionObligation? left, SourceRpc.Continuity.RpcSubscriptionObligation? right) -> bool
+static SourceRpc.Continuity.RpcTimerObligation.operator !=(SourceRpc.Continuity.RpcTimerObligation? left, SourceRpc.Continuity.RpcTimerObligation? right) -> bool
+static SourceRpc.Continuity.RpcTimerObligation.operator ==(SourceRpc.Continuity.RpcTimerObligation? left, SourceRpc.Continuity.RpcTimerObligation? right) -> bool
+static SourceRpc.Continuity.RpcWatchdogObligation.operator !=(SourceRpc.Continuity.RpcWatchdogObligation? left, SourceRpc.Continuity.RpcWatchdogObligation? right) -> bool
+static SourceRpc.Continuity.RpcWatchdogObligation.operator ==(SourceRpc.Continuity.RpcWatchdogObligation? left, SourceRpc.Continuity.RpcWatchdogObligation? right) -> bool

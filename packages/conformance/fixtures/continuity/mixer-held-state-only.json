@@ -1,0 +1,24 @@
+{
+    "snapshotFormatVersion": 1,
+    "snapshotId": "cross-language-mixer-held",
+    "captureKind": "held-state-only",
+    "componentType": "mixer",
+    "componentId": "mixer1",
+    "sourceRevision": "ts-rev-1",
+    "stateSchemaId": "mixer.state",
+    "stateVersion": 2,
+    "stateSchemaHash": "ZAX9lO0Qlqxf7JzCcXzNXXwQdN-7RJ_wi-FTp9rn5GI",
+    "heldState": {
+        "batches": 3,
+        "dwelling": false,
+        "recipe": {
+            "name": "stout",
+            "litres": 480.5
+        },
+        "tags": [],
+        "lastOperator": null
+    },
+    "provenance": [],
+    "capturedAt": "2026-08-27T09:15:00.000Z",
+    "contentHash": "4GNdcchAeUSGX_hhkpQUwaWO1_1Gk_6IltlHeq8hWcs"
+}

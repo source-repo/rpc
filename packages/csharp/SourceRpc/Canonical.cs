@@ -1,7 +1,7 @@
 using System.Globalization;
 using System.Text;
 
-namespace SourceRpc.Query;
+namespace SourceRpc;
 
 /// <summary>
 /// One value, in a form two of them can be compared as text.

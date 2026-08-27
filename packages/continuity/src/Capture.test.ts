@@ -42,6 +42,20 @@ const schemaOf = () =>
         schema: { kind: 'object', fields: { batches: { type: { kind: 'number' } }, dwelling: { type: { kind: 'boolean' } } } }
     })
 
+/**
+ * Wait until the component is actually in the handler, rather than for long enough that it probably
+ * is. A sleep here is a race the whole suite loses under load: if the call has not reached the
+ * server when the barrier goes in, the queue is empty, the capture succeeds, and the test asserts
+ * the opposite of what it meant to.
+ */
+const running = async (mixer: { state: { dwelling: boolean } }) => {
+    for (let waited = 0; waited < 2000; waited += 5) {
+        if (mixer.state.dwelling) return
+        await sleep(5)
+    }
+    throw new Error('the component never entered its handler')
+}
+
 const request = async (component: Mixer, hold: RpcExecutionHold, ledger: RpcObligationLedger, quiescenceDeadlineMs = 500) => ({
     component,
     hold,
@@ -89,13 +103,13 @@ test('the values and the work come from the same instant, with nothing running i
 
     // A handler is running when the barrier goes in. It must finish before anything is read, or the
     // snapshot would hold a `dwelling: true` that had already stopped being true.
-    const running = proxy.startBatch(60)
-    await sleep(20)
+    const inFlight = proxy.startBatch(60)
+    await running(mixer)
     const barrier = hold()
     const ledger = new RpcObligationLedger()
     const result = await captureAtBarrier(await request(mixer, barrier, ledger))
     barrier.release()
-    await running
+    await inFlight
 
     t.true('captured' in result)
     if (!('captured' in result)) return
@@ -108,8 +122,8 @@ test('the values and the work come from the same instant, with nothing running i
 test('a component that cannot become quiescent refuses, and is left running', async (t) => {
     const { mixer, proxy, hold } = await stood(t, 4402)
 
-    const running = proxy.startBatch(400)
-    await sleep(20)
+    const inFlight = proxy.startBatch(400)
+    await running(mixer)
     const barrier = hold()
     const result = await captureAtBarrier(await request(mixer, barrier, new RpcObligationLedger(), 50))
     barrier.release()
@@ -120,7 +134,7 @@ test('a component that cannot become quiescent refuses, and is left running', as
     // The first implementation never serialises a partially executed handler: a stack is not a thing
     // that can be handed to another process, still less to another language.
     t.regex(result.refused.why, /partially executed handler/)
-    t.is(await running, 1, 'and the old activation carried on, which is the correct outcome rather than a fallback')
+    t.is(await inFlight, 1, 'and the old activation carried on, which is the correct outcome rather than a fallback')
 })
 
 test('a barrier stops what comes next and lets what is running finish', async (t) => {

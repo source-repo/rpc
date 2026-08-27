@@ -277,11 +277,13 @@ jobs:
                     exit 1
                   fi
                   version=$(grep -oP '(?<=<SourceRpcVersion>)[^<]+' packages/csharp/Directory.Build.props)
-                  # SourceRpc.Query is on its own line and cannot ride the shared number, so the
-                  # loop carries a version per package rather than one for all of them.
+                  # SourceRpc.Query and SourceRpc.Continuity are on version lines of their own and
+                  # cannot ride the shared number, so the loop carries a version per package rather
+                  # than one for all of them.
                   query=$(grep -oP '(?<=<PackageVersionOverride>)[^<]+' packages/csharp/SourceRpc.Query/SourceRpc.Query.csproj)
-                  echo "SourceRpc ${version}, SourceRpc.Query ${query}"
-                  for entry in "SourceRpc=${version}" "SourceRpc.SignalR=${version}" "SourceRpc.Mqtt=${version}" "SourceRpc.SocketIo=${version}" "SourceRpc.Query=${query}"; do
+                  continuity=$(grep -oP '(?<=<PackageVersionOverride>)[^<]+' packages/csharp/SourceRpc.Continuity/SourceRpc.Continuity.csproj)
+                  echo "SourceRpc ${version}, SourceRpc.Query ${query}, SourceRpc.Continuity ${continuity}"
+                  for entry in "SourceRpc=${version}" "SourceRpc.SignalR=${version}" "SourceRpc.Mqtt=${version}" "SourceRpc.SocketIo=${version}" "SourceRpc.Query=${query}" "SourceRpc.Continuity=${continuity}"; do
                     package="${entry%%=*}"
                     # A name of its own rather than reusing `version`: the list above was expanded
                     # before the loop ran, so overwriting it would work and would read as though the
