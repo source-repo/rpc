@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+### A component stops between two pieces of work, having finished the first
+
+Safe-boundary breakpoints, which the feasibility note recommended building first and which need no worker at all: the probe fires and asks, the handler that was running **finishes under ordinary semantics**, and the component stops before accepting its next unit of work. The mechanism is the barrier that already exists - `holdExecution` puts an entry on the instance's serial chain that never finishes - so what this adds is the supervisor around it rather than a way to stop something.
+
+That is the mode a plant can survive. An exact pause can land after a valve has already moved and nothing can undo it; this one cannot land anywhere except between two whole pieces of work. `kind: 'safe-boundary'` is published on the pause state so a viewer never infers it, because execution stopped *after* the handler and a caret on the probe's line would be putting the component where it is not.
+
+**A breakpoint is a tracepoint whose policy says stop, and switching one on needs no rebuild.** That is the design's own rule - *adding an unconditional stop policy to an existing probe does not require rebuilding the variant* - so it costs a map entry rather than swapping the code running on a plant. The sink records the capture first and asks second, so the reason for a pause is already waiting to be published when the pause arrives, and a supervisor that throws is swallowed like everything else a probe touches.
+
+**Work that arrives while paused queues in order**, bounded by the instance's mailbox, with a caller beyond it refused `Busy` by the machinery that always refuses it. That is the design's `buffer-bounded` policy, inherited rather than implemented; the other two would need the server to answer differently while paused, which is a change to the call path, so they are named and reported unsupported rather than approximated.
+
+**Resuming needs the lease**, because it is an act and an act needs somebody who can be named as having taken it. One controller at a time - two debuggers issuing continue at one stopped plant is two people deciding the same thing without knowing about each other - while everyone else authorised may still watch, since reading is not controlling. Transfer is explicit and recorded. Control answers to `control-paused-activation`, and continue is a `non-repeatable-command`: a retry arriving after a resume would be asking to resume a component that has since stopped again for a different reason.
+
+**A pause nobody ends is ended by its deadline**, with the action declared before it matters. `resume` lets it go; `stopped` keeps it stopped and stops pretending anybody owns it; `terminate` ends the diagnostic activation, and since this package cannot end one, a supervisor configured that way with nothing supplied is refused at construction rather than at the moment it was needed.
+
+Five of the phase's seven acceptance criteria, on a real server with real calls in flight - including the seventh, which is a property of what a pause does *not* do: a command that arrived while the component was stopped runs exactly once when it is let go, with its caller's ordinary timeout and `UnknownOutcome` behaviour untouched. The two that remain need an exact pause, and `exactPause` and `stepping` stay `false`.
+
 ### A component can be stopped dead, and the thing that stopped it keeps answering
 
 A feasibility prototype for the diagnostics design's third phase, built before anything was built on it. Phase 3 asks for an isolated pausable logic worker and a supported runtime pause gate, and whether this runtime can honestly provide either is a question better answered with a working gate than with a plan. `RpcPauseGate` is that gate. **It is not a breakpoint** - no supervisor protocol, no controller lease, no stepping - so `exactPause` and `stepping` are still advertised `false` and nothing a viewer can ask for has changed.

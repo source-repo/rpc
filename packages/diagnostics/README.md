@@ -2,7 +2,7 @@
 
 Live values beside the source that declares them, for a [Source RPC](https://github.com/source-repo/rpc) node. The oldest way of looking at a machine — the program on screen with what each thing currently is written next to it — without a debugger, without instrumentation, and without a second data path.
 
-**Phases 1 and 2 of the node diagnostics design.** Source-linked props and state; a diagnostic variant that can be proved a derivative, generated, and swapped in over a state-preserving handoff; and a bounded sink for what its probes see. Tracepoints capture without stopping; breakpoints and stepping are the next phase and are advertised as `false` rather than left out.
+**Phases 1 and 2 of the node diagnostics design.** Source-linked props and state; a diagnostic variant that can be proved a derivative, generated, and swapped in over a state-preserving handoff; and a bounded sink for what its probes see. Tracepoints capture without stopping and safe-boundary breakpoints stop between units of work; exact breakpoints and stepping are advertised as `false` rather than left out, and there is a measured prototype of the mechanism they would need.
 
 ## The whole economy of it
 
@@ -184,7 +184,33 @@ What the sink decides — how many hits to skip, what the message reads as — n
 
 Captures are bounded and what the bound discarded is counted, like everything else here. They reach the session that installed the tracepoint and no other, because a capture is a value somebody was separately permitted to take.
 
-What is still not here: safe-boundary and exact breakpoints, and stepping — all advertised `false`.
+## Stopping between units of work
+
+A safe-boundary breakpoint is a tracepoint whose policy says stop. **No rebuild** — that is the design's own rule: *adding an unconditional stop policy to an existing probe does not require rebuilding the variant*, so turning a tracepoint into a breakpoint costs a map entry rather than a swap of the code running on a plant.
+
+```typescript
+const pauses = new RpcPauseSupervisor({
+    componentId: 'oven3', semanticRevisionId: 'rev-7', activationEpoch,
+    hold: () => server.rpc.holdExecution('oven'),   // the barrier that already exists
+    expiryAction: 'resume',
+    maxPauseMs: 60_000
+})
+const sink = new RpcProbeSink({ tracepoints: { [probeId]: { stop: true } }, onStop: (probeId) => void pauses.requested(probeId) })
+```
+
+**Nothing is interrupted.** The probe fires, records, and asks; the handler that was running **runs to its end under ordinary semantics**; the component stops before accepting its next unit of work. That is what makes this mode survivable by a component that was halfway through commanding something — an exact pause can land after a valve has moved, and this one cannot land anywhere except between two whole pieces of work.
+
+A viewer must say which pause this is, and `kind: 'safe-boundary'` is on the state so it never has to infer: execution stopped *after* the handler, not on the line the probe is drawn beside. A caret on that line would be putting the component where it is not.
+
+**Work that arrives while paused queues**, in order, bounded by the instance's mailbox, and a caller beyond that bound is refused `Busy` by the machinery that always refuses it. That is `buffer-bounded`, and it is inherited rather than implemented. The design's other two incoming-work policies would need the server to answer differently while paused — a change to the call path rather than a policy on top of it — so they are named and reported unsupported rather than approximated.
+
+**Resuming needs the lease.** One controller at a time, because two debuggers issuing continue at one stopped plant is two people deciding the same thing without knowing about each other; everyone else authorised may still watch, since reading is not controlling. Transfer is explicit and recorded. Control answers to `control-paused-activation` — being allowed to see where a component stopped is not being allowed to start it again — and continue is a `non-repeatable-command`, because a retry arriving after a resume would be asking to resume a component that has since stopped again for a different reason.
+
+**A pause nobody ends is ended by its deadline**, and the declared expiry action is chosen before it matters: `resume` lets it go, `stopped` keeps it stopped and stops pretending anybody owns it, and `terminate` ends the diagnostic activation — which needs something to terminate with, so a supervisor configured that way with nothing supplied is refused at construction rather than at the moment it was needed.
+
+Nothing here retries anything. A command that arrived while the component was stopped runs exactly once when it is let go, and its caller's ordinary timeout and `UnknownOutcome` behaviour is untouched.
+
+What is still not here: exact breakpoints and stepping, both advertised `false`. They need the worker `RpcPauseGate` was built to measure — see below.
 
 ## Stopping a component, and what that would cost
 

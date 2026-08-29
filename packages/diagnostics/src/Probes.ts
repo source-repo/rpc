@@ -67,6 +67,14 @@ export interface RpcProbeSinkOptions {
     readonly tracepoints?: { readonly [probeId: string]: RpcTracepointPolicy }
     /** How many tracepoint captures are held between publications. */
     readonly maxCaptures?: number
+    /**
+     * Told when a probe with a stop policy has captured. Must not block, and must not throw.
+     *
+     * The one call this sink makes out of itself, and it is bounded by contract: a supervisor's job
+     * here is to put a barrier on a queue, which is a queue insertion and not a wait. Anything it
+     * throws is swallowed, because a probe that threw would be the fault rather than the report.
+     */
+    readonly onStop?: (probeId: string) => void
     /** The clock, so a test need not compare timestamps it cannot predict. */
     readonly now?: () => number
 }
@@ -100,6 +108,19 @@ export interface RpcTracepointPolicy {
     readonly hitCount?: number
     /** `{symbol}` is filled in from what was captured. Rendered here, inside the byte budget. */
     readonly messageTemplate?: string
+    /**
+     * Whether this probe also asks the component to stop at its next safe boundary.
+     *
+     * Policy rather than artifact, which is the design's rule stated exactly: *adding an
+     * unconditional stop policy to an existing probe does not require rebuilding the variant.* A
+     * tracepoint and a safe-boundary breakpoint are the same compiled probe with different
+     * instructions to the sink, so turning one into the other costs a map entry rather than a swap
+     * of the code running on a plant.
+     *
+     * The stop does not happen here. The sink records the capture and calls `onStop`, and the
+     * handler runs on to its end - which is what makes it a *safe boundary* rather than a halt.
+     */
+    readonly stop?: boolean
 }
 
 /** One tracepoint hit: what was captured, what it read as, and when. An event, not a state row. */
@@ -110,6 +131,8 @@ export interface RpcTracepointCapture {
     readonly observedAt: string
     readonly captured: { readonly [symbol: string]: RpcDiagnosticValue }
     readonly message?: string
+    /** Whether this capture also asked the component to stop at its next safe boundary. */
+    readonly stopRequested?: boolean
 }
 
 const DEFAULT_MAX_SAMPLES = 2000
@@ -182,6 +205,7 @@ export class RpcProbeSink {
     private readonly tracepoints: { readonly [probeId: string]: RpcTracepointPolicy }
     private readonly captures: RpcTracepointCapture[] = []
     private readonly maxCaptures: number
+    private readonly onStop?: (probeId: string) => void
     private readonly now: () => number
     private next = 1n
     private discarded_ = 0
@@ -195,6 +219,7 @@ export class RpcProbeSink {
         this.withheld = options.withheld ?? new Set()
         this.maxCaptures = Math.max(1, options.maxCaptures ?? DEFAULT_MAX_CAPTURES)
         this.tracepoints = options.tracepoints ?? {}
+        if (options.onStop) this.onStop = options.onStop
         this.now = options.now ?? Date.now
     }
 
@@ -335,8 +360,12 @@ export class RpcProbeSink {
             hit,
             observedAt: new Date(this.now()).toISOString(),
             captured: rendered,
+            stopRequested: policy.stop === true,
             ...(policy.messageTemplate ? { message: fill(policy.messageTemplate, rendered, this.maxValueBytes) } : {})
         })
+        // Asked for after the capture is recorded, so a pause that begins immediately still finds the
+        // capture that caused it waiting to be published.
+        if (policy.stop) this.onStop?.(probeId)
     }
 }
 

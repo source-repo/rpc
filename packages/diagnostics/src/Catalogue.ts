@@ -135,6 +135,14 @@ export interface RpcDiagnosticsSupport {
     readonly variantActivation?: boolean
     /** Probes have somewhere to write, so what they observe can be read back rather than only fire. */
     readonly probeSink?: { readonly maxProbesPerSession: number; readonly maxValueBytes: number; readonly maxTraceEvents: number }
+    /**
+     * This node can stop a component between units of work: a barrier, and a supervisor to hold it.
+     *
+     * Independent of `variantActivation`, because they are different powers. A node may be able to
+     * stop what it is running without being able to replace it, and a viewer offered a pause control
+     * needs to know which of the two it has.
+     */
+    readonly safeBoundaryPause?: boolean
 }
 
 export const capabilitiesFor = (support: RpcDiagnosticsSupport): RpcDiagnosticsCapabilities => {
@@ -156,7 +164,9 @@ export const capabilitiesFor = (support: RpcDiagnosticsSupport): RpcDiagnosticsC
         // write and the means to put it in the artifact. A node that can only read a sink cannot
         // install one, and saying otherwise would have a viewer offer a control that does nothing.
         tracepoints: probes && support.variantActivation === true,
-        safeBoundaryPause: false,
+        // A pause needs a supervisor holding a real barrier. Advertised from that rather than from
+        // the package's ability to describe one.
+        safeBoundaryPause: support.safeBoundaryPause === true,
         exactPause: false,
         stepping: false,
         limits: {

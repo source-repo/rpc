@@ -4,6 +4,8 @@ import { isAbsolute, join, normalize, relative, resolve } from 'node:path'
 import { bindingsOf, capabilitiesFor, type RpcActiveSourceIdentity, type RpcDiagnosticsCapabilities, type RpcDiagnosticsSupport, type RpcSourceBinding, type RpcSourceCatalogue, type RpcSourceSpan } from './Catalogue.js'
 import { RpcProbeSink, type RpcProbeSample } from './Probes.js'
 import { RpcSessionRegistry, type RpcObservationRequest, type RpcObservationSession, type RpcObservationSessionState, type RpcSessionRegistryOptions } from './Session.js'
+import type { RpcDebuggerLease, RpcPauseState, RpcPauseSupervisor } from './Pause.js'
+import type { RpcDiagnosticsPermission } from './Session.js'
 
 /**
  * What this node will let somebody see of its own source, and where its values are written down.
@@ -51,6 +53,15 @@ export interface RpcDiagnosticsState {
     /** Samples the sink dropped. Published beside the values so a gap is never mistaken for quiet. */
     dropped: number
     written: number
+    /**
+     * Where the component is stopped, or absent when it is running.
+     *
+     * State rather than props: a pause begins and ends, and a viewer watching this is watching the
+     * one fact it must never get wrong. It says `safe-boundary` explicitly, because execution
+     * stopped *after* a handler rather than on the line the probe is drawn beside, and a screen that
+     * implied otherwise would be putting a caret where the component is not.
+     */
+    pause?: RpcPauseState
     [key: string]: unknown
 }
 
@@ -90,6 +101,13 @@ export interface RpcDiagnosticsOptions {
     readonly authorise?: RpcSessionRegistryOptions['authorise']
     /** The longest a session may live unrenewed. A viewer that closed a laptop stops costing. */
     readonly maxSessionTtlMs?: number
+    /**
+     * What holds this node's components at a safe boundary, if anything does.
+     *
+     * Its presence is what makes `safeBoundaryPause` true: a node that cannot take a barrier cannot
+     * stop a component, whatever this package can describe.
+     */
+    readonly pauses?: RpcPauseSupervisor
 }
 
 @rpcNamespace('diagnostics')
@@ -97,6 +115,8 @@ export class RpcDiagnostics extends RpcComponent<RpcDiagnosticsProps, RpcDiagnos
     private readonly catalogue_: RpcSourceCatalogue
     private readonly sourceRoot?: string
     private readonly sink?: RpcProbeSink
+    private readonly pauses?: RpcPauseSupervisor
+    private readonly authorise?: RpcSessionRegistryOptions['authorise']
     private readonly registry?: RpcSessionRegistry
 
     constructor(options: RpcDiagnosticsOptions) {
@@ -108,6 +128,7 @@ export class RpcDiagnostics extends RpcComponent<RpcDiagnosticsProps, RpcDiagnos
         const capabilities = capabilitiesFor({
             ...options.support,
             sourceAvailable: sourceRoot !== undefined,
+            ...(options.pauses ? { safeBoundaryPause: true } : {}),
             ...(serving ? { probeSink: { maxProbesPerSession: 500, maxValueBytes: options.sink!.bounds.maxValueBytes, maxTraceEvents: options.sink!.bounds.maxSamples } } : {})
         })
         super(
@@ -131,6 +152,8 @@ export class RpcDiagnostics extends RpcComponent<RpcDiagnosticsProps, RpcDiagnos
         this.catalogue_ = options.catalogue
         this.sourceRoot = sourceRoot
         this.sink = options.sink
+        this.pauses = options.pauses
+        if (options.authorise) this.authorise = options.authorise
         this.registry = serving
             ? new RpcSessionRegistry({
                   capabilities,
@@ -262,6 +285,66 @@ export class RpcDiagnostics extends RpcComponent<RpcDiagnosticsProps, RpcDiagnos
         this.publishSessions()
     }
 
+    /**
+     * Take control of a paused component, so that resuming it has somebody's name on it.
+     *
+     * `control-paused-activation` rather than any of the watching permissions: being allowed to see
+     * where a component stopped is not being allowed to start it again. One holder at a time, and
+     * everyone else authorised may still watch the pause - reading is not controlling.
+     */
+    @rpc({ semantics: 'non-repeatable-command', effect: 'operate', injectInvocation: true })
+    async acquireDebuggerControl(sessionId: string, ttlMs: number, invocation?: unknown): Promise<RpcDebuggerLease> {
+        const pauses = this.pausesOrRefuse()
+        if (!(await this.authorised('control-paused-activation', invocation))) throw new Error('this caller may not control a paused component: watching where one stopped and starting it again are different permissions')
+        const outcome = pauses.acquire(sessionId, ttlMs)
+        if ('why' in outcome) throw new Error(outcome.why)
+        this.publishPause()
+        return outcome
+    }
+
+    /** Hand control to another session. Explicit and recorded, because two drivers is the failure. */
+    @rpc({ semantics: 'non-repeatable-command', effect: 'operate', injectInvocation: true })
+    async transferDebuggerControl(leaseId: string, toSessionId: string, invocation?: unknown): Promise<RpcDebuggerLease> {
+        const pauses = this.pausesOrRefuse()
+        if (!(await this.authorised('control-paused-activation', invocation))) throw new Error('this caller may not control a paused component')
+        const outcome = pauses.transfer(leaseId, toSessionId)
+        if ('why' in outcome) throw new Error(outcome.why)
+        this.publishPause()
+        return outcome
+    }
+
+    /**
+     * Let the component go.
+     *
+     * **Not silently repeatable**, which the design says of every pause and resume command and which
+     * is why this is a `non-repeatable-command`: a retry that arrived after a resume would be asking
+     * to resume a component that has since stopped again for a different reason, and answering it
+     * with a cheerful *already done* would be a debugger deciding on somebody's behalf.
+     */
+    @rpc({ semantics: 'non-repeatable-command', effect: 'operate', injectInvocation: true })
+    async continueExecution(leaseId: string, invocation?: unknown): Promise<RpcPauseState> {
+        const pauses = this.pausesOrRefuse()
+        if (!(await this.authorised('control-paused-activation', invocation))) throw new Error('this caller may not control a paused component')
+        const outcome = pauses.continueExecution(leaseId)
+        if ('why' in outcome) throw new Error(outcome.why)
+        this.publishPause()
+        return outcome
+    }
+
+    private async authorised(permission: RpcDiagnosticsPermission, caller: unknown): Promise<boolean> {
+        return this.authorise ? Boolean(await this.authorise(permission, caller)) : false
+    }
+
+    private pausesOrRefuse(): RpcPauseSupervisor {
+        if (!this.pauses) throw new Error('this node cannot stop a component: it was given nothing that can hold one at a safe boundary, and it advertises safeBoundaryPause as false')
+        return this.pauses
+    }
+
+    /** The pause, into state, with whatever the deadline has just done to it already applied. */
+    private publishPause(): void {
+        this.setState({ pause: this.pauses?.state })
+    }
+
     private registryOrRefuse(): RpcSessionRegistry {
         if (!this.registry)
             throw new Error(
@@ -284,7 +367,14 @@ export class RpcDiagnostics extends RpcComponent<RpcDiagnosticsProps, RpcDiagnos
      * happened and is a recording somebody had to be permitted to keep.
      */
     publish(): void {
-        if (!this.sink || !this.registry) return
+        // The pause deadline first, because everything published below should describe the component
+        // as it is *after* an expiry has been applied rather than a moment before.
+        const expiry = this.pauses?.sweep()
+        if (expiry) this.emit('pauseExpired', { componentId: this.props.components ? Object.keys(this.props.components)[0] : undefined, action: expiry })
+        if (!this.sink || !this.registry) {
+            if (this.pauses) this.publishPause()
+            return
+        }
         for (const expired of this.registry.sweep()) void expired
         const table = this.sink.table()
         const tracing = this.registry.open.filter((session) => session.modes.includes('ordered-trace'))
@@ -293,7 +383,7 @@ export class RpcDiagnostics extends RpcComponent<RpcDiagnosticsProps, RpcDiagnos
         // tracepoint's capture is a value somebody was separately permitted to take.
         const captures = this.sink.drainCaptures()
         for (const session of this.registry.open) this.registry.published(session.sessionId, table.written, table.dropped)
-        this.setState({ latest: table.latest, dropped: table.dropped, written: table.written, sessions: this.registry.snapshot().health })
+        this.setState({ latest: table.latest, dropped: table.dropped, written: table.written, sessions: this.registry.snapshot().health, pause: this.pauses?.state })
         // Sequenced by the sample sequence numbers it carries, so a subscriber that missed a chunk
         // can see the gap rather than infer one. Emitted after the state commit, so a viewer that
         // reacts to the event and reads state finds the values the chunk belongs with.
