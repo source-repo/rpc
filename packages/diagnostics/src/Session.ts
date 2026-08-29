@@ -71,6 +71,14 @@ export interface RpcObservationRequest {
     readonly sourceFileId: string
     readonly visibleSpan: RpcSourceSpan
     readonly modes: readonly RpcObservationMode[]
+    /**
+     * Tracepoints to install, by probe id, once the variant carrying them is active.
+     *
+     * A separate permission from watching, because a tracepoint is code compiled into the artifact
+     * that runs inside the component - `create-tracepoints` rather than `request-probes`. Asking for
+     * one without holding it degrades the session rather than failing it, like every other mode.
+     */
+    readonly tracepointIds?: readonly string[]
     readonly requestedTtlMs: number
 }
 
@@ -95,6 +103,8 @@ export interface RpcObservationSession {
     readonly expiresAt: number
     /** The instrumented build this session is being served by, once one is activated. */
     readonly activeVariantId?: string
+    /** The tracepoints this session was granted. Empty where it asked for none or held none. */
+    readonly tracepointIds: readonly string[]
 }
 
 /** The moving half: how a session is *doing*. State, because every field of it changes. */
@@ -219,6 +229,16 @@ export class RpcSessionRegistry {
                 }
             }
 
+        // A tracepoint is compiled into the artifact and runs inside the component, so it answers
+        // to its own permission and to the node's own capability rather than to either alone.
+        const tracepointIds: string[] = []
+        if (request.tracepointIds?.length) {
+            if (!this.options.capabilities.tracepoints) degraded.push({ mode: 'breakpoints', why: 'this node does not compile tracepoints: it advertises tracepoints as false' })
+            else if (!(await this.options.authorise('create-tracepoints', caller)))
+                degraded.push({ mode: 'breakpoints', why: 'this caller does not hold create-tracepoints, which compiles a condition into the artifact and runs it inside the component' })
+            else tracepointIds.push(...request.tracepointIds)
+        }
+
         const startedAt = this.now()
         const session: RpcObservationSession = {
             sessionId: this.newSessionId(),
@@ -228,6 +248,7 @@ export class RpcSessionRegistry {
             visibleSpan: request.visibleSpan,
             modes: granted,
             degraded,
+            tracepointIds,
             startedAt: new Date(startedAt).toISOString(),
             expiresAt: startedAt + Math.min(Math.max(1, request.requestedTtlMs), this.maxTtlMs)
         }

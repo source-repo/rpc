@@ -26,6 +26,17 @@ import type { RpcSourceSpan } from './Catalogue.js'
 /** What a probe observes. The design's seven, and a variant may contain no other kind. */
 export type RpcProbeKind = 'value' | 'statement' | 'condition' | 'branch' | 'function-entry' | 'function-exit' | 'breakpoint'
 
+/**
+ * What a `breakpoint` probe does when it is hit.
+ *
+ * The kind says *where* the probe is and the mode says *what it does there*, which is the design's
+ * split rather than one of convenience: a tracepoint and an exact breakpoint sit at the same place
+ * in the same artifact and differ entirely in what they are permitted to do to the plant. Only
+ * `tracepoint` is built - it captures and emits without stopping, which is why it is the mode
+ * appropriate to the widest range of nodes.
+ */
+export type RpcBreakpointMode = 'tracepoint' | 'safe-boundary' | 'exact'
+
 export interface RpcProbeDefinition {
     /**
      * Stable within one semantic revision and one plan-generation scheme, and **not** across
@@ -43,6 +54,24 @@ export interface RpcProbeDefinition {
     readonly containingFunctionId?: string
     /** Carried from the declaration, so a later phase that can capture honours it before capturing. */
     readonly sensitivity?: string
+
+    /** For a `breakpoint` probe: what it does when hit. Absent on every other kind. */
+    readonly mode?: RpcBreakpointMode
+    /**
+     * The condition compiled into the artifact, as source, so a reviewer reads what will run.
+     *
+     * On the plan rather than only in the artifact because the plan is what is approved, and a
+     * condition is the part of a tracepoint that executes inside the component. It is checked
+     * against a constrained grammar before it is emitted - see the transformer - so what appears
+     * here cannot call anything, assign anything or increment anything.
+     */
+    readonly condition?: string
+    /** Which locals it captures. Bounded, and named in the plan for the same reason. */
+    readonly captureSymbols?: readonly string[]
+    /** What the capture reads as, with `{symbol}` filled in from what was captured. */
+    readonly messageTemplate?: string
+    /** The hit at which capturing begins. Earlier hits are counted and not captured. */
+    readonly hitCount?: number
 }
 
 export interface RpcDiagnosticVariantManifest {

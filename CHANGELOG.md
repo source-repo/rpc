@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+### A tracepoint captures without stopping, and its condition may not do anything
+
+The last of diagnostics Phase 2. A tracepoint watches a line, captures named locals when a condition holds, and emits an event without pausing the component - the mode the design calls appropriate to the widest range of nodes, and the only one of its three this package implements, because the other two stop a plant.
+
+**The condition is the whole risk, and the grammar is the whole answer.** It is compiled into the verified derivative, which the design allows, and it runs *inside the component* - on its stack, between its statements, every time the probe is reached. So `queue.pop() > 3` would empty a queue in order to decide whether to mention it, and here is the part that makes this a design problem rather than a code-review one: strip the probe afterwards and the program is byte-identical, so the derivative proof passes and the plant has still been running something nobody approved. Nothing downstream can catch it. The transformer therefore checks every condition against a constrained grammar before emitting it - comparisons, logical operators, property access, literals, and nothing that calls, assigns or increments - and refuses at build time, where a person can be told which expression and why. Every identifier must be one of the captured locals, so a condition cannot reach a global; and a capture list is checked against the function's own parameters and declarations, so it is not a way to read one either.
+
+**Counting and capturing are different things.** Every hit is counted whether the condition held or not, because *this line ran four thousand times and the condition never held* is an answer, and a probe that recorded nothing when it did not capture would be indistinguishable from a line that was never reached.
+
+**What needs a rebuild and what does not follows the design's split exactly.** A condition is compiled in, so changing it means building a new variant. A hit count and a message template are the sink's, so changing them does not - a plant is not swapped to reword a message. A `{placeholder}` naming something that was not captured is left as written rather than becoming `undefined`, since *this was empty* and *you did not ask for this* are different things to somebody reading at speed, and a withheld field renders as its marker inside the message too: a template is not a way around a classification.
+
+Installing one answers to `create-tracepoints` rather than to `request-probes`, because it compiles code into the artifact rather than reading what is already there - and a session asking for one without holding it is degraded with the reason, like every other mode. Captures are bounded, what the bound discarded is counted, and they reach the session that installed the tracepoint and no other.
+
+`tracepoints` is now advertised true where a node has both a sink and variant activation, since a tracepoint needs somewhere to write *and* a way into the artifact. `safeBoundaryPause`, `exactPause` and `stepping` remain false: those stop a component, and stopping is Phase 3.
+
 ### What the probes saw, and who is allowed to see it
 
 The telemetry half of the diagnostics design's second phase, which was left until the authority model could arrive with it. Serving probe samples is a second data path in a way the source catalogue never was - a component's props were always observable and its locals never were - so this lands as an observation session with permissions, a deadline and a bounded publication rule, rather than as a method that returns the buffer.

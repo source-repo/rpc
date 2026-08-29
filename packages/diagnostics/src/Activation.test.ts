@@ -310,8 +310,8 @@ test('a node advertises variants only when the deployment wired them, and probes
     t.true(wired.valueProbes)
     t.true(wired.orderedTrace)
     t.is(wired.limits.maxSessions, 1)
-    t.false(wired.tracepoints, 'a tracepoint is a probe with a condition and a message, and neither exists')
-    t.false(wired.exactPause)
+    t.true(wired.tracepoints, 'a node that can write probes and change the artifact can compile one in')
+    t.false(wired.exactPause, 'stopping a component is the phase after this one')
 })
 
 test('a probe returns what it was given, counts what it saw, and cannot throw into the component', (t) => {

@@ -289,12 +289,20 @@ export class RpcDiagnostics extends RpcComponent<RpcDiagnosticsProps, RpcDiagnos
         const table = this.sink.table()
         const tracing = this.registry.open.filter((session) => session.modes.includes('ordered-trace'))
         const chunk = tracing.length ? this.sink.drain() : undefined
+        // Captures go to the sessions that installed the tracepoints, and to nobody else: a
+        // tracepoint's capture is a value somebody was separately permitted to take.
+        const captures = this.sink.drainCaptures()
         for (const session of this.registry.open) this.registry.published(session.sessionId, table.written, table.dropped)
         this.setState({ latest: table.latest, dropped: table.dropped, written: table.written, sessions: this.registry.snapshot().health })
         // Sequenced by the sample sequence numbers it carries, so a subscriber that missed a chunk
         // can see the gap rather than infer one. Emitted after the state commit, so a viewer that
         // reacts to the event and reads state finds the values the chunk belongs with.
         if (chunk?.length) for (const session of tracing) this.emit('trace', { sessionId: session.sessionId, samples: chunk })
+        if (captures.length)
+            for (const session of this.registry.open) {
+                const theirs = captures.filter((capture) => session.tracepointIds.includes(capture.probeId))
+                if (theirs.length) this.emit('tracepoint', { sessionId: session.sessionId, captures: theirs, discarded: this.sink.discarded })
+            }
         this.publishSessions()
     }
 

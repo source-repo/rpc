@@ -49,9 +49,41 @@ export interface RpcInstrumentation {
     readonly unavailable: readonly RpcUnavailableProbe[]
 }
 
+/**
+ * A tracepoint asked for by a session: capture these, when this is true, from this hit onward.
+ *
+ * The design's `BreakpointRequest` in `tracepoint` mode. What it does not have is a `mode` field,
+ * because the other two modes stop a component and nothing here can stop anything - a request to
+ * pause a plant should be refused by something that has never been able to do it, rather than
+ * accepted by something that will ignore the part that mattered.
+ */
+export interface RpcTracepointRequest {
+    /** The line to capture at. Attached to the statement that begins on or after it. */
+    readonly line: number
+    /**
+     * When to capture, as source compiled into the artifact.
+     *
+     * **Checked against a constrained grammar before it is emitted**, which is the design's rule
+     * that conditions may not use unrestricted runtime evaluation. Comparisons, logical operators,
+     * property access and literals; no calls, no assignments, no increments. The reason is not
+     * taste: a condition runs *inside the component*, and `queue.pop() > 3` would empty a queue in
+     * order to decide whether to mention it. A condition that cannot call cannot do that, and the
+     * check is at build time where a person can be told.
+     */
+    readonly condition?: string
+    /** Locals to capture. Must be this function's own - a capture list is not a way to read globals. */
+    readonly captureSymbols?: readonly string[]
+    /** What the capture reads as. `{symbol}` is filled in from what was captured. */
+    readonly messageTemplate?: string
+    /** The hit at which capturing begins; earlier hits are counted and not captured. */
+    readonly hitCount?: number
+}
+
 export interface RpcInstrumentOptions {
     /** Where the probe helper is imported from in the generated artifact. */
     readonly runtimeModule?: string
+    /** Tracepoints to compile in, each attached to the statement at its line. */
+    readonly tracepoints?: readonly RpcTracepointRequest[]
     /**
      * The most probes this plan may contain.
      *
@@ -177,6 +209,81 @@ const holdsABody = (node: Node) => Node.isFunctionDeclaration(node) || Node.isMe
 const wrappable = (node: Node): boolean => !holdsABody(node) && !node.getDescendants().some(holdsABody)
 
 /**
+ * Whether an expression is one a tracepoint may run inside a component.
+ *
+ * The permitted set is small and the reason each thing is out of it is the same: a condition is
+ * evaluated on the component's own stack, between its statements, every time the probe is reached.
+ * A **call** may do anything at all, including the thing being watched - `queue.pop() > 3` empties a
+ * queue to decide whether to mention it. An **assignment** or an increment changes the program while
+ * claiming to observe it. Both would leave the stripped program identical, so the derivative proof
+ * would pass and the plant would still be running something nobody approved: this check is the only
+ * place that catches it, which is why it is a grammar rather than a warning.
+ *
+ * Every identifier must also be one of the locals being captured, so a condition cannot reach a
+ * global, a module import or anything else that is not already in front of the person reading.
+ */
+const conditionProblem = (condition: string, allowed: ReadonlySet<string>): string | undefined => {
+    const file = parsing().createSourceFile('condition.ts', `const __condition = (${condition})`, { overwrite: true })
+    const root = file.getVariableDeclarations()[0]?.getInitializer()
+    if (!root) return 'the condition is not an expression'
+
+    const permitted = new Set<ts.SyntaxKind>([
+        ts.SyntaxKind.Identifier,
+        ts.SyntaxKind.ThisKeyword,
+        ts.SyntaxKind.PropertyAccessExpression,
+        ts.SyntaxKind.NumericLiteral,
+        ts.SyntaxKind.StringLiteral,
+        ts.SyntaxKind.TrueKeyword,
+        ts.SyntaxKind.FalseKeyword,
+        ts.SyntaxKind.NullKeyword,
+        ts.SyntaxKind.ParenthesizedExpression,
+        ts.SyntaxKind.BinaryExpression,
+        ts.SyntaxKind.PrefixUnaryExpression
+    ])
+    const operators = new Set<ts.SyntaxKind>([
+        ts.SyntaxKind.LessThanToken,
+        ts.SyntaxKind.LessThanEqualsToken,
+        ts.SyntaxKind.GreaterThanToken,
+        ts.SyntaxKind.GreaterThanEqualsToken,
+        ts.SyntaxKind.EqualsEqualsEqualsToken,
+        ts.SyntaxKind.ExclamationEqualsEqualsToken,
+        ts.SyntaxKind.AmpersandAmpersandToken,
+        ts.SyntaxKind.BarBarToken
+    ])
+    // The punctuation those expressions are spelled with. Enumerated rather than skipped wholesale:
+    // a walk that ignored every token would ignore identifiers too, since TypeScript counts those
+    // among its tokens - and the identifiers are precisely what has to be checked.
+    const punctuation = new Set<ts.SyntaxKind>([ts.SyntaxKind.OpenParenToken, ts.SyntaxKind.CloseParenToken, ts.SyntaxKind.DotToken, ts.SyntaxKind.ExclamationToken, ts.SyntaxKind.MinusToken, ...operators])
+
+    for (const node of [root, ...root.getDescendants()]) {
+        if (!permitted.has(node.getKind()) && !punctuation.has(node.getKind()))
+            return `${node.getText()} is not something a condition may contain: a tracepoint condition runs inside the component, so it may compare and combine what is already there and may not call, assign or increment anything`
+        if (Node.isBinaryExpression(node) && !operators.has(node.getOperatorToken().getKind()))
+            return `${node.getOperatorToken().getText()} is not an operator a condition may use - comparison and logical operators only, because everything else either assigns or coerces in a way somebody has to reason about at three in the morning`
+        if (Node.isPrefixUnaryExpression(node) && node.getOperatorToken() !== ts.SyntaxKind.ExclamationToken && node.getOperatorToken() !== ts.SyntaxKind.MinusToken)
+            return `${node.getText()} changes what it is applied to, which is not observation`
+        // An identifier that is a property name (`a.b`) is part of the access, not a lookup.
+        if (Node.isIdentifier(node) && !Node.isPropertyAccessExpression(node.getParent()) && !allowed.has(node.getText()))
+            return `${node.getText()} is not one of the captured locals, and a condition may only speak about what the capture already names`
+    }
+    return undefined
+}
+
+/** The locals of one function: its parameters and its own declarations, and nothing wider. */
+const localsOf = (node: Node): ReadonlySet<string> => {
+    const names = new Set<string>()
+    for (const parameter of node.getDescendantsOfKind(ts.SyntaxKind.Parameter)) {
+        const name = parameter.getNameNode()
+        if (Node.isIdentifier(name)) names.add(name.getText())
+    }
+    for (const declaration of node.getDescendantsOfKind(ts.SyntaxKind.VariableDeclaration)) {
+        const name = declaration.getNameNode()
+        if (Node.isIdentifier(name)) names.add(name.getText())
+    }
+    return names
+}
+
+/**
  * Plan and emit in one pass over the original tree, so every span is a span of the approved source.
  *
  * The design says the adapter records original source spans **before** emit, and the reason shows up
@@ -203,7 +310,7 @@ export const instrumentSource = (
 
     const at = (start: number, end: number) => spanOf(file, start, end)
 
-    const record = (kind: RpcProbeKind, span: RpcSourceSpan, containingFunctionId: string, emit: (id: string) => Edit, displayText?: string): void => {
+    const record = (kind: RpcProbeKind, span: RpcSourceSpan, containingFunctionId: string, emit: (id: string) => Edit, displayText?: string, extra?: Partial<RpcProbeDefinition>): void => {
         if (plan.length >= maxProbes) {
             if (!budgetSpent) {
                 budgetSpent = true
@@ -212,7 +319,7 @@ export const instrumentSource = (
             return
         }
         const id = probeId(kind, fileId, span)
-        plan.push({ probeId: id, semanticRevisionId, fileId, span, kind, containingFunctionId, ...(displayText ? { displayText } : {}) })
+        plan.push({ probeId: id, semanticRevisionId, fileId, span, kind, containingFunctionId, ...(displayText ? { displayText } : {}), ...extra })
         edits.push(emit(id))
     }
 
@@ -243,6 +350,58 @@ export const instrumentSource = (
         }
 
         planStatements(block.getStatements(), container)
+        planTracepoints(node, block.getStatements(), container)
+    }
+
+    /**
+     * Compile the requested tracepoints into this region, or say why each one could not be.
+     *
+     * Attached to a *statement* rather than to a line, because a probe between two halves of an
+     * expression is not a place a program can be observed from. The capture object is built on every
+     * hit, condition or no condition, and that is a deliberate trade: it is constant bounded work,
+     * where the alternatives are a closure allocated per hit or an `if` added to the program - and an
+     * `if` in the artifact is a branch the verifier would have to be taught to strip, which is a
+     * larger licence than a small object.
+     */
+    function planTracepoints(region: Node, statements: readonly Statement[], container: string) {
+        const locals = localsOf(region)
+        for (const request of options.tracepoints ?? []) {
+            const target = statements.find((statement) => at(statement.getStart(), statement.getEnd()).startLine >= request.line)
+            if (!target) continue
+            const span = at(target.getStart(), target.getEnd())
+
+            const missing = (request.captureSymbols ?? []).filter((symbol) => !locals.has(symbol))
+            if (missing.length) {
+                unavailable.push({
+                    kind: 'breakpoint',
+                    span,
+                    why: `${missing.join(', ')} ${missing.length === 1 ? 'is not a local' : 'are not locals'} of this function, and a capture list is not a way to read what is not already in front of the person reading it`
+                })
+                continue
+            }
+            const captured = new Set(request.captureSymbols ?? [])
+            const problem = request.condition ? conditionProblem(request.condition, captured) : undefined
+            if (problem) {
+                unavailable.push({ kind: 'breakpoint', span, why: problem })
+                continue
+            }
+
+            const object = `{ ${[...captured].map((symbol) => `${JSON.stringify(symbol)}: ${symbol}`).join(', ')} }`
+            record(
+                'breakpoint',
+                span,
+                container,
+                (id) => ({ start: target.getStart(), end: target.getStart(), text: `${PROBE_RECEIVER}.tracepoint(${JSON.stringify(id)}, ${request.condition ?? 'true'}, ${object}); `, rank: 2 }),
+                request.messageTemplate,
+                {
+                    mode: 'tracepoint',
+                    ...(request.condition ? { condition: request.condition } : {}),
+                    ...(captured.size ? { captureSymbols: [...captured] } : {}),
+                    ...(request.messageTemplate ? { messageTemplate: request.messageTemplate } : {}),
+                    ...(request.hitCount !== undefined ? { hitCount: request.hitCount } : {})
+                }
+            )
+        }
     }
 
     /**

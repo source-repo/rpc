@@ -63,6 +63,10 @@ export interface RpcProbeSinkOptions {
      * visible and the credential never leaves the process.
      */
     readonly withheld?: ReadonlySet<string>
+    /** What each tracepoint does when hit, by probe id. Changed without rebuilding the artifact. */
+    readonly tracepoints?: { readonly [probeId: string]: RpcTracepointPolicy }
+    /** How many tracepoint captures are held between publications. */
+    readonly maxCaptures?: number
     /** The clock, so a test need not compare timestamps it cannot predict. */
     readonly now?: () => number
 }
@@ -83,8 +87,35 @@ export interface RpcProbeTable {
     readonly written: number
 }
 
+/**
+ * What a tracepoint does when it is hit, held by the sink rather than compiled into the artifact.
+ *
+ * The design's split: changing a *condition* may require rebuilding the variant, because a condition
+ * runs inside the component and is compiled in. Everything here is about what the sink does with a
+ * hit that already happened - how many to skip, what to print - so changing it needs no rebuild, and
+ * a plant is not swapped to reword a message.
+ */
+export interface RpcTracepointPolicy {
+    /** The hit at which capturing begins. Earlier hits are counted and not captured. */
+    readonly hitCount?: number
+    /** `{symbol}` is filled in from what was captured. Rendered here, inside the byte budget. */
+    readonly messageTemplate?: string
+}
+
+/** One tracepoint hit: what was captured, what it read as, and when. An event, not a state row. */
+export interface RpcTracepointCapture {
+    readonly probeId: string
+    readonly sequence: bigint
+    readonly hit: number
+    readonly observedAt: string
+    readonly captured: { readonly [symbol: string]: RpcDiagnosticValue }
+    readonly message?: string
+}
+
 const DEFAULT_MAX_SAMPLES = 2000
 const DEFAULT_MAX_VALUE_BYTES = 512
+/** How many captures are held between publications. A tracepoint on a hot line is still bounded. */
+const DEFAULT_MAX_CAPTURES = 200
 
 /**
  * Render a value inside a byte budget, and never throw doing it.
@@ -116,6 +147,22 @@ export const renderValue = (observed: unknown, maxValueBytes: number): RpcDiagno
 }
 
 /**
+ * Fill `{symbol}` from what was captured, inside the same byte budget as everything else.
+ *
+ * A placeholder naming something that was not captured is left as it was written rather than
+ * replaced with `undefined`: the difference between *this was empty* and *you did not ask for this*
+ * is the whole content of the message when somebody is reading it at speed. A withheld field renders
+ * as its withheld marker here too, because a message template is not a way around a classification.
+ */
+const fill = (template: string, captured: { readonly [symbol: string]: RpcDiagnosticValue }, maxValueBytes: number): string => {
+    const filled = template.replace(/\{([A-Za-z_$][\w$]*)\}/g, (whole, symbol: string) => {
+        const value = captured[symbol]
+        return value ? (value.unrepresentable ? `[${value.unrepresentable}]` : value.text) : whole
+    })
+    return filled.length > maxValueBytes ? `${filled.slice(0, maxValueBytes)}…` : filled
+}
+
+/**
  * Where one activation's probes write.
  *
  * **Deliberately not a transport, even now that there is one.** Probes write here and return; the
@@ -132,8 +179,12 @@ export class RpcProbeSink {
     private readonly maxSamples: number
     private readonly maxValueBytes: number
     private readonly withheld: ReadonlySet<string>
+    private readonly tracepoints: { readonly [probeId: string]: RpcTracepointPolicy }
+    private readonly captures: RpcTracepointCapture[] = []
+    private readonly maxCaptures: number
     private readonly now: () => number
     private next = 1n
+    private discarded_ = 0
     /** How many samples the ring has dropped. A viewer that cannot see this cannot trust the trace. */
     private dropped_ = 0
     private written_ = 0
@@ -142,7 +193,21 @@ export class RpcProbeSink {
         this.maxSamples = Math.max(1, options.maxSamples ?? DEFAULT_MAX_SAMPLES)
         this.maxValueBytes = Math.max(1, options.maxValueBytes ?? DEFAULT_MAX_VALUE_BYTES)
         this.withheld = options.withheld ?? new Set()
+        this.maxCaptures = Math.max(1, options.maxCaptures ?? DEFAULT_MAX_CAPTURES)
+        this.tracepoints = options.tracepoints ?? {}
         this.now = options.now ?? Date.now
+    }
+
+    /** The captures taken since the last drain, oldest first. Handed over rather than copied. */
+    drainCaptures(): readonly RpcTracepointCapture[] {
+        const held = [...this.captures]
+        this.captures.length = 0
+        return held
+    }
+
+    /** How many captures the bound has discarded. Published, like every other drop. */
+    get discarded(): number {
+        return this.discarded_
     }
 
     /**
@@ -233,8 +298,45 @@ export class RpcProbeSink {
             condition: (probeId: string, observed: boolean): boolean => {
                 write(probeId, 'condition', { conditionResult: observed, value: this.rendered(probeId, observed) })
                 return observed
+            },
+            /**
+             * A tracepoint hit. Counted always, captured when the condition and the hit count agree.
+             *
+             * The count happens even when the condition is false, and that is the useful half on a
+             * plant: *this line ran four thousand times and the condition never held* is an answer,
+             * and a probe that recorded nothing when it did not capture would leave somebody unable
+             * to tell it from a line that was never reached.
+             */
+            tracepoint: (probeId: string, condition: boolean, captured: Readonly<Record<string, unknown>>): void => {
+                try {
+                    this.write(probeId, 'breakpoint', { conditionResult: condition })
+                    if (!condition) return
+                    const policy = this.tracepoints[probeId] ?? {}
+                    const hit = this.counts.get(probeId) ?? 1
+                    if (policy.hitCount !== undefined && hit < policy.hitCount) return
+                    this.capture(probeId, hit, captured, policy)
+                } catch {
+                    // Same rule as everywhere here: a probe that threw would be the fault.
+                }
             }
         }
+    }
+
+    private capture(probeId: string, hit: number, captured: Readonly<Record<string, unknown>>, policy: RpcTracepointPolicy): void {
+        const rendered: { [symbol: string]: RpcDiagnosticValue } = {}
+        for (const [symbol, value] of Object.entries(captured)) rendered[symbol] = this.rendered(probeId, value)
+        if (this.captures.length >= this.maxCaptures) {
+            this.captures.shift()
+            this.discarded_++
+        }
+        this.captures.push({
+            probeId,
+            sequence: this.next++,
+            hit,
+            observedAt: new Date(this.now()).toISOString(),
+            captured: rendered,
+            ...(policy.messageTemplate ? { message: fill(policy.messageTemplate, rendered, this.maxValueBytes) } : {})
+        })
     }
 }
 

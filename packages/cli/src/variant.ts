@@ -15,9 +15,9 @@ import { Node, Project, ScriptTarget, ts } from 'ts-morph'
  * a node holds hashes and compares them, and giving every node a TypeScript compiler in order to
  * decide whether to accept a build would put the whole language toolchain inside the plant.
  *
- * **What counts as a probe is defined here, not by the transformer.** The transformer does not exist
- * yet, and that is deliberate - a grammar written to fit whatever a generator happened to emit is
- * not a check. A probe is a call on the reserved receiver below, in one of the six recognised
+ * **What counts as a probe is defined here, not by the transformer.** This was written before the
+ * transformer existed, and deliberately so - a grammar written to fit whatever a generator happened
+ * to emit is not a check. A probe is a call on the reserved receiver below, in one of the recognised
  * shapes, and anything else that mentions the receiver is a refusal rather than something to strip.
  */
 
@@ -43,7 +43,12 @@ const PROBE_MEMBERS: { readonly [member: string]: { readonly kind: RpcProbeKind;
     statement: { kind: 'statement', wraps: false },
     branch: { kind: 'branch', wraps: false },
     entry: { kind: 'function-entry', wraps: false },
-    exit: { kind: 'function-exit', wraps: false }
+    exit: { kind: 'function-exit', wraps: false },
+    // A tracepoint carries a condition and a capture object as further arguments. It is still a
+    // standalone statement, so stripping it is still deleting it - and deleting it takes the
+    // condition and the capture with it, which is what keeps a conditional probe a probe rather
+    // than a branch somebody added to the program.
+    tracepoint: { kind: 'breakpoint', wraps: false }
 }
 
 export interface RpcStripRefusal {

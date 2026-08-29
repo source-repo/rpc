@@ -2,7 +2,7 @@
 
 Live values beside the source that declares them, for a [Source RPC](https://github.com/source-repo/rpc) node. The oldest way of looking at a machine — the program on screen with what each thing currently is written next to it — without a debugger, without instrumentation, and without a second data path.
 
-**Phases 1 and most of 2 of the node diagnostics design.** Source-linked props and state; a diagnostic variant that can be proved a derivative, generated, and swapped in over a state-preserving handoff; and a bounded sink for what its probes see. Tracepoints, breakpoints and stepping are later phases and are advertised as `false` rather than left out.
+**Phases 1 and 2 of the node diagnostics design.** Source-linked props and state; a diagnostic variant that can be proved a derivative, generated, and swapped in over a state-preserving handoff; and a bounded sink for what its probes see. Tracepoints capture without stopping; breakpoints and stepping are the next phase and are advertised as `false` rather than left out.
 
 ## The whole economy of it
 
@@ -55,7 +55,7 @@ A binding may carry a `sensitivity`, and a viewer draws a marker instead of a va
 
 ## A diagnostic variant can be proved to be one, which is not building one
 
-The next phase generates probes into the node's own source and runs the result. That is a licence to put *different code* on a plant in order to watch the code that was approved, and the whole design rests on one claim: **the variant differs from the approved revision in probes and nothing else.**
+Generating probes into the node's own source and running the result is a licence to put *different code* on a plant in order to watch the code that was approved, and the whole design rests on one claim: **the variant differs from the approved revision in probes and nothing else.**
 
 Nothing about a build checks that. A transformer with a bug, a hand-edited artifact and a deliberately altered one all produce a file that compiles and runs. So the check is the reverse operation — strip every recognised probe and see whether what is left is the approved program — and it is the reverse operation precisely because it does not trust the forward one.
 
@@ -74,7 +74,7 @@ const refusal = await admissibleVariant(manifest, approved, {
 
 **The plan and the artifact are two different lists on purpose.** The plan's spans are spans of the approved source, because that is the file a viewer is reading; the strip reports what is compiled in, by identity and kind. Neither can be derived from the other, and comparing them is the check: a probe in the artifact that no plan names is an observation point nobody reviewed, and a plan naming a probe the artifact lacks is an overlay that will never fire while looking exactly like one that has not been reached yet.
 
-**What counts as a probe is defined by the verifier, not by the generator.** A probe is a call on the reserved receiver `__rpcProbe` in one of six recognised shapes; anything else mentioning that name is a refusal rather than something to strip. The wrapping forms — `value` and `condition` — take the observed expression as an argument and evaluate to it, so it appears exactly once and "evaluated exactly once, with unchanged results and exception behaviour" is a property of the shape rather than a promise about a generator. A strip that skipped what it did not recognise would leave it in the output and report *the transformer changed the program*, which is true and points at the wrong thing; one that deleted anything mentioning the receiver would delete code somebody wrote.
+**What counts as a probe is defined by the verifier, not by the generator.** A probe is a call on the reserved receiver `__rpcProbe` in one of seven recognised shapes; anything else mentioning that name is a refusal rather than something to strip. The wrapping forms — `value` and `condition` — take the observed expression as an argument and evaluate to it, so it appears exactly once and "evaluated exactly once, with unchanged results and exception behaviour" is a property of the shape rather than a promise about a generator. A strip that skipped what it did not recognise would leave it in the output and report *the transformer changed the program*, which is true and points at the wrong thing; one that deleted anything mentioning the receiver would delete code somebody wrote.
 
 Programs are compared reprinted from their parse trees, so two files differing only in where the newlines fall are the same program and **comments are not part of the comparison** — a probe legitimately arrives with one attached. The cost is real and worth naming: a variant may change a comment and this will not see it. What it exists to catch is a changed program, and a comment cannot be one.
 
@@ -164,7 +164,27 @@ Probes write to the sink and return. The service reads it on its own schedule �
 
 **A classified field is withheld at capture, not in the editor.** A value redacted on its way to a screen has already been in a buffer, in a message, and in whatever logged either. A probe on a withheld field still fires and is still counted — the execution path stays visible — and the value never enters the process's diagnostic memory at all.
 
-What is still not here: tracepoints, breakpoints and stepping, all advertised `false`.
+## Tracepoints: capture without stopping
+
+A tracepoint captures selected locals when a condition holds and emits an event, without stopping the component. It is the mode appropriate to the widest range of nodes, and the only one of the three this package implements — the other two stop a plant.
+
+```typescript
+instrumentSource(source, 'oven.ts', 'rev-7', viewports, {
+    tracepoints: [{ line: 12, condition: 'clamped > 200', captureSymbols: ['clamped', 'target'], messageTemplate: 'clamped to {clamped} from {target}' }]
+})
+```
+
+**The condition is compiled into the verified derivative and checked against a constrained grammar first**, which is the design's rule that conditions may not use unrestricted runtime evaluation. Comparisons, logical operators, property access, literals — no calls, no assignments, no increments.
+
+That check is not fussiness, and it is not something the derivative proof can do instead. A condition runs *inside the component*, on its stack, between its statements: `queue.pop() > 3` would empty a queue in order to decide whether to mention it. Strip the probe afterwards and the program is identical, so the proof passes and the plant has still been running something nobody approved. The grammar is the only place that catches it, so it catches it at build time, where a person can be told which expression and why. Every identifier must also be one of the captured locals — a condition cannot reach a global, and a capture list is not a way to read one.
+
+**Counting and capturing are different.** Every hit is counted whether the condition held or not, because *this line ran four thousand times and never matched* is an answer, and a probe that recorded nothing when it did not capture would be indistinguishable from a line that was never reached.
+
+What the sink decides — how many hits to skip, what the message reads as — needs no rebuild, because none of it runs inside the component. Changing the condition does, and that is the design's split. A `{placeholder}` naming something that was not captured is left as written rather than becoming `undefined`, and a withheld field renders as its marker in the message too: a template is not a way around a classification.
+
+Captures are bounded and what the bound discarded is counted, like everything else here. They reach the session that installed the tracepoint and no other, because a capture is a value somebody was separately permitted to take.
+
+What is still not here: safe-boundary and exact breakpoints, and stepping — all advertised `false`.
 
 ## License
 

@@ -152,9 +152,10 @@ export const capabilitiesFor = (support: RpcDiagnosticsSupport): RpcDiagnosticsC
         statementHits: probes,
         branchOutcomes: probes,
         orderedTrace: probes,
-        // A tracepoint is a probe with a condition and a message, and neither exists yet. Pausing
-        // and stepping are the phase after that.
-        tracepoints: false,
+        // A tracepoint is a probe compiled into a variant, so it needs both halves: somewhere to
+        // write and the means to put it in the artifact. A node that can only read a sink cannot
+        // install one, and saying otherwise would have a viewer offer a control that does nothing.
+        tracepoints: probes && support.variantActivation === true,
         safeBoundaryPause: false,
         exactPause: false,
         stepping: false,
