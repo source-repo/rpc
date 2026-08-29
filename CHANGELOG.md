@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+### What the probes saw, and who is allowed to see it
+
+The telemetry half of the diagnostics design's second phase, which was left until the authority model could arrive with it. Serving probe samples is a second data path in a way the source catalogue never was - a component's props were always observable and its locals never were - so this lands as an observation session with permissions, a deadline and a bounded publication rule, rather than as a method that returns the buffer.
+
+**Twelve permissions, because there are twelve conversations.** Being allowed to see a component's props is not being allowed to see its locals; seeing locals is not being allowed to change the artifact by activating an instrumented build; and watching a value is not `retain-recordings`, which is what an ordered trace actually asks for, since watching is transient and a trace is a copy. They are checked one at a time, and a caller holding some of them gets a **degraded session** naming what it did not get - the design's fallback rule - rather than a refusal. What is refused is a session that could serve nothing: falling back to nothing is not a fallback, and a session reporting itself healthy in front of an empty screen cannot be told apart from a component that has not run yet.
+
+**There is no default authoriser, and the capability set follows the pair.** A node given a sink but no authoriser, or an authoriser but no sink, serves no sessions and advertises no probe capabilities. A package cannot decide on a deployment's behalf that watching a plant's locals needs no permission, so it refuses and says why.
+
+**A table, not an event per hit.** A statement in a loop at a hundred hertz produces six thousand events a minute and one useful fact, so the latest value per probe and its execution count go in state, sized by how many probes exist rather than by how often they fire. The dropped count is published beside the values, because a gap a viewer cannot see is a lie. An ordered trace is an event and goes only to a session that asked for one and was permitted to keep it. `publish()` is called by the host rather than by a timer in the package: a library that started its own interval would be setting a plant's publication rate.
+
+**A classified field is withheld at capture rather than in the editor**, which is the design's rule and the only place it can be true - a value redacted on its way to a screen has already been in a buffer, in a message, and in whatever logged either. The probe still fires and is still counted, so the execution path stays visible while the value never enters diagnostic memory.
+
+**A session expires.** A disconnect is not distinguishable from a slow viewer at this level, so a deadline ends a session rather than a socket, clamped to what the node allows - which is what stops a plant being left instrumented because somebody closed a laptop. An update may move the viewport and renew the deadline; it may not widen the modes, since those were decided against this caller's permissions when the session started, and an update that could grant one would make the authorisation something that happened once to a request that has since changed.
+
+Tracepoints, breakpoints and stepping remain `false`.
+
 ### The instrumented copy takes over, and the plant does not notice
 
 The diagnostics design's section 16 is `handOver` step for step, and this is the commit that says so in code: shadow activation with output fenced, the normal quiescence barrier, capture, restore of the identical state schema with no migration, obligations re-established under the ordinary rules, and one atomic epoch swap. `@source-repo/diagnostics` gains a dependency on `@source-repo/continuity`, which the workspace build order already anticipated.

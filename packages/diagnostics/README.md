@@ -132,7 +132,39 @@ A variant imports `__rpcProbe`, and `RpcProbeSink` is what that is. It is delibe
 
 Still `false`, and not by oversight: `tracepoints` — a tracepoint is a probe with a condition and a message, and neither exists — along with `safeBoundaryPause`, `exactPause` and `stepping`, which are the phase after.
 
-**What is not here yet is the telemetry transport.** Samples land in an in-process sink and are read by whoever holds it. Serving them over Source RPC is a second data path in a way the source catalogue never was — locals are not otherwise observable — so it waits for the observation session and the authority model that go with it, rather than arriving as a convenience method.
+## Who may watch, and for how long
+
+Serving probe samples *is* a second data path, in a way the source catalogue never was: locals are not otherwise observable. So it arrives with the authority model rather than as a convenience method.
+
+```typescript
+exposeDiagnostics(server, {
+    catalogue,
+    sink: new RpcProbeSink({ maxSamples: 2000, maxValueBytes: 512, withheld }),
+    authorise: (permission, caller) => grantsOf(caller).includes(permission)
+})
+```
+
+**The sink and the authoriser go together, and neither is enough alone.** A node given only one of them serves no sessions and advertises no probe capabilities — there is no default, because a package cannot decide on a deployment's behalf that watching a component's locals needs no permission.
+
+**Diagnostics permissions are their own set**, twelve of them, because they are twelve different conversations. Being allowed to see a component's props is not being allowed to see its locals; seeing locals is not being allowed to *change the artifact* by activating an instrumented build; and watching a value is not `retain-recordings`, which is what an ordered trace actually asks for — watching is transient and a trace is a copy.
+
+They are checked one at a time, and the result is a **degraded session rather than a refusal**: a caller who may watch values but not execution paths gets `live-values`, and `execution-hits` comes back in `degraded` with the reason. Same for a mode this node cannot serve at all. What is refused outright is a session that could serve *nothing* — falling back to nothing is not a fallback, and a session reporting itself healthy while showing an empty screen is indistinguishable from a component that has not run yet.
+
+A session carries a deadline, clamped to what the node allows, because a disconnect is not distinguishable from a slow viewer at this level. The deadline is what stops a plant being left instrumented because somebody closed a laptop. An update may move the viewport and renew the deadline; it may not widen the modes, which were decided against this caller's permissions when the session started.
+
+## How what was seen gets out
+
+Probes write to the sink and return. The service reads it on its own schedule — `publish()` is called by the host, not by a timer in here, because a package that started its own interval would be setting a plant's publication rate from a library.
+
+- **Props** carry what a session *is*: the modes granted, what was degraded and why, the revision it belongs to. A viewer subscribes and is told.
+- **State** carries how it is *doing*: the latest value per probe, execution counts, health, and the dropped count — published beside the values, because a gap a viewer cannot see is a lie.
+- **Events** carry an ordered trace chunk, and only to a session that asked for one and was allowed to keep it.
+
+**A table, not an event per hit.** A statement in a loop at a hundred hertz produces six thousand events a minute and one useful fact. The table is sized by how many probes there are, never by how often they fire, so watching a hot function costs what watching a cold one costs.
+
+**A classified field is withheld at capture, not in the editor.** A value redacted on its way to a screen has already been in a buffer, in a message, and in whatever logged either. A probe on a withheld field still fires and is still counted — the execution path stays visible — and the value never enters the process's diagnostic memory at all.
+
+What is still not here: tracepoints, breakpoints and stepping, all advertised `false`.
 
 ## License
 

@@ -41,6 +41,10 @@
             "types": "./dist/Probes.d.ts",
             "default": "./dist/Probes.js"
         },
+        "./session": {
+            "types": "./dist/Session.d.ts",
+            "default": "./dist/Session.js"
+        },
         "./package.json": "./package.json"
     },
     "files": [

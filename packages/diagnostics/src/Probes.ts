@@ -53,8 +53,34 @@ export interface RpcProbeSinkOptions {
     readonly maxSamples?: number
     /** The most bytes one encoded value may take. Everything past it is a truncation, and says so. */
     readonly maxValueBytes?: number
+    /**
+     * Probe ids whose values must never be captured, only counted.
+     *
+     * **Applied here rather than in the editor**, which is the design's rule and the only place it
+     * can be true: a value redacted on the way to a screen has already been in a buffer, in a
+     * message and in whatever logged either. A probe on a field classified beside its declaration
+     * fires, is counted, and reports that its value was withheld - so the execution path is still
+     * visible and the credential never leaves the process.
+     */
+    readonly withheld?: ReadonlySet<string>
     /** The clock, so a test need not compare timestamps it cannot predict. */
     readonly now?: () => number
+}
+
+/**
+ * The latest value each probe saw, and how often it has fired.
+ *
+ * The design prefers this to publishing an event per hit, and the reason is arithmetic: a statement
+ * in a loop running at a hundred hertz produces six thousand events a minute and one useful fact.
+ * A table is bounded by the number of probes rather than by the rate of the program, which is what
+ * makes watching a hot function cost the same as watching a cold one.
+ */
+export interface RpcProbeTable {
+    readonly latest: { readonly [probeId: string]: RpcProbeSample }
+    /** Samples the ring dropped since the sink was made. A hole a viewer cannot see is a lie. */
+    readonly dropped: number
+    /** How many samples have been written in total, which is what a freshness display counts. */
+    readonly written: number
 }
 
 const DEFAULT_MAX_SAMPLES = 2000
@@ -92,29 +118,56 @@ export const renderValue = (observed: unknown, maxValueBytes: number): RpcDiagno
 /**
  * Where one activation's probes write.
  *
- * Deliberately not a transport. Phase 2's telemetry channel carries these somewhere; until it
- * exists, a bounded ring in the process is the whole of it, and a bounded ring is what the transport
- * would need underneath it anyway - a sink that could not drop would push back on the component,
- * and pushing back on a component to deliver diagnostics is the failure this design refuses.
+ * **Deliberately not a transport, even now that there is one.** Probes write here and return; the
+ * diagnostics service reads this on its own schedule and publishes what it finds. A sink that
+ * carried each sample onward would put a call on the component's stack for every statement it
+ * executed - and a sink that could not drop would push back on the component, which is the one thing
+ * observation must never do. The ring drops and counts what it dropped, and the count is published
+ * beside the values so nobody mistakes a gap for quiet.
  */
 export class RpcProbeSink {
     private readonly samples: RpcProbeSample[] = []
     private readonly counts = new Map<string, number>()
+    private readonly latest = new Map<string, RpcProbeSample>()
     private readonly maxSamples: number
     private readonly maxValueBytes: number
+    private readonly withheld: ReadonlySet<string>
     private readonly now: () => number
     private next = 1n
     /** How many samples the ring has dropped. A viewer that cannot see this cannot trust the trace. */
     private dropped_ = 0
+    private written_ = 0
 
     constructor(options: RpcProbeSinkOptions = {}) {
         this.maxSamples = Math.max(1, options.maxSamples ?? DEFAULT_MAX_SAMPLES)
         this.maxValueBytes = Math.max(1, options.maxValueBytes ?? DEFAULT_MAX_VALUE_BYTES)
+        this.withheld = options.withheld ?? new Set()
         this.now = options.now ?? Date.now
+    }
+
+    /**
+     * The latest value per probe and the counters, which is what a session publishes as state.
+     *
+     * Bounded by how many probes there are rather than by how often they fired, so publishing costs
+     * the same whether the component ticked once or ten thousand times since the last one.
+     */
+    table(): RpcProbeTable {
+        return { latest: Object.fromEntries(this.latest), dropped: this.dropped_, written: this.written_ }
     }
 
     get depth(): number {
         return this.samples.length
+    }
+
+    /**
+     * The bounds this sink enforces.
+     *
+     * Public because they are what a node advertises as its limits, and a viewer plans around them:
+     * a value cap it cannot see is a truncation it cannot explain, and a ring size it cannot see is
+     * a trace length it cannot ask for.
+     */
+    get bounds(): { readonly maxSamples: number; readonly maxValueBytes: number } {
+        return { maxSamples: this.maxSamples, maxValueBytes: this.maxValueBytes }
     }
 
     get dropped(): number {
@@ -139,7 +192,15 @@ export class RpcProbeSink {
             this.samples.shift()
             this.dropped_++
         }
-        this.samples.push({ probeId, kind, sequence: this.next++, executionCount, observedAt: new Date(this.now()).toISOString(), ...extra })
+        const sample: RpcProbeSample = { probeId, kind, sequence: this.next++, executionCount, observedAt: new Date(this.now()).toISOString(), ...extra }
+        this.samples.push(sample)
+        this.latest.set(probeId, sample)
+        this.written_++
+    }
+
+    /** A value, unless this probe is on something classified - then the fact that it fired, only. */
+    private rendered(probeId: string, observed: unknown): RpcDiagnosticValue {
+        return this.withheld.has(probeId) ? { text: '', type: 'withheld', unrepresentable: 'this probe is on a field classified beside its declaration, so its value is not captured' } : renderValue(observed, this.maxValueBytes)
     }
 
     /**
@@ -166,11 +227,11 @@ export class RpcProbeSink {
             statement: (probeId: string): void => write(probeId, 'statement'),
             branch: (probeId: string): void => write(probeId, 'branch'),
             value: <T>(probeId: string, observed: T): T => {
-                write(probeId, 'value', { value: renderValue(observed, this.maxValueBytes) })
+                write(probeId, 'value', { value: this.rendered(probeId, observed) })
                 return observed
             },
             condition: (probeId: string, observed: boolean): boolean => {
-                write(probeId, 'condition', { conditionResult: observed, value: renderValue(observed, this.maxValueBytes) })
+                write(probeId, 'condition', { conditionResult: observed, value: this.rendered(probeId, observed) })
                 return observed
             }
         }
