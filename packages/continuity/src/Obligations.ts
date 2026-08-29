@@ -204,9 +204,17 @@ export class RpcObligationLedger {
      *
      * Sorted by id within each group, so two captures of the same runtime state produce the same
      * manifest - which is what lets a snapshot hash mean anything.
+     *
+     * **`at` is the clock reading the manifest was taken at**, and supplying it is what makes
+     * `preserve-remaining` mean what it says. A timer's remaining time is `dueAt - capturedAt`, so a
+     * `capturedAt` left at the reading when the timer was *registered* gives the successor the
+     * timer's original duration and calls it what was left - a dwell three minutes into its five
+     * would resume with five, and nothing downstream could tell. Omitted, every obligation is
+     * reported exactly as it was registered, which is what a caller keeping its own clock wants.
      */
-    manifest(): RpcObligations {
-        const all = [...this.held.values()].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
+    manifest(at?: bigint): RpcObligations {
+        const stamped = (one: RpcObligation) => (at !== undefined && one.kind === 'timer' ? { ...one, capturedAt: at } : one)
+        const all = [...this.held.values()].map(stamped).sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
         const of = <K extends RpcObligation['kind']>(kind: K) => all.filter((one): one is Extract<RpcObligation, { kind: K }> => one.kind === kind)
         return {
             ...EMPTY,

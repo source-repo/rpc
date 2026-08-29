@@ -1,5 +1,5 @@
 import { componentSnapshot, type RpcComponentData, type RpcExecutionHold } from '@source-repo/rpc'
-import { sealSnapshot, type RpcSnapshotEnvelope } from './Envelope.js'
+import { RpcSnapshotRefused, sealSnapshot, type RpcSnapshotEnvelope } from './Envelope.js'
 import { allObligations, type RpcObligationLedger, type RpcObligations } from './Obligations.js'
 
 /**
@@ -53,13 +53,47 @@ export interface RpcCaptureRequest<Props extends RpcComponentData, State extends
      */
     readonly quiescenceDeadlineMs: number
 
+    /**
+     * How long to watch a component that has gone quiet before believing it.
+     *
+     * **The barrier orders work the runtime dispatched, and eligibility is a claim about everything
+     * else.** A raw `setInterval`, a socket callback, a direct method call from inside the process:
+     * none of them went through the queue, so the queue being empty says nothing about them. That
+     * limit does not go away, but it stops being *undetectable*. Every commit to a component's props
+     * or state moves its revision counter, whatever route the write took - so a component that is
+     * supposed to be quiescent and whose revision moves anyway has just demonstrated that something
+     * is changing it outside the runtime, and the capture refuses instead of describing an instant
+     * that was already over.
+     *
+     * Omitted, nothing is watched and nothing is claimed: the manifest rests entirely on the
+     * revision's own `serialisedHandlers` declaration, which is where it rested before. Set, it
+     * costs exactly this long under the barrier on every capture - the component is held, so the
+     * plant is waiting - which is why it is a number the deployment chooses rather than a default
+     * somebody discovers.
+     *
+     * It detects mutation, which is not the same as detecting unmanaged work. An unregistered timer
+     * that will fire in an hour touches nothing during the window and is not caught by this; what is
+     * caught is the case that actually corrupts a snapshot.
+     */
+    readonly settleMs?: number
+
+    /**
+     * The reading to measure timers' remaining time from, on the same clock their deadlines use.
+     *
+     * Supplied, every timer in the manifest is stamped with it, and `preserve-remaining` means the
+     * time the timer had left. Omitted, obligations are reported exactly as they were registered -
+     * correct for a caller that keeps its own clock, and wrong for one that assumed a `capturedAt`
+     * from registration time was a capture time.
+     */
+    readonly monotonic?: () => bigint
+
     /** The clock, so a test need not wait out a real one. */
     readonly now?: () => number
 }
 
 /** Why a capture refused, in the words somebody has to act on. */
 export interface RpcCaptureRefusal {
-    readonly reason: 'not-quiescent' | 'work-in-flight' | 'unsafe-outbound'
+    readonly reason: 'not-quiescent' | 'work-in-flight' | 'unsafe-outbound' | 'unmanaged-mutation'
     readonly why: string
     /** The obligations that stopped it, where obligations did. */
     readonly blocking: readonly string[]
@@ -86,6 +120,10 @@ export type RpcCaptureResult<State> = { readonly captured: RpcSnapshotEnvelope<S
  * not, and must not send it again. `UnknownOutcome` is what a *caller* is told about such a thing;
  * it is not a mechanism for reconstructing a successor's workflow, and it does not authorise a
  * silent retry. So the handoff waits for a durable result or refuses.
+ *
+ * **`unmanaged-mutation`** - the component was quiescent and its revision moved anyway, so something
+ * outside the runtime is writing to it. Only ever reported when `settleMs` asked for it to be
+ * watched for; see that field for what the window does and does not catch.
  *
  * The barrier is **not** released here. A refused capture and a successful one both leave it held,
  * because what happens next - retry, abandon, hand over - belongs to whoever asked, and releasing on
@@ -117,9 +155,33 @@ export const captureAtBarrier = async <Props extends RpcComponentData, State ext
             }
         }
 
+    // Quiescent, and now watched for as long as the deployment asked. The reading is taken from the
+    // component's own revision counter rather than from a hash of its state, because the counter
+    // moves on every commit - including one that writes back the value that was already there, which
+    // is a component being driven from outside just as surely as one whose values changed.
+    //
+    // Held rather than returned, because the manifest read below can explain the movement better
+    // than this can: a mutating handler that never completed is *registered* work still running, and
+    // reporting it as an anonymous outside write would send somebody looking for a stray timer.
+    let drift: RpcCaptureRefusal | undefined
+    if (request.settleMs !== undefined) {
+        const before = revisionOf(request.component, request.componentType, request.componentId)
+        await new Promise((resolve) => {
+            const settling = setTimeout(resolve, Math.max(0, request.settleMs ?? 0))
+            settling.unref?.()
+        })
+        const after = revisionOf(request.component, request.componentType, request.componentId)
+        if (after.epoch !== before.epoch || after.revision !== before.revision)
+            drift = {
+                reason: 'unmanaged-mutation',
+                why: `${request.componentType}/${request.componentId} was held at a barrier and its revision still moved from ${before.revision} to ${after.revision} in ${request.settleMs} ms: something is changing it outside the runtime - a raw timer, an event handler, a direct call - and a barrier cannot order what it never dispatched`,
+                blocking: []
+            }
+    }
+
     // Everything from here is synchronous. Nothing may run between reading the values and reading
     // the manifest, which is the whole of what "one consistent cut" means.
-    const manifest = request.ledger.manifest()
+    const manifest = request.ledger.manifest(request.monotonic?.())
 
     const mutating = manifest.inboundWork.filter((work) => work.mutating).map((work) => work.id)
     if (mutating.length)
@@ -141,6 +203,9 @@ export const captureAtBarrier = async <Props extends RpcComponentData, State ext
             }
         }
 
+    // Nothing registered accounts for it, so it came from outside the runtime.
+    if (drift) return { refused: drift }
+
     const captured = await sealSnapshot<State>({
         captureKind: 'quiescent-handoff',
         componentType: request.componentType,
@@ -159,6 +224,25 @@ export const captureAtBarrier = async <Props extends RpcComponentData, State ext
         capturedAt: new Date(now()).toISOString()
     })
     return { captured }
+}
+
+/**
+ * The revision counter, or a refusal that says why there is not one.
+ *
+ * The settle window is a claim to have *checked* something, so a component that cannot be checked
+ * has to say so rather than pass. A plain object with `props` and `state` is a perfectly good thing
+ * to capture and has no counter behind it; asking it to be watched and quietly watching nothing
+ * would produce a snapshot carrying evidence it does not have.
+ */
+const revisionOf = (component: object, componentType: string, componentId: string): { epoch: string; revision: number } => {
+    try {
+        return positionOf(component)
+    } catch {
+        throw new RpcSnapshotRefused(
+            `${componentType}/${componentId} was asked to be watched for unmanaged writes, but it is not an RpcComponent and so has no revision counter to watch - drop settleMs, or capture a component whose commits are counted`,
+            'settleMs'
+        )
+    }
 }
 
 /**

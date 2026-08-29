@@ -46,6 +46,14 @@ barrier.release()                     // whatever queued behind it now runs
 
 The honest limit is stated in the tests as well as here: **the barrier orders work the runtime delivered.** A component whose state is changed by a raw `setInterval`, an event handler or a direct method call did not go through the queue, and no barrier can know. That is why an *eligibility* claim is a claim about a component's code and not a property the runtime can verify.
 
+**It can, though, be caught in the act.** Every commit to a component's props or state moves its revision counter, whatever route the write took — so a component that is supposed to be quiescent and whose revision moves anyway has just demonstrated that something is changing it outside the runtime. `settleMs` on the capture request watches for exactly that long and refuses `unmanaged-mutation` rather than sealing a snapshot whose values are from after the barrier under an input position from before it.
+
+```typescript
+const result = await captureAtBarrier({ ...request, settleMs: 50 })
+```
+
+What that costs is 50 ms under the barrier on every capture, with the plant waiting — which is why it is a number the deployment chooses rather than a default somebody discovers. And it detects *mutation*, which is not the same as detecting unmanaged work: an unregistered timer due in an hour touches nothing during the window. What it catches is the case that actually corrupts a snapshot.
+
 ## Obligations: what the old activation was still holding
 
 State alone is not a handoff. A component that has a dwell timer running, a dispense command out, a lease on a hopper and a subscriber following its alarms owes four things that a successor holding only its values would silently drop.
@@ -57,6 +65,33 @@ ledger.register({ kind: 'outbound-call', id: 'dispense-7', target: 'hopper', met
 ```
 
 The manifest may be **empty and may not be absent**. A component that owes nothing owes nothing, and saying so is a finding; a missing manifest means nobody looked, and `admissibleForHandoff` refuses it.
+
+## Doing the work and recording it are one act
+
+The two calls above are the low level, and everything that can go wrong with two calls does: the command goes out and the register does not, so the manifest says the component owes nothing while a hopper is dispensing; the timer fires and nothing completes it, so the successor is handed a deadline that has already passed. A manifest that is *nearly* complete is worse than none, because the successor is told it assumed everything.
+
+`RpcManagedRuntime` closes that gap by not having it. There is no order of statements in which the timer is armed and the obligation is not, because arming it is registering it.
+
+```typescript
+const runtime = new RpcManagedRuntime({
+    componentId: 'mixer1',
+    dispatch: dispatchOn(server.rpc, 'mixer'),   // the instance's own serial chain
+    monotonic: () => process.hrtime.bigint() / 1_000_000n
+})
+
+runtime.setTimer({ id: 'mix-dwell', afterMs: 5_000, policy: 'preserve-remaining' }, () => mixer.finishDwell())
+await runtime.call({ id: 'dispense-7', target: 'hopper', method: 'dispense', semantics: 'non-repeatable-command' }, () => hopper.dispense(7))
+```
+
+**A managed timer's callback runs on the component's chain**, through `RpcServerHandler.runInOrder`, and that is the half that a wrapper for tidiness would miss. A `setTimeout` fires wherever the event loop delivers it — including in the middle of a capture, writing state after the component was declared quiescent, which is a snapshot describing an instant that never existed. Dispatched through the chain, a timer that comes due while a barrier is held simply queues behind it.
+
+Which is also why **a timer that has fired is not struck off until its callback has actually run.** Between the handle firing and the work happening there is a queue, and while a barrier is held that queue is where the callback sits: a capture taken there must show the timer as outstanding and overdue, and let the successor's declared policy decide what a missed deadline meant.
+
+A `non-repeatable-command` whose failure **may have run** — `UnknownOutcome`, `Timeout` — deliberately stays on the books, which is what makes the next capture refuse `unsafe-outbound`. The ledger is the only thing holding the fact that nobody knows whether the hopper dispensed, and the only thing that can end that is evidence from outside the program: `runtime.discharge('dispense-7')` after a reconciliation read, never a timeout.
+
+`close()` is one-way and clears every armed handle, because a retired activation whose timers still fire is the failure the fence exists to prevent arriving by a route the fence does not cover. **It does not empty the ledger.** Closing is about not acting; what this activation was holding is precisely what the successor is being handed.
+
+None of this makes eligibility checkable. What it does is let a revision that claims `runtimeManagedObligations` in its manifest have earned the claim, rather than only having made it.
 
 ## Every obligation gets a disposition, and nobody may infer one
 

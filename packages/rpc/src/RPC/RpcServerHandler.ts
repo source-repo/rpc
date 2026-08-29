@@ -1501,6 +1501,43 @@ export class RpcServerHandler extends MessageModule<Message<RpcMessage>, RpcMess
         }
     }
 
+    /**
+     * Run work the component starts itself on the same chain its calls run on.
+     *
+     * **A barrier orders what the runtime dispatched, and nothing else.** A `setTimeout` callback is
+     * not that: it lands in the event loop beside the queue rather than in it, so a dwell timer that
+     * fires while a component is being captured changes state after the component was declared
+     * quiescent - and the snapshot then describes an instant that never existed. Work put through
+     * here queues where a call would queue: behind a barrier while one is held, ahead of the calls
+     * that arrived after it, in the order it was submitted.
+     *
+     * That is what lets a component *earn* the eligibility its revision manifest claims rather than
+     * only asserting it. A timer set through `@source-repo/continuity`'s managed runtime goes
+     * through here; a raw `setInterval` still does not, and still cannot be seen.
+     *
+     * **Not bounded by the mailbox**, which queued calls are. That bound exists to refuse a remote
+     * caller outrunning an instance - it is told `Busy` and can decide what to do. A timer this
+     * component set has nobody to tell and nothing that would re-offer it, so refusing it would drop
+     * the work silently, which is the one outcome worse than queueing it. It is counted in
+     * `waiting()` though, because it will run when the barrier lifts, and a count that omitted it
+     * would understate what the capture is about to be followed by.
+     */
+    runInOrder<T>(path: string, run: () => T | Promise<T>): Promise<T> {
+        const execution = this.manageRpc.at(path)?.execution
+        if (execution === 'parallel' || typeof execution === 'function')
+            throw new Error(
+                `${path} cannot run work in order: it runs ${typeof execution === 'function' ? 'one queue per key, so there is no single chain to put this on' : 'in parallel, so there is no chain at all'}`
+            )
+        const waiting = this.executionWaiting.get(path) ?? 0
+        this.executionWaiting.set(path, waiting + 1)
+        return this.serialise(path, async () => {
+            const now = this.executionWaiting.get(path) ?? 1
+            if (now <= 1) this.executionWaiting.delete(path)
+            else this.executionWaiting.set(path, now - 1)
+            return run()
+        })
+    }
+
     private async serialise<T>(key: string, run: () => Promise<T>): Promise<T> {
         const ahead = this.executionQueues.get(key) ?? Promise.resolve()
         let release!: () => void
