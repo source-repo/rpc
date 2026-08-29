@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+### A diagnostic variant can be proved to be one, which is not building one
+
+The diagnostics design's second phase generates probes into a node's own source and runs the result. It opens with one line - *depends on state-preserving component replacement* - and that dependency is now met: its section 16 is `handOver` step for step, down to starting the variant as a shadow with output fenced and restoring the identical state schema without migration.
+
+What is built here is the check that has to exist before anything generates a variant, in the order the handoff work ran in. A rule written after the thing it governs is a rule written to fit it.
+
+**The claim a variant makes is that it is the approved source plus probes, and nothing about a build checks that.** A transformer with a bug, a hand-edited artifact and a deliberately altered one all produce a file that compiles and runs on a plant. So the check is the reverse operation - strip every recognised probe and see whether what is left is the approved program - and it is the reverse operation precisely because it does not trust the forward one. The test that matters is the one where a single literal changed inside an expression a probe wraps: every probe in that file is perfectly well formed, and the digests disagree.
+
+**What counts as a probe is defined by the verifier, not by the generator**, which does not exist yet and deliberately so. A probe is a call on the reserved receiver `__rpcProbe` in one of six recognised shapes. `value` and `condition` wrap the observed expression and evaluate to it, so it appears exactly once and the design's *evaluated exactly once, with unchanged results and exception behaviour* becomes a property of the shape rather than a promise about a generator. Anything else mentioning the receiver refuses: a strip that skipped what it did not recognise would leave it in the output and report *the transformer changed the program*, which is true and points at the wrong thing, and one that deleted everything mentioning the receiver would delete code somebody wrote.
+
+**The node holds hashes; the compiler does the walk.** `admissibleVariant` is in `@source-repo/diagnostics`, whose dependency list is still one line, and the strip is in `@source-repo/rpc-cli` where ts-morph already is - the same split the binding catalogue makes, and for the same reason: giving every node a TypeScript compiler in order to decide whether to accept a build would put the whole toolchain inside the plant. Seven rules, refusing on the first, each in its own sentence because they are seven different conversations. The only capability a variant may add is `diagnostics.telemetry`; anything else is an artifact using instrumentation to widen its own authority.
+
+Programs are compared reprinted from their parse trees, so formatting is not a difference and **comments are not part of the comparison** - a probe legitimately arrives with one attached. That has a cost worth naming rather than hiding: a variant may change a comment and this will not see it. What it exists to catch is a changed program, and a comment cannot be one.
+
+`diagnosticVariants` is still advertised as `false`. Verification is not activation, and a capability flag that ran ahead of the code would be the one thing the capability set exists to prevent.
+
 ### Arming a timer and owing it are one act
 
 Phase 2 of the online-change design asks for runtime-managed timers, calls, subscriptions, publications, leases and sequences. What existed was a ledger and the instruction to call it, which is two acts - and everything that can go wrong with two acts does. The command goes out and the register does not, so a manifest taken a moment later says the component owes nothing while a hopper is dispensing. The timer fires and nothing completes it, so the successor is handed a deadline that has already passed. A manifest that is *nearly* complete is worse than none, because the successor is told it assumed everything.

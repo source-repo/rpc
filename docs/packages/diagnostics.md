@@ -12,5 +12,7 @@ npm install @source-repo/diagnostics
 - **Capabilities are advertised, including the ones that are false** — a viewer that finds `exactPause` absent cannot tell "this node cannot" from "this protocol version had not thought of it".
 - **The node's own diagnostics are a component** — capabilities and the running revision are props, so a redeploy reaches every open editor without polling.
 - **A sensitive field says so beside its declaration**, and a viewer draws a marker rather than the value.
+- **A diagnostic variant can be proved to be one** — strip the recognised probes, reprint, and compare against the approved program, because a build cannot be trusted to report on itself. The node compares hashes; the compiler does the walk. Verification is not activation, so `diagnosticVariants` is still advertised as `false`.
+- **What counts as a probe is defined by the verifier** — six shapes on a reserved receiver, and anything else that mentions it is a refusal rather than something to strip; a strip that guessed would be deciding for itself what the program was meant to be.
 
 Full documentation: the [package README](https://github.com/source-repo/rpc/blob/main/packages/diagnostics/README.md). On npm: [@source-repo/diagnostics](https://www.npmjs.com/package/@source-repo/diagnostics).

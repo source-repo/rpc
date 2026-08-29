@@ -33,6 +33,10 @@
             "types": "./dist/Catalogue.d.ts",
             "default": "./dist/Catalogue.js"
         },
+        "./variant": {
+            "types": "./dist/Variant.d.ts",
+            "default": "./dist/Variant.js"
+        },
         "./package.json": "./package.json"
     },
     "files": [

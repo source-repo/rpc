@@ -53,6 +53,30 @@ A value positioned by a line number from a file that has since been edited is wo
 
 A binding may carry a `sensitivity`, and a viewer draws a marker instead of a value. Read-only visibility is not harmless — a value can be a credential, a production quantity or somebody's name — and the classification belongs beside the declaration because that is where the person who knows is.
 
+## A diagnostic variant can be proved to be one, which is not building one
+
+The next phase generates probes into the node's own source and runs the result. That is a licence to put *different code* on a plant in order to watch the code that was approved, and the whole design rests on one claim: **the variant differs from the approved revision in probes and nothing else.**
+
+Nothing about a build checks that. A transformer with a bug, a hand-edited artifact and a deliberately altered one all produce a file that compiles and runs. So the check is the reverse operation — strip every recognised probe and see whether what is left is the approved program — and it is the reverse operation precisely because it does not trust the forward one.
+
+```typescript
+const proof = await provesDerivative(base, variant, 'oven.ts', 'rev-7')   // in @source-repo/rpc-cli
+const refusal = await admissibleVariant(manifest, approved, {
+    baseSemanticDigest: proof.baseSemanticDigest,
+    strippedSemanticDigest: proof.strippedSemanticDigest,
+    probes: proof.probes,
+    addedCapabilities: []
+})
+```
+
+**The node holds hashes and compares them; the compiler does the walk.** `admissibleVariant` runs seven rules and refuses on the first, each in its own sentence because they are seven different conversations: source that has moved on, a base artifact that is not the one running, a stripped variant that is not the base, a changed contract, a changed persistent state schema, changed non-diagnostic capabilities, and a probe plan that is not the plan compiled in. The only capability a variant may add is `diagnostics.telemetry` — anything else is an artifact using instrumentation to widen its own authority.
+
+**What counts as a probe is defined by the verifier, not by the generator.** A probe is a call on the reserved receiver `__rpcProbe` in one of six recognised shapes; anything else mentioning that name is a refusal rather than something to strip. The wrapping forms — `value` and `condition` — take the observed expression as an argument and evaluate to it, so it appears exactly once and "evaluated exactly once, with unchanged results and exception behaviour" is a property of the shape rather than a promise about a generator. A strip that skipped what it did not recognise would leave it in the output and report *the transformer changed the program*, which is true and points at the wrong thing; one that deleted anything mentioning the receiver would delete code somebody wrote.
+
+Programs are compared reprinted from their parse trees, so two files differing only in where the newlines fall are the same program and **comments are not part of the comparison** — a probe legitimately arrives with one attached. The cost is real and worth naming: a variant may change a comment and this will not see it. What it exists to catch is a changed program, and a comment cannot be one.
+
+`diagnosticVariants` stays `false` in the advertised capabilities. Verification is not activation, and a flag that ran ahead of the code would be the one thing the capability set exists to prevent.
+
 ## License
 
 MIT
