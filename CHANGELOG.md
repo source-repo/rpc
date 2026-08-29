@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+### One rule for what may cross a boundary, wherever the boundary is
+
+A review of the worker seam pointed out that its doc comment promised a stricter boundary than the code enforced: it relied on `postMessage` throwing, which catches a function and says nothing whatever about a class instance - structured clone copies the properties, drops the prototype, and the far side receives something that looks right and has no methods. Nothing throws. `RpcValue` is the check that was missing, and it is wired into both directions of the worker seam.
+
+**The narrowest placement decides**, which is the principle the review named and the reason this is one rule rather than three. A call to a component on this thread, one on a worker and one in another building are the same call to whoever wrote it, so a value legal for one and not another makes *placement observable* - moving a component onto a thread to watch it would change what its callers may say to it. So a `Date` and a `Map` are refused although a worker carries them, because a remote peer receives a string and an empty object; a `bigint` is refused with a pointer to the decimal-string convention this library already uses for sequence positions; a cycle is refused because structured clone takes it and no codec does. Binary passes, since the frame codec carries it as bytes under MsgPack and base64 under JSON.
+
+A `SharedArrayBuffer` is refused unless somebody says otherwise out loud. It crosses *by reference*: both sides hold the same memory, which is a shared-mutable-state bridge opened by an ordinary-looking argument. Shared memory is a legitimate thing to want, and `RpcPauseGate` is what wanting it looks like - a named capability whose concurrency protocol is part of its contract.
+
+One case is named and deliberately not policed: `undefined` as an object's property value, which JSON drops and MsgPack keeps as nil. An options object with an absent field is the most ordinary value in this codebase and refusing it would cost far more than the difference does - but a validator that quietly ignores a case it knows about is worse than one that says which cases it ignores.
+
+The review also proposed cloning on same-thread calls so that placement cannot change correctness at all. That is not built, and the reasoning is in `notes/worker-thread-nodes/`: the principle is right and the remedy would put a deep copy on every in-process call, which is the path this library exists to make fast. The check catches the same class of mistake in the same place without the copy.
+
 ### Stepping, which is one predicate and some arithmetic
 
 The last flag. The design's five commands are a frame depth maintained by the entry and exit probes that already existed, and a rule evaluated where the logic is - so this needed no new mechanism, which the feasibility note predicted and which held.

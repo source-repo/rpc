@@ -1,6 +1,7 @@
 import { Worker } from 'node:worker_threads'
 import { markMethodsOn, type RpcMethodOptions } from './Expose.js'
 import { RpcPauseGate } from './PauseGate.js'
+import { argumentsRefusal } from './Value.js'
 
 /**
  * Running one instance's logic on a thread of its own, so that stopping it stops only it.
@@ -21,10 +22,11 @@ import { RpcPauseGate } from './PauseGate.js'
  *
  * ## What it costs, stated rather than discovered
  *
- * **Arguments and results cross by structured clone.** A class instance arrives as a plain object, a
- * function does not arrive at all, and both are refused here with the argument named rather than
- * silently flattened. That is the price of the thread boundary and it is not negotiable: a handler
- * whose arguments cannot be copied cannot run somewhere else.
+ * **Arguments and results are checked against `RpcValue` before they cross.** Not against what a
+ * worker happens to accept: against what *every* placement accepts, so that moving a component onto
+ * a thread does not widen what may be said to it and moving it onto another host does not narrow it
+ * again. A class instance is the case that motivated the check - structured clone would carry it and
+ * drop its prototype, and nothing would throw.
  *
  * **An exception crosses as its message, its name and its code.** A thrown class instance is not the
  * same object on the other side, so what is preserved is what a caller acts on - and `RpcError`'s
@@ -191,6 +193,11 @@ export class RpcWorkerHost {
     /** Call one method on the worker's thread and wait for its answer. */
     call(method: string, params: readonly unknown[]): Promise<unknown> {
         if (this.closed) return Promise.reject(new RpcWorkerRefused('the worker hosting this instance is gone'))
+        // Checked before it is sent rather than relying on `postMessage` to throw, which catches a
+        // function and says nothing at all about a class instance - the case that arrives looking
+        // right and having no methods.
+        const refused = argumentsRefusal(method, params)
+        if (refused) return Promise.reject(new RpcWorkerRefused(refused.why, refused.path))
         const id = this.next++
         const message: WorkerCall = { id, method, params }
         return new Promise((resolve, reject) => {
@@ -203,8 +210,9 @@ export class RpcWorkerHost {
             try {
                 this.worker.postMessage(message)
             } catch (failure) {
-                // A structured clone that could not be made. Refused with the reason, because the
-                // alternative is a caller waiting ten minutes for a message that never left.
+                // A clone the check above did not predict. Kept as a backstop rather than removed:
+                // the check knows the rules this library has written down, and the runtime knows
+                // the ones it has not.
                 this.pending.delete(id)
                 clearTimeout(timer)
                 reject(new RpcWorkerRefused(`${method} cannot be called on a worker-hosted instance: its arguments do not survive a thread boundary`, failure instanceof Error ? failure.message : String(failure)))

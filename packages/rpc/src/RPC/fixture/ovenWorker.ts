@@ -10,6 +10,15 @@ import { serveInWorker, type RpcWorkerContext } from '../WorkerRuntime.js'
  * because stopping there is the whole difference between an exact pause and a safe-boundary one.
  */
 
+/** A class the far side would receive as a shape with no methods, if it were allowed to cross. */
+class Reading {
+    constructor(readonly celsius: number) {}
+
+    clamp(): number {
+        return Math.min(this.celsius, 300)
+    }
+}
+
 interface OvenState {
     setpoint: number
     batches: number
@@ -105,6 +114,18 @@ class Oven {
     @rpc({ semantics: 'query' })
     unclonable(): unknown {
         return () => 1
+    }
+
+    /**
+     * Returns one of its own class instances - the case that used to succeed and arrive gutted.
+     *
+     * `postMessage` carries this happily: the far side receives an object with `celsius` and no
+     * `clamp`, and nothing throws. It is the reason the boundary has a rule of its own rather than
+     * relying on what the runtime refuses.
+     */
+    @rpc({ semantics: 'query' })
+    reading(): unknown {
+        return new Reading(this.state.setpoint)
     }
 }
 

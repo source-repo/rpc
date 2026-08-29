@@ -1,6 +1,7 @@
 import { parentPort, workerData } from 'node:worker_threads'
 import { declaredAuthority, declaredConflation, declaredEffect, declaredSemantics, declaredSets, markedMethods, type RpcMethodOptions } from './Expose.js'
 import { RpcPauseGate, type RpcFrameEvent, type RpcGateOutcome } from './PauseGate.js'
+import { valueRefusal } from './Value.js'
 
 /**
  * The other side of a worker-hosted instance: what runs where the logic is.
@@ -157,6 +158,14 @@ export const serveInWorker = (instance: object, options: RpcServeInWorkerOptions
                 // and that is the difference between stopping between calls and stopping on a line.
                 context.gate(maxPauseMs)
                 const result = await (handler as (...params: unknown[]) => unknown).call(instance, ...message.params)
+                // The same rule on the way back. A handler returning one of its own class instances
+                // is the ordinary way to write one, and the caller would receive a shape with no
+                // methods - so it is refused here, where the method that did it can be named.
+                const refused = valueRefusal(result, { at: `${message.method}'s result` })
+                if (refused) {
+                    port.postMessage({ id: message.id, failure: { message: refused.why, name: 'RpcWorkerRefused' } })
+                    return
+                }
                 try {
                     port.postMessage({ id: message.id, result })
                 } catch {

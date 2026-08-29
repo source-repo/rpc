@@ -20,6 +20,7 @@ const workerModule = fileURLToPath(new URL('./fixture/ovenWorker.js', import.met
 
 interface Oven {
     bake(target: number): Promise<{ setpoint: number; batches: number }>
+    reading(): Promise<unknown>
     ungated(): Promise<number>
     refuse(): Promise<never>
     unclonable(): Promise<unknown>
@@ -59,7 +60,7 @@ test('the worker says which methods it serves, so nothing here has to be told tw
     const { host } = await hosted(t)
     const methods = await host.methods()
 
-    t.deepEqual([...methods].sort(), ['bake', 'heat', 'refuse', 'soak', 'unclonable', 'ungated'], 'walked from the instance rather than listed on this side')
+    t.deepEqual([...methods].sort(), ['bake', 'heat', 'reading', 'refuse', 'soak', 'unclonable', 'ungated'], 'walked from the instance rather than listed on this side')
 })
 
 test('a handler is stopped between its own statements, and the server keeps answering', async (t) => {
@@ -152,16 +153,41 @@ test('and a code a handler may not choose is still the server’s to refuse', as
 test('an argument that cannot cross is refused with the reason, not silently flattened', async (t) => {
     const { oven } = await hosted(t)
 
+    // Caught by the boundary's own rule before it is sent, rather than by `postMessage` throwing -
+    // so the reason names the argument and says what is wrong with it.
     const refusal = await t.throwsAsync((oven as unknown as { bake(target: unknown): Promise<unknown> }).bake(() => 1), { instanceOf: RpcWorkerRefused })
-    t.regex(refusal!.message, /do not survive a thread boundary/)
+    t.regex(refusal!.message, /a function cannot be sent anywhere/)
+    t.is(refusal!.detail, 'bake argument 0')
     t.deepEqual(await oven.bake(120), { setpoint: 120, batches: 1 }, 'and the instance is unharmed by having been asked')
+})
+
+test('a class instance is refused rather than arriving as a shape with no methods', async (t) => {
+    const { oven } = await hosted(t)
+    await oven.bake(210)
+
+    // The case `postMessage` carries happily: without a rule of its own, the caller would receive
+    // `{ celsius: 210 }` with no `clamp`, and nothing anywhere would have said so.
+    const refusal = await t.throwsAsync(oven.reading())
+    t.regex(refusal!.message, /looks right and has no methods/)
+    t.regex(refusal!.message, /Reading/)
+})
+
+test('an argument carrying a class instance is refused before it is sent', async (t) => {
+    const { oven } = await hosted(t)
+
+    class Schedule {
+        constructor(readonly hold: number) {}
+    }
+    const refusal = await t.throwsAsync((oven as unknown as { bake(target: unknown): Promise<unknown> }).bake({ schedule: new Schedule(5) }), { instanceOf: RpcWorkerRefused })
+    t.is(refusal!.detail, 'bake argument 0.schedule', 'and it names where in the argument the trouble is')
+    t.deepEqual(await oven.bake(120), { setpoint: 120, batches: 1 }, 'the instance is unharmed by having been asked')
 })
 
 test('a result that cannot cross fails as itself rather than as a timeout', async (t) => {
     const { oven } = await hosted(t)
 
     const refusal = await t.throwsAsync(oven.unclonable())
-    t.regex(refusal!.message, /does not survive a thread boundary/)
+    t.regex(refusal!.message, /a function cannot be sent anywhere/, 'named on the way back, by the method that returned it')
 })
 
 test('a closed host fails what was waiting rather than leaving it to a deadline', async (t) => {
