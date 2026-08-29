@@ -42,6 +42,14 @@ export type RpcJournalEntryKind =
     | 'activation'
 
 export interface RpcJournalEntry {
+    /**
+     * Which version of this format the entry was written in.
+     *
+     * Per entry rather than per journal, and that is not tidiness: a journal outlives a deployment,
+     * so a chain may legitimately span a format change. Putting the version on the journal would
+     * make the first entry written after an upgrade a lie about every entry before it.
+     */
+    readonly journalFormatVersion: number
     /** The journal's own position. Monotonic per component, and gapless by construction. */
     readonly sequence: bigint
     readonly componentId: string
@@ -98,7 +106,7 @@ export interface RpcJournalCapabilities {
 
 export interface RpcJournal {
     readonly capabilities: RpcJournalCapabilities
-    append(draft: Omit<RpcJournalEntry, 'sequence' | 'previousHash' | 'entryHash'>): Promise<RpcJournalEntry>
+    append(draft: Omit<RpcJournalEntry, 'journalFormatVersion' | 'sequence' | 'previousHash' | 'entryHash'> & { journalFormatVersion?: number }): Promise<RpcJournalEntry>
     /** Everything from `fromSequence` on, in order. Everything, when it is not given. */
     read(componentId: string, fromSequence?: bigint): Promise<readonly RpcJournalEntry[]>
     /**
@@ -110,7 +118,28 @@ export interface RpcJournal {
     compactTo(snapshot: RpcSnapshotEnvelope): Promise<number>
 }
 
-const hashedForm = (entry: Omit<RpcJournalEntry, 'entryHash'>) => ({ ...entry })
+export const RPC_JOURNAL_FORMAT_VERSION = 1
+
+/**
+ * The fields the hash is taken over, written out rather than spread.
+ *
+ * Order is not load-bearing - the canonical encoder sorts keys - but the *set* is, and listing it
+ * is what keeps a field added later from silently joining or leaving the digest. A journal is read
+ * by an implementation that was compiled before the field existed, and the two have to agree about
+ * what was hashed or they disagree about every entry.
+ */
+const hashedForm = (entry: Omit<RpcJournalEntry, 'entryHash'>) => ({
+    journalFormatVersion: entry.journalFormatVersion,
+    sequence: entry.sequence,
+    componentId: entry.componentId,
+    kind: entry.kind,
+    epoch: entry.epoch,
+    at: entry.at,
+    logicalTime: entry.logicalTime,
+    inputSequence: entry.inputSequence,
+    payload: entry.payload,
+    previousHash: entry.previousHash
+})
 
 /** Seal an entry onto the end of a chain. The hash covers the link, so the order is part of it. */
 export const sealEntry = async (draft: Omit<RpcJournalEntry, 'entryHash'>): Promise<RpcJournalEntry> =>
@@ -151,10 +180,10 @@ export class RpcMemoryJournal implements RpcJournal {
     readonly capabilities: RpcJournalCapabilities = { durable: false, appendOnly: true, tamperEvident: true }
     private readonly entries = new Map<string, RpcJournalEntry[]>()
 
-    async append(draft: Omit<RpcJournalEntry, 'sequence' | 'previousHash' | 'entryHash'>): Promise<RpcJournalEntry> {
+    async append(draft: Omit<RpcJournalEntry, 'journalFormatVersion' | 'sequence' | 'previousHash' | 'entryHash'> & { journalFormatVersion?: number }): Promise<RpcJournalEntry> {
         const held = this.entries.get(draft.componentId) ?? []
         const last = held[held.length - 1]
-        const entry = await sealEntry({ ...draft, sequence: (last?.sequence ?? 0n) + 1n, previousHash: last?.entryHash ?? '' })
+        const entry = await sealEntry({ journalFormatVersion: RPC_JOURNAL_FORMAT_VERSION, ...draft, sequence: (last?.sequence ?? 0n) + 1n, previousHash: last?.entryHash ?? '' })
         held.push(entry)
         this.entries.set(draft.componentId, held)
         return entry
@@ -357,3 +386,94 @@ export const recoverForward = async (
         }
     }
 }
+
+/**
+ * The form a journal takes when it is written down, and what another language reads.
+ *
+ * The same discipline as `toPortable` for a snapshot, for the same reason and with the same sharp
+ * edge: **positions cross as decimal strings**. JSON has one numeric type and it is an IEEE-754
+ * double, so an input sequence past 2^53 rounds silently - and a replay that began at a rounded
+ * position would re-apply an input or skip one, with nothing at the time to say which. A position
+ * that arrived as a JSON *number* is refused rather than converted, because nothing here can tell
+ * whether it survived the trip and converting it would launder a rounding error into an authoritative
+ * position.
+ */
+export interface RpcPortableJournalEntry {
+    readonly journalFormatVersion: number
+    readonly sequence: string
+    readonly componentId: string
+    readonly kind: RpcJournalEntryKind
+    readonly epoch: string
+    readonly at: string
+    readonly logicalTime?: string
+    readonly inputSequence?: string
+    readonly payload: unknown
+    readonly previousHash: string
+    readonly entryHash: string
+}
+
+export const toPortableJournalEntry = (entry: RpcJournalEntry): RpcPortableJournalEntry => ({
+    journalFormatVersion: entry.journalFormatVersion,
+    sequence: entry.sequence.toString(),
+    componentId: entry.componentId,
+    kind: entry.kind,
+    epoch: entry.epoch.toString(),
+    at: entry.at,
+    ...(entry.logicalTime !== undefined ? { logicalTime: entry.logicalTime.toString() } : {}),
+    ...(entry.inputSequence !== undefined ? { inputSequence: entry.inputSequence.toString() } : {}),
+    payload: entry.payload,
+    previousHash: entry.previousHash,
+    entryHash: entry.entryHash
+})
+
+/**
+ * One position, from the decimal string it crosses as. A number is refused, never converted.
+ *
+ * The same function as the snapshot's, deliberately duplicated rather than shared: they are one
+ * rule about two formats, and a shared helper would make a change to one of them a change to both
+ * by accident. The rule is worth restating; the coupling is not.
+ */
+const asPosition = (value: unknown, path: string): bigint => {
+    if (typeof value === 'number') throw new RpcSnapshotRefused(`${path} is a JSON number, and a position crosses as a decimal string - a number here has already been through a double`, path)
+    if (typeof value !== 'string') throw new RpcSnapshotRefused(`${path} is ${typeof value}, and a position crosses as a decimal string`, path)
+    if (!/^-?(0|[1-9][0-9]*)$/.test(value)) throw new RpcSnapshotRefused(`${path} is "${value}", which is not a decimal integer`, path)
+    return BigInt(value)
+}
+
+const KINDS: readonly RpcJournalEntryKind[] = ['input', 'state', 'obligation', 'activation']
+
+/**
+ * Read one entry, refusing anything it does not understand rather than defaulting it.
+ *
+ * A kind this version has not heard of is a refusal naming the field. A journal is read by a process
+ * deciding whether to replay a plant's history into a live component, and a reader lenient enough to
+ * treat an unknown kind as *some entry* is lenient enough to replay a journal that says something
+ * else.
+ */
+export const fromPortableJournalEntry = (portable: RpcPortableJournalEntry): RpcJournalEntry => {
+    if (typeof portable !== 'object' || portable === null) throw new RpcSnapshotRefused('a journal entry is a JSON object')
+    if (portable.journalFormatVersion > RPC_JOURNAL_FORMAT_VERSION)
+        throw new RpcSnapshotRefused(
+            `this entry is journal format version ${portable.journalFormatVersion} and this implementation reads up to ${RPC_JOURNAL_FORMAT_VERSION}`,
+            'journalFormatVersion'
+        )
+    if (!KINDS.includes(portable.kind)) throw new RpcSnapshotRefused(`${String(portable.kind)} is not a journal entry kind this implementation knows`, 'kind')
+    return Object.freeze({
+        journalFormatVersion: portable.journalFormatVersion,
+        sequence: asPosition(portable.sequence, 'sequence'),
+        componentId: portable.componentId,
+        kind: portable.kind,
+        epoch: asPosition(portable.epoch, 'epoch'),
+        at: portable.at,
+        ...(portable.logicalTime !== undefined ? { logicalTime: asPosition(portable.logicalTime, 'logicalTime') } : {}),
+        ...(portable.inputSequence !== undefined ? { inputSequence: asPosition(portable.inputSequence, 'inputSequence') } : {}),
+        payload: portable.payload,
+        previousHash: portable.previousHash,
+        entryHash: portable.entryHash
+    })
+}
+
+/** A whole journal, written down. What a fixture is, and what a durable store holds. */
+export const toPortableJournal = (entries: readonly RpcJournalEntry[]): readonly RpcPortableJournalEntry[] => entries.map(toPortableJournalEntry)
+
+export const fromPortableJournal = (portable: readonly RpcPortableJournalEntry[]): readonly RpcJournalEntry[] => portable.map(fromPortableJournalEntry)

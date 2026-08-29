@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+### A journal written in one language chains to the same hashes in the other
+
+The journal arrived last time with its portability stated as a property of the shape rather than a demonstrated fact, because no second implementation read it. `SourceRpc.Continuity` now does, against a fixture both suites read verbatim - `oven-journal.json`, six entries covering all four kinds, produced once by the TypeScript implementation and committed.
+
+**The claim is stronger than the snapshot's, and deliberately.** A snapshot hash is over one document; a chain is over every document *and the order they are in*. Both implementations compute the same hash for every entry, reject an entry altered in place because it fails its own hash, and reject one removed from the middle because the link breaks. And both reach the same replay plan from the same snapshot over the same journal: from `9007199254740993`, exactly `…994` and `…995`.
+
+Those positions are consecutive and past 2^53 on purpose. A replay needs consecutive inputs, and the first of the three is `9007199254740992` as a double - a position that is not itself - so a reader treating them as numbers would begin one input earlier than the snapshot reached and re-apply a command, with nothing at the time to say so. The .NET suite cannot write the assertion for the other half of that, and the reason is the finding: the literal `9007199254740993d` is already `9007199254740992` by the time the compiler is done with it. The test says so rather than working around it.
+
+The entry format gained a `journalFormatVersion`, per entry rather than per journal - a chain may legitimately span an upgrade, and putting the version on the journal would make the first entry written after one a lie about every entry before it. A version from the future is refused rather than read optimistically, and an unknown entry kind is refused rather than read as something else, on both sides: a reader lenient enough to take this format is lenient enough to take one that says something else, in a process about to replay a plant's history into a live component.
+
+Sixty new symbols joined `PublicAPI.Unshipped.txt`, which is the file that made the analyser stop the build until they did.
+
 ### Recover forward stops being an instruction
 
 The coordinator has ended a handoff that failed past the commit point with `failed-after-commit` and the words *recover forward* since Phase 3, and left what they meant to the deployment. This is what they mean: the successor holds authority and may already have acted, so the incumbent's snapshot is not a rollback and must never be treated as one - what is available is the last snapshot plus every input recorded after it, replayed in order into a revision that can take them. `recoverForward` produces that plan or refuses, and the refusal is the more valuable half: a deployment told *recover forward* by one function and *this journal cannot* by the next knows it is in the case the design warns about, where the remaining routes are a new revision or a separately designed compatibility window - rather than discovering it halfway through a replay.

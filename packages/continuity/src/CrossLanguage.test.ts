@@ -13,7 +13,11 @@ import {
     sealSnapshot,
     toPortable,
     verifyManifest,
+    verifyJournal,
     verifySnapshot,
+    fromPortableJournal,
+    replayableFrom,
+    type RpcPortableJournalEntry,
     type RpcPortableSnapshot,
     type RpcRevisionManifest
 } from './index.js'
@@ -235,4 +239,73 @@ test('the successor plans a restore from a snapshot it did not write', async (t)
     t.true(plan.admissible)
     t.is(plan.entries.length, 8, 'every kind in the fixture, so a port that forgot one is caught here')
     t.is(plan.entries.find((entry) => entry.id === 'stir-watchdog')!.resolution, 'reestablished')
+})
+
+const journal = () => fixture<RpcPortableJournalEntry[]>('oven-journal.json')
+
+test('the journal both languages read chains here too, to the hashes the file carries', async (t) => {
+    const entries = fromPortableJournal(journal())
+
+    t.is(entries.length, 6)
+    t.is(await verifyJournal(entries), undefined)
+    t.is(entries[0]!.entryHash, 'urSBtdjl45PORyyKqQGVIJs24cJ6kgC4aTcygc2MwUo')
+    t.is(entries[entries.length - 1]!.entryHash, 'i0OGEM9qx9zB0-9kkX474yiMsgYQMV5iJo7V7URI0fs')
+})
+
+test('an input position past 2^53 survives the journal, and would not survive a number', (t) => {
+    const inputs = fromPortableJournal(journal()).filter((entry) => entry.kind === 'input')
+
+    t.deepEqual(
+        inputs.map((entry) => entry.inputSequence),
+        [9007199254740993n, 9007199254740994n, 9007199254740995n]
+    )
+    t.is(Number(9007199254740993n), 9007199254740992, 'which is a position that is not itself')
+})
+
+test('a journal position that arrived as a JSON number is refused rather than converted', (t) => {
+    const mangled = journal().map((entry) => (entry.inputSequence ? { ...entry, inputSequence: Number(entry.inputSequence) as unknown as string } : entry))
+    const refusal = t.throws(() => fromPortableJournal(mangled), { instanceOf: RpcSnapshotRefused })
+    t.is((refusal as RpcSnapshotRefused).path, 'inputSequence')
+    t.regex(refusal!.message, /already been through a double/)
+})
+
+test('an entry altered after it was written fails its own hash, on this side as well', async (t) => {
+    const altered = journal().map((entry, index) => (index === 1 ? { ...entry, payload: { ...(entry.payload as object), params: { target: 900 } } } : entry))
+    t.regex((await verifyJournal(fromPortableJournal(altered))) ?? '', /its content changed after it was written/)
+})
+
+test('both implementations work out the same replay from the same snapshot and the same journal', async (t) => {
+    // The claim the fixture exists for, in its strongest form: not that each side can read the file,
+    // but that each side reaches the same conclusion about what recovering forward would mean.
+    const snapshot = { ...fromPortable(handoff()), componentId: 'oven3' }
+    const outcome = await replayableFrom(snapshot, fromPortableJournal(journal()), 'suppress-effects')
+
+    t.true('plan' in outcome)
+    if (!('plan' in outcome)) return
+    t.is(outcome.plan.fromInputSequence, 9007199254740993n)
+    t.is(outcome.plan.toInputSequence, 9007199254740995n)
+    t.deepEqual(
+        outcome.plan.inputs.map((entry) => entry.inputSequence),
+        [9007199254740994n, 9007199254740995n]
+    )
+})
+
+test('and the same gap refuses on this side, for the same reason', async (t) => {
+    const snapshot = { ...fromPortable(handoff()), componentId: 'oven3', lastAppliedInputSequence: 9007199254740991n }
+    const outcome = await replayableFrom(snapshot, fromPortableJournal(journal()), 'suppress-effects')
+
+    t.true('refused' in outcome)
+    if ('refused' in outcome) t.regex(outcome.refused, /a fabrication rather than a recovery/)
+})
+
+test('an unknown entry kind refuses rather than being read as something else', (t) => {
+    const unknown = journal().map((entry) => (entry.kind === 'obligation' ? { ...entry, kind: 'speculation' as unknown as RpcPortableJournalEntry['kind'] } : entry))
+    const refusal = t.throws(() => fromPortableJournal(unknown), { instanceOf: RpcSnapshotRefused })
+    t.is((refusal as RpcSnapshotRefused).path, 'kind')
+})
+
+test('a journal format from the future is refused rather than read optimistically', (t) => {
+    const ahead = journal().map((entry) => ({ ...entry, journalFormatVersion: 2 }))
+    const refusal = t.throws(() => fromPortableJournal(ahead), { instanceOf: RpcSnapshotRefused })
+    t.is((refusal as RpcSnapshotRefused).path, 'journalFormatVersion')
 })

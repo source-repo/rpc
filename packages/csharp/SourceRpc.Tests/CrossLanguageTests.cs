@@ -6,7 +6,7 @@ namespace SourceRpc.Tests;
 /// <summary>
 /// The other half of the cross-language claim.
 ///
-/// These read the same three files the TypeScript suite reads, and ask the same questions of them.
+/// These read the same files the TypeScript suite reads, and ask the same questions of them.
 /// Two implementations that both compute a digest are not two implementations of one digest until
 /// one file has been asked of both and the answers compared - everything else is two suites that
 /// are green about different things.
@@ -256,5 +256,102 @@ public class CrossLanguageTests
         var reconciled = RpcManifests.Reconcile(manifest with { State = manifest.State with { Version = 3, SchemaHash = "v3-hash" } }, Handoff());
         Assert.True(reconciled.Agreed);
         Assert.True(reconciled.MigrationNeeded);
+    }
+
+    private static IReadOnlyList<RpcJournalEntry> Journal() => RpcPortableJournal.Read(Fixture("oven-journal.json"));
+
+    [Fact]
+    public void A_journal_written_by_TypeScript_chains_to_the_same_hashes_here()
+    {
+        // The journal's equivalent of the snapshot claim, and it is a stronger one: a snapshot hash
+        // is over one document, and a chain is over every document and the order they are in. If
+        // this holds, the two implementations agree about what a component did and when.
+        var entries = Journal();
+        Assert.Equal(6, entries.Count);
+        Assert.Null(RpcJournals.Verify(entries));
+        Assert.Equal("urSBtdjl45PORyyKqQGVIJs24cJ6kgC4aTcygc2MwUo", entries[0].EntryHash);
+        Assert.Equal("i0OGEM9qx9zB0-9kkX474yiMsgYQMV5iJo7V7URI0fs", entries[^1].EntryHash);
+    }
+
+    [Fact]
+    public void Every_journal_entry_kind_in_the_fixture_is_understood()
+    {
+        // A kind this implementation had forgotten would refuse rather than be read as something
+        // else, which is the point - but only if the fixture carries all of them.
+        var kinds = Journal().Select(entry => entry.Kind).Distinct().OrderBy(kind => kind).ToList();
+        Assert.Equal([RpcJournalEntryKind.Input, RpcJournalEntryKind.State, RpcJournalEntryKind.Obligation, RpcJournalEntryKind.Activation], kinds);
+    }
+
+    [Fact]
+    public void An_input_position_past_2_to_the_53_arrives_intact_in_a_journal_too()
+    {
+        var inputs = Journal().Where(entry => entry.Kind == RpcJournalEntryKind.Input).ToList();
+        Assert.Equal([9007199254740993L, 9007199254740994L, 9007199254740995L], inputs.Select(entry => entry.InputSequence!.Value));
+
+        // The first of them is 9007199254740992 as a double - a position that is not itself. A
+        // reader that took these as numbers would begin a replay one input earlier than the
+        // snapshot actually reached, re-applying a command with nothing at the time to say so.
+        // Writing the other half of that as an assertion is impossible, and instructively so: the
+        // literal 9007199254740993d is already 9007199254740992 by the time the compiler is done
+        // with it. The value cannot be named in the type the wire would have used.
+        Assert.Equal(9007199254740992d, (double)9007199254740993L);
+    }
+
+    [Fact]
+    public void A_journal_position_that_arrived_as_a_JSON_number_is_refused_rather_than_converted()
+    {
+        var mangled = Fixture("oven-journal.json").Replace("\"inputSequence\": \"9007199254740993\"", "\"inputSequence\": 9007199254740993");
+        var refusal = Assert.Throws<RpcPortableSnapshot.RefusedException>(() => RpcPortableJournal.Read(mangled));
+        Assert.Equal("inputSequence", refusal.Path);
+        Assert.Contains("already been through a double", refusal.Message);
+    }
+
+    [Fact]
+    public void An_entry_altered_after_it_was_written_fails_its_own_hash()
+    {
+        var mangled = Fixture("oven-journal.json").Replace("\"target\": 205", "\"target\": 900");
+        var broken = RpcJournals.Verify(RpcPortableJournal.Read(mangled));
+        Assert.NotNull(broken);
+        Assert.Contains("its content changed after it was written", broken);
+    }
+
+    [Fact]
+    public void A_dotnet_successor_can_work_out_what_it_would_have_to_replay()
+    {
+        // The case the whole phase is about: a .NET activation has taken over, the handoff failed
+        // past the commit point, and this is what recovering forward would mean here.
+        var snapshot = Handoff() with { ComponentId = "oven3", LastAppliedInputSequence = 9007199254740993L };
+        var plan = RpcJournals.ReplayableFrom(snapshot, Journal());
+
+        Assert.Null(plan.Refused);
+        Assert.Equal(9007199254740993L, plan.FromInputSequence);
+        Assert.Equal(9007199254740995L, plan.ToInputSequence);
+        Assert.Equal([9007199254740994L, 9007199254740995L], plan.Inputs.Select(entry => entry.InputSequence!.Value));
+    }
+
+    [Fact]
+    public void A_gap_refuses_here_for_the_same_reason_it_refuses_there()
+    {
+        var snapshot = Handoff() with { ComponentId = "oven3", LastAppliedInputSequence = 9007199254740991L };
+        var plan = RpcJournals.ReplayableFrom(snapshot, Journal());
+
+        Assert.NotNull(plan.Refused);
+        Assert.Contains("a fabrication rather than a recovery", plan.Refused);
+    }
+
+    [Fact]
+    public void An_unknown_journal_entry_kind_refuses_rather_than_being_read_as_something_else()
+    {
+        var unknown = Fixture("oven-journal.json").Replace("\"kind\": \"obligation\"", "\"kind\": \"speculation\"");
+        var refusal = Assert.Throws<RpcPortableSnapshot.RefusedException>(() => RpcPortableJournal.Read(unknown));
+        Assert.Equal("kind", refusal.Path);
+    }
+
+    [Fact]
+    public void A_journal_format_from_the_future_is_refused_rather_than_read_optimistically()
+    {
+        var ahead = Fixture("oven-journal.json").Replace("\"journalFormatVersion\": 1", "\"journalFormatVersion\": 2");
+        var refusal = Assert.Throws<RpcPortableSnapshot.RefusedException>(() => RpcPortableJournal.Read(ahead));
+        Assert.Equal("journalFormatVersion", refusal.Path);
     }
 }

@@ -1,6 +1,6 @@
 # SourceRpc.Continuity
 
-Read, verify and take over a [Source RPC](https://github.com/source-repo/rpc) component's state, in .NET: the snapshot envelope, the revision manifest, the obligations a running activation was holding, and the rules that decide whether a .NET revision may replace a TypeScript one.
+Read, verify and take over a [Source RPC](https://github.com/source-repo/rpc) component's state, in .NET: the snapshot envelope, the revision manifest, the obligations a running activation was holding, the journal of what it did between snapshots, and the rules that decide whether a .NET revision may replace a TypeScript one.
 
 Beside `SourceRpc` rather than in it, for `SourceRpc.Query`'s reason: a device binding that answers calls and is never replaced online should not carry the snapshot envelope, the obligation vocabulary and the restore rules to reach a network it only ever serves. Unlike `SourceRpc.Query` it takes no dependency at all beyond the core — what it does is read a document and apply rules, and both of those are arithmetic. That is deliberate. This runs in the process that is about to become authoritative for a piece of plant, and the fewer things that have to load correctly before it can say *no*, the better.
 
@@ -15,6 +15,22 @@ if (RpcSnapshots.AdmissibleForHandoff(snapshot) is { } why) throw new Exception(
 ```
 
 It is checked rather than asserted: the fixtures under `packages/conformance/fixtures/continuity` are read verbatim by this suite and by the TypeScript one, and two implementations that both compute a digest are not two implementations of one digest until a single file has been asked of both.
+
+## What it did between the snapshots
+
+A snapshot describes one instant. A journal describes what happened between them, and it is what turns a coordinator's `failed-after-commit` — *recover forward* — into something a .NET successor can actually carry out.
+
+```csharp
+var entries = RpcPortableJournal.Read(File.ReadAllText("oven-journal.json"));
+if (RpcJournals.Verify(entries) is { } broken) throw new Exception(broken);
+
+var plan = RpcJournals.ReplayableFrom(snapshot, entries);
+if (plan.Refused is { } why) throw new Exception(why);   // a gap refuses; it never replays what is left
+```
+
+The claim here is stronger than the snapshot's, and checked against the same fixture: a snapshot hash is over one document, while a **chain** is over every document and the order they are in. An entry altered in place fails its own hash and one removed from the middle breaks the link, in both implementations, over the same bytes.
+
+**A gap refuses.** A journal missing input 41 can still apply 42 onwards, and the state that results never existed in the plant — it is the state of a component that received one fewer input than it did. It would look exactly like a recovery.
 
 ## Positions are decimal strings
 

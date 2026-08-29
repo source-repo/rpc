@@ -253,9 +253,9 @@ await replay(outcome.plan, (entry) => successor.apply(entry.payload))
 
 `RpcMemoryJournal` answers `durable: false`, like `MemoryOwnershipStore` before it. It can carry a failed handoff forward, which takes seconds, and it cannot answer anything about last night — both true, and only one of them is what somebody means when they ask for a journal.
 
-## What is not here
+**And another language reads it.** `oven-journal.json` in `packages/conformance/fixtures/continuity` is read verbatim by this suite and by `SourceRpc.Tests`, and both compute the same chain of hashes over it and reach the same replay plan from the same snapshot. That is a stronger claim than the snapshot's: a snapshot hash is over one document, and a chain is over every document and the order they are in.
 
-**A journal that another language reads.** The entry format is JSON-shaped for it, and no second implementation reads it yet; until one fixture has been asked of two of them, *portable* is a property of the shape rather than a demonstrated fact — which is the standard the snapshot's own cross-language claim had to meet.
+## What is not here
 
 Reverse migrations. The pre-migration snapshot is what a rollback uses, and only until the new activation has begun authoritative work — after that, restoring it would lose history and might repeat effects. A reverse chain would look like a general undo and would not be one.
 

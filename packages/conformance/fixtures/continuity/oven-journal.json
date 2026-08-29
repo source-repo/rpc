@@ -1,0 +1,105 @@
+[
+    {
+        "journalFormatVersion": 1,
+        "sequence": "1",
+        "componentId": "oven3",
+        "kind": "state",
+        "epoch": "3",
+        "at": "2026-03-14T03:12:00.000Z",
+        "logicalTime": "4990",
+        "payload": {
+            "snapshotId": "sha256-oven3-at-03-12",
+            "stateVersion": 1
+        },
+        "previousHash": "",
+        "entryHash": "urSBtdjl45PORyyKqQGVIJs24cJ6kgC4aTcygc2MwUo"
+    },
+    {
+        "journalFormatVersion": 1,
+        "sequence": "2",
+        "componentId": "oven3",
+        "kind": "input",
+        "epoch": "3",
+        "at": "2026-03-14T03:13:00.000Z",
+        "logicalTime": "4995",
+        "inputSequence": "9007199254740993",
+        "payload": {
+            "method": "setSetpoint",
+            "from": "line-controller",
+            "params": {
+                "target": 205
+            }
+        },
+        "previousHash": "urSBtdjl45PORyyKqQGVIJs24cJ6kgC4aTcygc2MwUo",
+        "entryHash": "af2CX-VVl9uQW0-aFT7RZVsD4n4OooarcscIXovYXow"
+    },
+    {
+        "journalFormatVersion": 1,
+        "sequence": "3",
+        "componentId": "oven3",
+        "kind": "obligation",
+        "epoch": "3",
+        "at": "2026-03-14T03:13:30.000Z",
+        "payload": {
+            "registered": "bake-dwell",
+            "kind": "timer",
+            "policy": "preserve-remaining"
+        },
+        "previousHash": "af2CX-VVl9uQW0-aFT7RZVsD4n4OooarcscIXovYXow",
+        "entryHash": "3AuJ2Z49lyLJ6xnzwRk8RINX4fV95X49EHfEuBVoljU"
+    },
+    {
+        "journalFormatVersion": 1,
+        "sequence": "4",
+        "componentId": "oven3",
+        "kind": "input",
+        "epoch": "3",
+        "at": "2026-03-14T03:14:00.000Z",
+        "logicalTime": "5000",
+        "inputSequence": "9007199254740994",
+        "payload": {
+            "method": "startBatch",
+            "from": "line-controller",
+            "params": {
+                "hold": 60
+            }
+        },
+        "previousHash": "3AuJ2Z49lyLJ6xnzwRk8RINX4fV95X49EHfEuBVoljU",
+        "entryHash": "PebybAtZvEpKEZboBdjpr8t9OmNtdTG9eDIE5270jIA"
+    },
+    {
+        "journalFormatVersion": 1,
+        "sequence": "5",
+        "componentId": "oven3",
+        "kind": "activation",
+        "epoch": "4",
+        "at": "2026-03-14T03:14:30.000Z",
+        "payload": {
+            "classification": "activated",
+            "from": "a",
+            "to": "b",
+            "committedEpoch": "4"
+        },
+        "previousHash": "PebybAtZvEpKEZboBdjpr8t9OmNtdTG9eDIE5270jIA",
+        "entryHash": "PZraGPT3v6Ut8SDq_DUORNTKiN0en1lJi80o862GjiQ"
+    },
+    {
+        "journalFormatVersion": 1,
+        "sequence": "6",
+        "componentId": "oven3",
+        "kind": "input",
+        "epoch": "4",
+        "at": "2026-03-14T03:15:00.000Z",
+        "logicalTime": "5010",
+        "inputSequence": "9007199254740995",
+        "payload": {
+            "method": "setSetpoint",
+            "from": "line-controller",
+            "params": {
+                "target": 210
+            }
+        },
+        "previousHash": "PZraGPT3v6Ut8SDq_DUORNTKiN0en1lJi80o862GjiQ",
+        "entryHash": "i0OGEM9qx9zB0-9kkX474yiMsgYQMV5iJo7V7URI0fs"
+    }
+]

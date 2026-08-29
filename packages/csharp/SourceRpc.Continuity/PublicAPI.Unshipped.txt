@@ -507,3 +507,63 @@ static SourceRpc.Continuity.RpcTimerObligation.operator !=(SourceRpc.Continuity.
 static SourceRpc.Continuity.RpcTimerObligation.operator ==(SourceRpc.Continuity.RpcTimerObligation? left, SourceRpc.Continuity.RpcTimerObligation? right) -> bool
 static SourceRpc.Continuity.RpcWatchdogObligation.operator !=(SourceRpc.Continuity.RpcWatchdogObligation? left, SourceRpc.Continuity.RpcWatchdogObligation? right) -> bool
 static SourceRpc.Continuity.RpcWatchdogObligation.operator ==(SourceRpc.Continuity.RpcWatchdogObligation? left, SourceRpc.Continuity.RpcWatchdogObligation? right) -> bool
+const SourceRpc.Continuity.RpcPortableJournal.Version = 1 -> int
+override SourceRpc.Continuity.RpcJournalEntry.Equals(object? obj) -> bool
+override SourceRpc.Continuity.RpcJournalEntry.GetHashCode() -> int
+override SourceRpc.Continuity.RpcJournalEntry.ToString() -> string!
+override SourceRpc.Continuity.RpcReplayPlan.Equals(object? obj) -> bool
+override SourceRpc.Continuity.RpcReplayPlan.GetHashCode() -> int
+override SourceRpc.Continuity.RpcReplayPlan.ToString() -> string!
+SourceRpc.Continuity.RpcJournalEntry
+SourceRpc.Continuity.RpcJournalEntry.At.get -> string!
+SourceRpc.Continuity.RpcJournalEntry.At.init -> void
+SourceRpc.Continuity.RpcJournalEntry.<Clone>$() -> SourceRpc.Continuity.RpcJournalEntry!
+SourceRpc.Continuity.RpcJournalEntry.ComponentId.get -> string!
+SourceRpc.Continuity.RpcJournalEntry.ComponentId.init -> void
+SourceRpc.Continuity.RpcJournalEntry.EntryHash.get -> string!
+SourceRpc.Continuity.RpcJournalEntry.EntryHash.init -> void
+SourceRpc.Continuity.RpcJournalEntry.Epoch.get -> long
+SourceRpc.Continuity.RpcJournalEntry.Epoch.init -> void
+SourceRpc.Continuity.RpcJournalEntry.Equals(SourceRpc.Continuity.RpcJournalEntry? other) -> bool
+SourceRpc.Continuity.RpcJournalEntry.InputSequence.get -> long?
+SourceRpc.Continuity.RpcJournalEntry.InputSequence.init -> void
+SourceRpc.Continuity.RpcJournalEntry.JournalFormatVersion.get -> int
+SourceRpc.Continuity.RpcJournalEntry.JournalFormatVersion.init -> void
+SourceRpc.Continuity.RpcJournalEntryKind
+SourceRpc.Continuity.RpcJournalEntryKind.Activation = 3 -> SourceRpc.Continuity.RpcJournalEntryKind
+SourceRpc.Continuity.RpcJournalEntry.Kind.get -> SourceRpc.Continuity.RpcJournalEntryKind
+SourceRpc.Continuity.RpcJournalEntry.Kind.init -> void
+SourceRpc.Continuity.RpcJournalEntryKind.Input = 0 -> SourceRpc.Continuity.RpcJournalEntryKind
+SourceRpc.Continuity.RpcJournalEntryKind.Obligation = 2 -> SourceRpc.Continuity.RpcJournalEntryKind
+SourceRpc.Continuity.RpcJournalEntryKind.State = 1 -> SourceRpc.Continuity.RpcJournalEntryKind
+SourceRpc.Continuity.RpcJournalEntry.LogicalTime.get -> long?
+SourceRpc.Continuity.RpcJournalEntry.LogicalTime.init -> void
+SourceRpc.Continuity.RpcJournalEntry.Payload.get -> System.Text.Json.JsonElement
+SourceRpc.Continuity.RpcJournalEntry.Payload.init -> void
+SourceRpc.Continuity.RpcJournalEntry.PreviousHash.get -> string!
+SourceRpc.Continuity.RpcJournalEntry.PreviousHash.init -> void
+SourceRpc.Continuity.RpcJournalEntry.RpcJournalEntry() -> void
+SourceRpc.Continuity.RpcJournalEntry.Sequence.get -> long
+SourceRpc.Continuity.RpcJournalEntry.Sequence.init -> void
+SourceRpc.Continuity.RpcJournals
+SourceRpc.Continuity.RpcPortableJournal
+SourceRpc.Continuity.RpcReplayPlan
+SourceRpc.Continuity.RpcReplayPlan.<Clone>$() -> SourceRpc.Continuity.RpcReplayPlan!
+SourceRpc.Continuity.RpcReplayPlan.Equals(SourceRpc.Continuity.RpcReplayPlan? other) -> bool
+SourceRpc.Continuity.RpcReplayPlan.FromInputSequence.get -> long
+SourceRpc.Continuity.RpcReplayPlan.FromInputSequence.init -> void
+SourceRpc.Continuity.RpcReplayPlan.Inputs.get -> System.Collections.Generic.IReadOnlyList<SourceRpc.Continuity.RpcJournalEntry!>!
+SourceRpc.Continuity.RpcReplayPlan.Inputs.init -> void
+SourceRpc.Continuity.RpcReplayPlan.Refused.get -> string?
+SourceRpc.Continuity.RpcReplayPlan.Refused.init -> void
+SourceRpc.Continuity.RpcReplayPlan.RpcReplayPlan() -> void
+SourceRpc.Continuity.RpcReplayPlan.ToInputSequence.get -> long
+SourceRpc.Continuity.RpcReplayPlan.ToInputSequence.init -> void
+static SourceRpc.Continuity.RpcJournalEntry.operator !=(SourceRpc.Continuity.RpcJournalEntry? left, SourceRpc.Continuity.RpcJournalEntry? right) -> bool
+static SourceRpc.Continuity.RpcJournalEntry.operator ==(SourceRpc.Continuity.RpcJournalEntry? left, SourceRpc.Continuity.RpcJournalEntry? right) -> bool
+static SourceRpc.Continuity.RpcJournals.ReplayableFrom(SourceRpc.Continuity.RpcSnapshotEnvelope! snapshot, System.Collections.Generic.IReadOnlyList<SourceRpc.Continuity.RpcJournalEntry!>! entries) -> SourceRpc.Continuity.RpcReplayPlan!
+static SourceRpc.Continuity.RpcJournals.Verify(System.Collections.Generic.IReadOnlyList<SourceRpc.Continuity.RpcJournalEntry!>! entries) -> string?
+static SourceRpc.Continuity.RpcPortableJournal.ReadEntry(System.Text.Json.JsonElement root) -> SourceRpc.Continuity.RpcJournalEntry!
+static SourceRpc.Continuity.RpcPortableJournal.Read(string! json) -> System.Collections.Generic.IReadOnlyList<SourceRpc.Continuity.RpcJournalEntry!>!
+static SourceRpc.Continuity.RpcReplayPlan.operator !=(SourceRpc.Continuity.RpcReplayPlan? left, SourceRpc.Continuity.RpcReplayPlan? right) -> bool
+static SourceRpc.Continuity.RpcReplayPlan.operator ==(SourceRpc.Continuity.RpcReplayPlan? left, SourceRpc.Continuity.RpcReplayPlan? right) -> bool
