@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+### A component on a worker is still a component
+
+The gap a review of the worker seam called the important one. `callable()` returns a forwarder, which is enough for a class and not for a *component*: the server installs snapshot publication, and accepts `sets` and `requiresAuthority`, only for a real `RpcComponent`. `serveComponentInWorker` and `RpcWorkerHost.component()` are the two halves that make one.
+
+**The division is the design.** The worker owns the executable logic and the private mutable domain state; the supervisor owns identity, security, authority and the last published snapshot. The facade *is* an `RpcComponent`, built from the worker's own first snapshot rather than from a shape supplied on this side - a facade that started from a guess would be a second answer to the question the component already answers.
+
+A commit in the worker becomes a snapshot here, through `installComponentPublisher` - the same machinery an in-process component uses to publish across a socket, so the worker-to-supervisor hop inherits the throttle and the byte bound a deployment has already set rather than being given new ones of its own. Events cross as their name and arguments, checked by `RpcValue` and **thrown at the emit site** when they cannot cross: stricter than an in-process component, which would fail later and further away, at a subscriber that received nothing and has nothing to say why.
+
+The consequence the review predicted holds, and is the reason to want this: **while the worker is parked at a breakpoint, the supervisor answers and a console still reads the last snapshot the component published.** A debugger that blanked every screen the moment it stopped a component would be one nobody left attached.
+
+One limit came out of testing that, and it is the mechanism rather than an omission: **a parked thread cannot publish.** The publisher runs on a microtask and `Atomics.wait` freezes the thread that would run it, so a commit made after the last publication and before the park is invisible until the component resumes. What a console sees while a component is stopped is what it had *published*, not what it had *done* - the first assertion written here claimed otherwise and was wrong. Publishing synchronously on every commit would close the gap and give up the throttle; the trade is available and was not taken.
+
+Method names that a component already answers to are not forwarded: `props` and `state` are accessors on the base and the EventEmitter methods are how a subscriber reaches it, so a forwarder named after one of those would put a message round trip where a local read belongs.
+
 ### One rule for what may cross a boundary, wherever the boundary is
 
 A review of the worker seam pointed out that its doc comment promised a stricter boundary than the code enforced: it relied on `postMessage` throwing, which catches a function and says nothing whatever about a class instance - structured clone copies the properties, drops the prototype, and the far side receives something that looks right and has no methods. Nothing throws. `RpcValue` is the check that was missing, and it is wired into both directions of the worker seam.

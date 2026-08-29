@@ -1,4 +1,5 @@
 import { parentPort, workerData } from 'node:worker_threads'
+import { componentSnapshot, componentSnapshotEvent, installComponentPublisher, RpcComponent, type RpcComponentData, type RpcComponentExposeOptions } from './Component.js'
 import { declaredAuthority, declaredConflation, declaredEffect, declaredSemantics, declaredSets, markedMethods, type RpcMethodOptions } from './Expose.js'
 import { RpcPauseGate, type RpcFrameEvent, type RpcGateOutcome } from './PauseGate.js'
 import { valueRefusal } from './Value.js'
@@ -193,4 +194,50 @@ export const serveInWorker = (instance: object, options: RpcServeInWorkerOptions
     // decorator - so without this a non-repeatable command would be exposed as an undeclared method
     // and lose its idempotency protection by having been moved to a thread.
     port.postMessage({ ready: methodsOf(instance), declarations: declarationsOf(instance), probeIds })
+}
+
+/**
+ * Serve a **component** on this worker's thread: its logic here, its published face over there.
+ *
+ * The split the review of the worker seam asked for, and the division it named. The worker owns the
+ * executable logic and the private mutable domain state; the supervisor owns identity, security,
+ * authority and the last published snapshot. Neither half is the component on its own, and the point
+ * of the arrangement is that callers cannot tell.
+ *
+ * **A commit is a message.** `installComponentPublisher` already exists to turn a commit into a
+ * publication, with a throttle and a byte bound the deployment sets - so a worker-hosted component
+ * uses the same machinery to publish across a thread that an in-process one uses to publish across a
+ * socket, and inherits both bounds rather than being given new ones.
+ *
+ * The first snapshot goes before anything else, because the facade on the other side has to start
+ * from what the component *is* rather than from a shape somebody guessed.
+ */
+export const serveComponentInWorker = <P extends RpcComponentData, S extends RpcComponentData>(
+    component: RpcComponent<P, S>,
+    options: RpcServeInWorkerOptions & { readonly component?: RpcComponentExposeOptions } = {}
+): void => {
+    const port = parentPort
+    if (!port) throw new Error('serveComponentInWorker runs on a worker thread, and this is not one')
+
+    /**
+     * Events cross as their name and arguments, checked like everything else.
+     *
+     * Thrown at the emit site rather than dropped, because a payload that cannot cross is a payload
+     * no subscriber was ever going to receive - and the author's line is the only place where that
+     * is a fixable fact rather than a silence. It is stricter than an in-process component, which
+     * would fail later and further away; strictness in this direction is the safer difference.
+     */
+    const emitted = component.emit.bind(component)
+    component.emit = (event: string | symbol, ...args: unknown[]): boolean => {
+        if (event !== componentSnapshotEvent) {
+            const refused = valueRefusal(args, { at: `the ${String(event)} event` })
+            if (refused) throw new Error(refused.why)
+            port.postMessage({ event: { name: String(event), args } })
+        }
+        return emitted(event, ...args)
+    }
+
+    installComponentPublisher(component, options.component ?? {}, () => port.postMessage({ snapshot: componentSnapshot(component) }))
+    serveInWorker(component, options)
+    port.postMessage({ snapshot: componentSnapshot(component) })
 }

@@ -1,4 +1,5 @@
 import { Worker } from 'node:worker_threads'
+import { componentHost, RpcComponent, type RpcComponentData, type RpcComponentSnapshot } from './Component.js'
 import { markMethodsOn, type RpcMethodOptions } from './Expose.js'
 import { RpcPauseGate } from './PauseGate.js'
 import { argumentsRefusal } from './Value.js'
@@ -48,6 +49,12 @@ interface WorkerReply {
     readonly id: number
     readonly result?: unknown
     readonly failure?: { readonly message: string; readonly name: string; readonly code?: string }
+}
+
+/** What a worker-hosted component sends back besides answers: its state, and what it announced. */
+interface WorkerPublication {
+    readonly snapshot?: RpcComponentSnapshot<RpcComponentData, RpcComponentData>
+    readonly event?: { readonly name: string; readonly args: readonly unknown[] }
 }
 
 export interface RpcWorkerHostOptions {
@@ -104,6 +111,10 @@ export class RpcWorkerHost {
 
     /** The probe registry the worker declared, in plan order. Empty for a build with no probes. */
     private probeIds: readonly string[] = []
+    /** The last snapshot the worker published. What the facade serves, including while it is parked. */
+    private latest?: RpcComponentSnapshot<RpcComponentData, RpcComponentData>
+    private applySnapshot?: (snapshot: RpcComponentSnapshot<RpcComponentData, RpcComponentData>) => void
+    private applyEvent?: (name: string, args: readonly unknown[]) => void
 
     /**
      * This probe's index, or `undefined` when this build does not carry it.
@@ -139,7 +150,21 @@ export class RpcWorkerHost {
         this.worker.on('exit', (code: number) => this.abandonAll(`the worker hosting this instance exited with code ${code}`))
     }
 
+    private published(message: WorkerPublication): boolean {
+        if (message?.snapshot) {
+            this.latest = message.snapshot
+            this.applySnapshot?.(message.snapshot)
+            return true
+        }
+        if (message?.event) {
+            this.applyEvent?.(message.event.name, message.event.args)
+            return true
+        }
+        return false
+    }
+
     private answered(message: WorkerReply): void {
+        if (this.published(message as WorkerPublication)) return
         if (typeof message?.id !== 'number') return
         const waiting = this.pending.get(message.id)
         if (!waiting) return
@@ -242,6 +267,79 @@ export class RpcWorkerHost {
 
     untilPaused(timeoutMs: number): Promise<boolean> {
         return this.gate.untilPaused(timeoutMs)
+    }
+
+    /**
+     * The component this worker hosts, as an `RpcComponent` the server can expose like any other.
+     *
+     * The facade the review of this seam asked for. `callable()` returns a forwarder, which is
+     * enough for a class and not enough for a *component*: the server installs snapshot publication,
+     * and accepts `sets` and `requiresAuthority`, only for a real `RpcComponent`. So this is one -
+     * a component on this side whose values are the worker's, republished as they commit.
+     *
+     * **The division is the point.** The worker owns the logic and the private mutable state; this
+     * side owns identity, security, authority and the last published snapshot. A consequence worth
+     * having falls out of that: while the worker is **parked at a breakpoint**, this side still
+     * answers, and a console still reads the last snapshot the component published - a debugger that
+     * blanked every screen the moment it stopped a component would be one nobody left attached.
+     *
+     * Awaits the worker's first snapshot, because a facade has to start from what the component *is*
+     * rather than from a shape supplied here, which would be a second answer to the same question.
+     */
+    async component<P extends RpcComponentData, S extends RpcComponentData>(): Promise<RpcComponent<P, S>> {
+        const { methods, declarations } = await this.ready
+        const first = await this.firstSnapshot()
+
+        let apply!: (snapshot: RpcComponentSnapshot<RpcComponentData, RpcComponentData>) => void
+        const hosted = class extends RpcComponent<P, S> {
+            constructor() {
+                super(first.props as P, first.state as S)
+                // `replaceProps` is public and `replaceState` is protected, which is why this closure
+                // is minted in here: applying the worker's values is the facade's own business and
+                // nobody else's.
+                apply = (snapshot) => {
+                    componentHost(this).replaceProps(snapshot.props as P)
+                    this.replaceState(snapshot.state as S)
+                }
+            }
+        }
+        // Skipping what a component already answers to: `props` and `state` are accessors on the
+        // base, and the EventEmitter methods are how a subscriber reaches it. A forwarder named
+        // after one of those would put a message round trip where a local read belongs - and the
+        // worker's own state is republished here anyway, so there is nothing to forward *for*.
+        const prototype = hosted.prototype as unknown as Record<string, unknown>
+        for (const method of methods) if (!(method in hosted.prototype)) prototype[method] = (...params: unknown[]) => this.call(method, params)
+        markMethodsOn(hosted, declarations)
+
+        const facade = new hosted()
+        let seen = first.revision
+        this.applySnapshot = (snapshot) => {
+            // In order, and never backwards. One port cannot reorder, so a lower revision means a
+            // worker that restarted - which is a new activation rather than an older truth, and is
+            // the deployment's to notice through the epoch rather than this facade's to smooth over.
+            if (snapshot.epoch === first.epoch && snapshot.revision <= seen) return
+            seen = snapshot.revision
+            apply(snapshot)
+        }
+        this.applyEvent = (name, args) => void facade.emit(name, ...args)
+        apply(first)
+        return facade
+    }
+
+    /** The worker's first snapshot, which a component always sends before anything else. */
+    private firstSnapshot(): Promise<RpcComponentSnapshot<RpcComponentData, RpcComponentData>> {
+        if (this.latest) return Promise.resolve(this.latest)
+        return new Promise((resolve, reject) => {
+            const timer = setTimeout(() => reject(new RpcWorkerRefused('the worker published no component snapshot: serveComponentInWorker sends one before anything else, so this worker is serving a plain instance rather than a component')), this.callTimeoutMs)
+            timer.unref?.()
+            const waiting = setInterval(() => {
+                if (!this.latest) return
+                clearInterval(waiting)
+                clearTimeout(timer)
+                resolve(this.latest)
+            }, 2)
+            waiting.unref?.()
+        })
     }
 
     /** Stop hosting. Every call still waiting is failed rather than left to a deadline. */
