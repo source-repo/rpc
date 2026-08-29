@@ -135,7 +135,7 @@ const approved: RpcApprovedRevision = {
     nonDiagnosticCapabilityHash: 'sha256-capabilities'
 }
 
-const manifestFor = async (probes: RpcDerivativeEvidence['probes'], overrides: Record<string, unknown> = {}) =>
+const manifestFor = async (probes: RpcDerivativeEvidence['plan'], overrides: Record<string, unknown> = {}) =>
     sealVariantManifest({
         componentId: approved.componentId,
         semanticRevisionId: approved.semanticRevisionId,
@@ -152,10 +152,11 @@ const manifestFor = async (probes: RpcDerivativeEvidence['probes'], overrides: R
         ...overrides
     })
 
-const evidenceFor = async (probes: RpcDerivativeEvidence['probes'], overrides: Partial<RpcDerivativeEvidence> = {}): Promise<RpcDerivativeEvidence> => ({
+const evidenceFor = async (probes: RpcDerivativeEvidence['plan'], overrides: Partial<RpcDerivativeEvidence> = {}): Promise<RpcDerivativeEvidence> => ({
     baseSemanticDigest: 'sha256-semantic',
     strippedSemanticDigest: 'sha256-semantic',
-    probes,
+    plan: probes,
+    found: probes.map((probe) => ({ probeId: probe.probeId, kind: probe.kind })),
     addedCapabilities: [],
     ...overrides
 })
@@ -201,10 +202,22 @@ test('the diagnostics sink is the only capability a variant may add', async (t) 
     t.regex(refusal ?? '', /using instrumentation as a way to widen its own authority/)
 })
 
-test('the plan a reviewer approved has to be the plan compiled in', async (t) => {
+test('the plan a reviewer approved has to be the plan being served', async (t) => {
     const probes = await probesOf()
     const refusal = await admissibleVariant(await manifestFor(probes.slice(0, 3)), approved, await evidenceFor(probes))
-    t.regex(refusal ?? '', /is not the plan compiled in/)
+    t.regex(refusal ?? '', /is not the plan being served/)
+})
+
+test('a probe in the artifact that the plan does not name is an observation point nobody reviewed', async (t) => {
+    const probes = await probesOf()
+    const refusal = await admissibleVariant(await manifestFor(probes.slice(0, 5)), approved, await evidenceFor(probes.slice(0, 5), { found: probes.map((probe) => ({ probeId: probe.probeId, kind: probe.kind })) }))
+    t.regex(refusal ?? '', /an observation point nobody reviewed/)
+})
+
+test('a plan naming a probe the artifact lacks is an overlay that can never fire', async (t) => {
+    const probes = await probesOf()
+    const refusal = await admissibleVariant(await manifestFor(probes), approved, await evidenceFor(probes, { found: probes.slice(0, 4).map((probe) => ({ probeId: probe.probeId, kind: probe.kind })) }))
+    t.regex(refusal ?? '', /can never fire/)
 })
 
 test('a plan is a set of observations, so the order it was walked in cannot change its hash', async (t) => {

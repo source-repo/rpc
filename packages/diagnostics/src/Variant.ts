@@ -185,10 +185,31 @@ export interface RpcDerivativeEvidence {
     readonly baseSemanticDigest: string
     /** The same digest, taken of the variant with every recognised probe removed. */
     readonly strippedSemanticDigest: string
-    /** The probes the strip actually found, so a plan cannot claim probes the artifact lacks. */
-    readonly probes: readonly RpcProbeDefinition[]
+    /**
+     * The plan document itself: what a viewer will be served and position overlays from.
+     *
+     * Its spans are spans of the **approved** source, because the person reading is looking at the
+     * approved file and not at the instrumented copy. Which is why this is not the same list as
+     * `found` below, and why one cannot be derived from the other.
+     */
+    readonly plan: readonly RpcProbeDefinition[]
+    /**
+     * What the strip actually found in the artifact - identity and kind, not position.
+     *
+     * The pair is the check: the plan says what a reviewer approved and what a viewer will be shown;
+     * this says what is compiled in. A probe in the artifact that no plan names is an observation
+     * point nobody reviewed, and a plan naming a probe the artifact lacks is an overlay that will
+     * never fire while looking exactly like one that has not been reached yet.
+     */
+    readonly found: readonly RpcProbeSite[]
     /** Capabilities the variant requires beyond its base's. Empty is the ordinary case. */
     readonly addedCapabilities: readonly string[]
+}
+
+/** A probe as the artifact carries it: what it is, not where the approved source declares it. */
+export interface RpcProbeSite {
+    readonly probeId: string
+    readonly kind: RpcProbeKind
 }
 
 /**
@@ -236,9 +257,19 @@ export const admissibleVariant = async (
     if (beyond.length)
         return `${manifest.artifactVariantId} asks for ${beyond.join(', ')} beyond its base, and the only capability a variant may add is ${DIAGNOSTICS_SINK_CAPABILITY} - anything else is an artifact using instrumentation as a way to widen its own authority`
 
-    const planned = await probePlanHash(evidence.probes)
+    const planned = await probePlanHash(evidence.plan)
     if (planned !== manifest.probePlanHash)
-        return `${manifest.artifactVariantId}'s manifest names probe plan ${manifest.probePlanHash} and the artifact carries ${planned}: the plan a reviewer approved is not the plan compiled in`
+        return `${manifest.artifactVariantId}'s manifest names probe plan ${manifest.probePlanHash} and the plan supplied with it hashes to ${planned}: the plan a reviewer approved is not the plan being served`
+
+    const site = (probe: RpcProbeSite) => `${probe.kind} ${probe.probeId}`
+    const inPlan = new Set(evidence.plan.map(site))
+    const inArtifact = new Set(evidence.found.map(site))
+    const unplanned = [...inArtifact].filter((probe) => !inPlan.has(probe))
+    if (unplanned.length)
+        return `${manifest.artifactVariantId} carries ${unplanned.length} probe${unplanned.length === 1 ? '' : 's'} its plan does not name, beginning with ${unplanned[0]}: an observation point nobody reviewed is in the artifact`
+    const missing = [...inPlan].filter((probe) => !inArtifact.has(probe))
+    if (missing.length)
+        return `${manifest.artifactVariantId}'s plan names ${missing.length} probe${missing.length === 1 ? '' : 's'} the artifact does not carry, beginning with ${missing[0]}: a viewer would be shown an overlay that can never fire and looks exactly like one that has not been reached yet`
 
     return undefined
 }

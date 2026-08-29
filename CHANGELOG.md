@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+### Probes generated into a copy of the source, and the program still does what it did
+
+The other half of the diagnostics transformer, written second on purpose. `instrumentSource` produces the derivatives that `provesDerivative` was already able to refuse, and every test it has ends by handing its output to the verifier - a generator that also defined what counted as correct would be marking its own homework. It emits all six probe kinds: entry, exit, statement, value, condition and branch.
+
+**A viewport becomes the containing function**, which is the design's default unit rather than a convenience. A viewport begins in the middle of a condition as often as not, and instrumenting from there would put an entry probe inside an expression. It also settles what happens while somebody scrolls: a plan built for a function does not change because two more of its lines came into view, so the variant already running stays the right one, and two viewports over one function are one region.
+
+**Spans are recorded from the approved source before emit**, because the person reading is looking at the approved file and not at the instrumented copy - a span measured after emit would position a value using coordinates from a file nobody can see. Probe ids are derived from those positions rather than counted, so the same source produces the same plan however the walk reached it, and an edit that moves a line moves the id, which is the design's rule about cross-revision stability stated in the id itself.
+
+**Unavailable rather than uncertain**, which is the design's rule and shaped everything here. An initialiser holding a function body is reported rather than wrapped: the arrow inside it is instrumented as its own region, and a probe around it would have to be rewritten as another probe rewrote its inside. A single-statement `if` branch is reported rather than given braces, because adding braces is a change to the program even where it reads as the same one. Loops and `try` bodies are probed as the statements they are - a coverage limit, stated, rather than an equivalence risk.
+
+**The invariants are tested by running the code.** *Evaluated exactly once* and *short-circuit preserved* are claims about execution, and no comparison of syntax trees tests them - so the suite executes each snippet twice, once plain and once instrumented against a recording stub, and compares what the program did. Two bugs came out of writing those tests rather than out of reading the code. A `wrappable` check that only looked at descendants let an initialiser that *was* an arrow through, so the wrap and the arrow's own probes overlapped and the artifact came out corrupt. And returns were probed only at the top level of a body, so a `return` inside an `if` produced a function that entered and never left; returns are now found by their own scan at every depth, which also covers the loops and `try` bodies the statement walk does not descend into.
+
+**The evidence seam moved, and this is the commit that moved it.** `RpcDerivativeEvidence` carried one list of probes when only the verifier existed. Now that a planner exists it carries two, because they are two different things: `plan` is what a reviewer approved and a viewer is served, with spans in the approved source, and `found` is what the strip located in the artifact, by identity and kind. Neither can be derived from the other, and comparing them is the check - a probe in the artifact that no plan names is an observation point nobody reviewed, and a plan naming a probe the artifact lacks is an overlay that will never fire while looking exactly like one that has not been reached yet.
+
+`diagnosticVariants` is still `false`. Nothing here activates anything.
+
 ### A diagnostic variant can be proved to be one, which is not building one
 
 The diagnostics design's second phase generates probes into a node's own source and runs the result. It opens with one line - *depends on state-preserving component replacement* - and that dependency is now met: its section 16 is `handOver` step for step, down to starting the variant as a shadow with output fenced and restoring the identical state schema without migration.

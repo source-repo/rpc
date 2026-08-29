@@ -64,18 +64,37 @@ const proof = await provesDerivative(base, variant, 'oven.ts', 'rev-7')   // in 
 const refusal = await admissibleVariant(manifest, approved, {
     baseSemanticDigest: proof.baseSemanticDigest,
     strippedSemanticDigest: proof.strippedSemanticDigest,
-    probes: proof.probes,
+    plan,                                                    // what a reviewer approved and a viewer is served
+    found: proof.probes.map(({ probeId, kind }) => ({ probeId, kind })),   // what the artifact carries
     addedCapabilities: []
 })
 ```
 
-**The node holds hashes and compares them; the compiler does the walk.** `admissibleVariant` runs seven rules and refuses on the first, each in its own sentence because they are seven different conversations: source that has moved on, a base artifact that is not the one running, a stripped variant that is not the base, a changed contract, a changed persistent state schema, changed non-diagnostic capabilities, and a probe plan that is not the plan compiled in. The only capability a variant may add is `diagnostics.telemetry` — anything else is an artifact using instrumentation to widen its own authority.
+**The node holds hashes and compares them; the compiler does the walk.** `admissibleVariant` runs the rules and refuses on the first, each in its own sentence because they are separate conversations: source that has moved on, a base artifact that is not the one running, a stripped variant that is not the base, a changed contract, a changed persistent state schema, changed non-diagnostic capabilities, and a plan that does not match the artifact. The only capability a variant may add is `diagnostics.telemetry` — anything else is an artifact using instrumentation to widen its own authority.
+
+**The plan and the artifact are two different lists on purpose.** The plan's spans are spans of the approved source, because that is the file a viewer is reading; the strip reports what is compiled in, by identity and kind. Neither can be derived from the other, and comparing them is the check: a probe in the artifact that no plan names is an observation point nobody reviewed, and a plan naming a probe the artifact lacks is an overlay that will never fire while looking exactly like one that has not been reached yet.
 
 **What counts as a probe is defined by the verifier, not by the generator.** A probe is a call on the reserved receiver `__rpcProbe` in one of six recognised shapes; anything else mentioning that name is a refusal rather than something to strip. The wrapping forms — `value` and `condition` — take the observed expression as an argument and evaluate to it, so it appears exactly once and "evaluated exactly once, with unchanged results and exception behaviour" is a property of the shape rather than a promise about a generator. A strip that skipped what it did not recognise would leave it in the output and report *the transformer changed the program*, which is true and points at the wrong thing; one that deleted anything mentioning the receiver would delete code somebody wrote.
 
 Programs are compared reprinted from their parse trees, so two files differing only in where the newlines fall are the same program and **comments are not part of the comparison** — a probe legitimately arrives with one attached. The cost is real and worth naming: a variant may change a comment and this will not see it. What it exists to catch is a changed program, and a comment cannot be one.
 
 `diagnosticVariants` stays `false` in the advertised capabilities. Verification is not activation, and a flag that ran ahead of the code would be the one thing the capability set exists to prevent.
+
+## Generating the probes the verifier accepts
+
+`instrumentSource` in `@source-repo/rpc-cli` is the other half, and it was written second on purpose — a transformer that also defined what counted as correct would be marking its own homework. Every test it has ends by handing its output to `provesDerivative`.
+
+```typescript
+const instrumented = instrumentSource(source, 'oven.ts', 'rev-7', [{ from: 40, to: 60 }])
+```
+
+**A viewport is expanded to the containing function**, which is the design's default unit and not a convenience. A viewport begins in the middle of a condition as often as not, and instrumenting from there would put an entry probe inside an expression. It also makes the result stable while somebody scrolls: a plan built for a function does not change because two more of its lines came into view, so the variant already running stays the right one, and two viewports over one function are one region.
+
+**Spans in the plan are spans of the approved source**, recorded before emit, because the person reading is looking at the approved file and not at the instrumented copy. Probe ids are derived from those positions rather than counted, so the same source produces the same plan however the walk reached it — and they are not stable across revisions, because a position is exactly what an edit moves.
+
+**Unavailable rather than uncertain.** A missing probe is a screen with one fewer value on it; a transform that was nearly equivalent is a plant running code nobody approved. So an initialiser holding a function body is reported rather than wrapped — the arrow inside it is instrumented as its own region, and a probe around it would have to be rewritten as another probe rewrote its inside — and a single-statement `if` branch is reported rather than given braces, because adding braces is a change to the program even where it reads as the same one. Loops and `try` bodies are probed as the statements they are: a coverage limit, stated, not an equivalence risk.
+
+The invariants that matter are tested by **running** the instrumented code against a recording stub, because "evaluated exactly once" and "short-circuit preserved" are claims about execution that no comparison of syntax trees can check. Conditions are wrapped whole and never by operand, so `a && b` short-circuits exactly as it did. Returns are found by their own scan at every depth, so entry and exit pair up even when the return is inside a block, a loop or a `try` — otherwise an overlay shows a function that was entered and never left.
 
 ## License
 
