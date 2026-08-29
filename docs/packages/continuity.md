@@ -23,6 +23,9 @@ npm install @source-repo/continuity
 - **It crosses languages** — a snapshot written here verifies to the same content hash in `SourceRpc.Continuity`, checked against fixtures both suites read verbatim rather than asserted.
 - **Positions cross as decimal strings** — JSON has one numeric type and it is a double, and a sequence position that rounds is a successor that reprocesses input or skips it. A position that arrived as a number is refused, never converted.
 - **Portable is stronger than cloneable** — a `Date`, a `Uint8Array`, a `Map` and a `bigint` all clone perfectly and none of them cross a language boundary as themselves.
+- **A journal makes *recover forward* a procedure** — `failed-after-commit` used to be an instruction; now a snapshot plus the inputs recorded after it can be replayed into a revision that can take them. A snapshot and a journal join at `lastAppliedInputSequence`, and a gap refuses rather than replaying what is left, because the state on the other side of a gap never existed.
+- **Effects on replay are declared** — `suppress-effects` rebuilds state with outputs fenced, since re-applying a hundred inputs re-runs a hundred handlers; `honour-idempotency` is safe only where the sinks actually deduplicate, which is a claim about the plant.
+- **Retention is what stays replayable** — compaction takes a snapshot rather than a date, and refuses where it would leave a journal that looked whole and could no longer carry the snapshot it was kept for. The chain makes an altered or removed entry detectable rather than merely absent.
 - **A manifest describes a revision and does not approve one** — an artifact that could authorise itself by asserting its own capabilities would make the approval path decorative.
 
 Full documentation: the [package README](https://github.com/source-repo/rpc/blob/main/packages/continuity/README.md). On npm: [@source-repo/continuity](https://www.npmjs.com/package/@source-repo/continuity).

@@ -229,9 +229,33 @@ Across languages nothing is checked by anything unless it is written down. Two a
 
 **The manifest describes the revision. It does not grant authority.** It is emitted by the artifact, and an artifact that could authorise itself by asserting its own capabilities would make the approval path decorative. `authorised` measures it against an identity policy the deployment owns, and refuses with four different sentences because they are four different conversations: the wrong type is a mistake, an unapproved artifact needs a deployment approval, a capability outside the envelope needs the envelope widened by whoever owns the identity, and an identity not eligible for online change needs a controlled restart instead.
 
+## What a component did between the instants
+
+The obligations manifest says what a component was doing at the instant of its snapshot. That is one instant. Answering *what was it doing at 03:14?* needs an append-only record of what happened between them — and the design is explicit that a handoff snapshot alone must never be treated as one.
+
+The sharper reason is `failed-after-commit`. The coordinator ends a handoff that failed past the commit point with the words *recover forward*, and until there was a journal those words were an instruction rather than something anybody could carry out.
+
+```typescript
+const outcome = await recoverForward(record, snapshot, await journal.read('oven3'), 'suppress-effects')
+if ('refused' in outcome) return tellSomebody(outcome.refused)
+await replay(outcome.plan, (entry) => successor.apply(entry.payload))
+```
+
+**A snapshot and a journal join at one number.** `lastAppliedInputSequence` says where the snapshot stopped; replay begins at the entry after it. Inputs the snapshot already contains are not applied again, and a snapshot with no input position — a `held-state-only` capture — has nothing to replay onto and says so.
+
+**A gap refuses.** A journal missing input 41 can still apply 42 onwards, and the state that results never existed in the plant: it is the state of a component that received one fewer command than it did. That looks exactly like a recovery, which is why it is refused rather than reported. A replay that fails part-way stops at the input the successor could not take and says how far it got, for the same reason.
+
+**Effects are declared and there is no default.** `suppress-effects` rebuilds the successor with its outputs fenced — re-applying a hundred inputs re-runs a hundred handlers, and one that commanded a valve will command it again. `honour-idempotency` lets them out under their recorded keys, which is safe only where the sinks actually deduplicate, and that is a claim about the plant rather than about this library.
+
+**It chains.** Every entry carries the hash of the one before it and of its own content, so a journal verifies end to end: an entry altered in place fails its own hash, and one removed from the middle breaks the link. A record of what a plant did is evidence, and evidence that cannot be checked is testimony.
+
+**Retention is not an age.** `compactTo` takes a snapshot rather than a date, because a journal is long enough exactly when it reaches from a snapshot somebody kept to now. It discards what that snapshot already contains and **refuses** where it would leave a journal that still looked whole and could no longer carry the snapshot it was kept for.
+
+`RpcMemoryJournal` answers `durable: false`, like `MemoryOwnershipStore` before it. It can carry a failed handoff forward, which takes seconds, and it cannot answer anything about last night — both true, and only one of them is what somebody means when they ask for a journal.
+
 ## What is not here
 
-**A journal, and replay-assisted recovery.** Phase 3's `failed-after-commit` says *recover forward* and leaves what that means to the deployment. A journal of applied inputs is what would make it a procedure rather than an instruction, and it is the remaining piece of the design's fourth phase.
+**A journal that another language reads.** The entry format is JSON-shaped for it, and no second implementation reads it yet; until one fixture has been asked of two of them, *portable* is a property of the shape rather than a demonstrated fact — which is the standard the snapshot's own cross-language claim had to meet.
 
 Reverse migrations. The pre-migration snapshot is what a rollback uses, and only until the new activation has begun authoritative work — after that, restoring it would lose history and might repeat effects. A reverse chain would look like a general undo and would not be one.
 

@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+### Recover forward stops being an instruction
+
+The coordinator has ended a handoff that failed past the commit point with `failed-after-commit` and the words *recover forward* since Phase 3, and left what they meant to the deployment. This is what they mean: the successor holds authority and may already have acted, so the incumbent's snapshot is not a rollback and must never be treated as one - what is available is the last snapshot plus every input recorded after it, replayed in order into a revision that can take them. `recoverForward` produces that plan or refuses, and the refusal is the more valuable half: a deployment told *recover forward* by one function and *this journal cannot* by the next knows it is in the case the design warns about, where the remaining routes are a new revision or a separately designed compatibility window - rather than discovering it halfway through a replay.
+
+**A snapshot and a journal join at one number.** `lastAppliedInputSequence` says where the snapshot stopped and replay begins at the entry after it, so inputs a snapshot already contains are never applied twice and a `held-state-only` capture - which says what the values were and not where in the input they were - has nothing to replay onto and says so.
+
+**A gap refuses.** A journal missing input 41 can still apply 42 onwards, and the state that results never existed in the plant: it is the state of a component that received one fewer command than it did. It would look exactly like a recovery. The same discipline arrives from the other direction when a replay fails part-way: it stops at the input the successor could not take and reports how far it got, rather than skipping one and building on a hole.
+
+**Effects are declared, with no default.** `suppress-effects` rebuilds the successor with its outputs fenced, because re-applying a hundred inputs re-runs a hundred handlers and one that commanded a valve the first time will command it again. `honour-idempotency` lets them out under the keys they were recorded with, which is safe only where the sinks actually deduplicate - a claim about the plant, not about this library - and the design's rule that a non-repeatable command is never silently re-executed because a process changed applies here with more force rather than less.
+
+**It chains, and retention is not an age.** Every entry carries the hash of the one before it and of its own content, so an entry altered in place fails its own hash and one removed from the middle breaks the link - a record of what a plant did is evidence, and evidence that cannot be checked is testimony. `compactTo` takes a snapshot rather than a date, because a journal is long enough exactly when it reaches from a snapshot somebody kept to now, and it refuses where it would leave a journal that still looked whole and could no longer carry the snapshot it was kept for.
+
+Two bugs came out of the tests rather than out of reading the code, and both were in refusals that quietly did not fire. Entries from two components were checked for a broken chain before being checked for being two components, so a mixed journal reported a missing entry that was never missing. And the compaction guard carried a conjunct that disabled it precisely when it mattered: a journal beginning at input 50 has plenty of entries after a snapshot that stops at 40 and cannot carry it, because 41 to 49 are nowhere.
+
+`RpcMemoryJournal` answers `durable: false`, like `MemoryOwnershipStore` before it: it can carry a failed handoff forward, which takes seconds, and it cannot answer anything about last night. What is not here is a second implementation that reads the format - it is JSON-shaped for one, and until a fixture has been asked of two of them, *portable* is a property of the shape rather than a demonstrated fact.
+
 ### A component stops between two pieces of work, having finished the first
 
 Safe-boundary breakpoints, which the feasibility note recommended building first and which need no worker at all: the probe fires and asks, the handler that was running **finishes under ordinary semantics**, and the component stops before accepting its next unit of work. The mechanism is the barrier that already exists - `holdExecution` puts an entry on the instance's serial chain that never finishes - so what this adds is the supervisor around it rather than a way to stop something.
