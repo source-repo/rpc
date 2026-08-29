@@ -1,7 +1,7 @@
 import { digestText, rpc, RpcComponent, rpcNamespace, type ExposeOptions } from '@source-repo/rpc'
 import { readFileSync } from 'node:fs'
 import { isAbsolute, join, normalize, relative, resolve } from 'node:path'
-import { bindingsOf, phaseOneCapabilities, type RpcActiveSourceIdentity, type RpcDiagnosticsCapabilities, type RpcSourceBinding, type RpcSourceCatalogue } from './Catalogue.js'
+import { bindingsOf, capabilitiesFor, type RpcActiveSourceIdentity, type RpcDiagnosticsCapabilities, type RpcDiagnosticsSupport, type RpcSourceBinding, type RpcSourceCatalogue } from './Catalogue.js'
 
 /**
  * What this node will let somebody see of its own source, and where its values are written down.
@@ -45,6 +45,15 @@ export interface RpcDiagnosticsOptions {
     readonly sourceRoot?: string
     /** The activation this process is. Changes on restart, which is exactly what it is for. */
     readonly activationEpoch?: string
+    /**
+     * What else this deployment has wired: variant activation, a probe sink and its bounds.
+     *
+     * Passed in rather than detected, because both are facts about the host. A node has variant
+     * activation when somebody gave it an ownership store, fences and a coordinator; two nodes
+     * running this same package can honestly answer differently, and a package that guessed would
+     * advertise a capability the deployment never arranged for.
+     */
+    readonly support?: Omit<RpcDiagnosticsSupport, 'sourceAvailable'>
 }
 
 @rpcNamespace('diagnostics')
@@ -57,7 +66,7 @@ export class RpcDiagnostics extends RpcComponent<RpcDiagnosticsProps, RpcDiagnos
         const epoch = options.activationEpoch ?? `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`
         super(
             {
-                ...phaseOneCapabilities(sourceRoot !== undefined),
+                ...capabilitiesFor({ ...options.support, sourceAvailable: sourceRoot !== undefined }),
                 components: Object.fromEntries(
                     Object.keys(options.catalogue.components).map((componentType) => [
                         componentType,

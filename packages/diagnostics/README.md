@@ -2,7 +2,7 @@
 
 Live values beside the source that declares them, for a [Source RPC](https://github.com/source-repo/rpc) node. The oldest way of looking at a machine — the program on screen with what each thing currently is written next to it — without a debugger, without instrumentation, and without a second data path.
 
-**Phase 1 of the node diagnostics design.** Probes, execution paths, tracepoints, breakpoints and stepping are later phases and are advertised here as `false` rather than left out.
+**Phases 1 and most of 2 of the node diagnostics design.** Source-linked props and state; a diagnostic variant that can be proved a derivative, generated, and swapped in over a state-preserving handoff; and a bounded sink for what its probes see. Tracepoints, breakpoints and stepping are later phases and are advertised as `false` rather than left out.
 
 ## The whole economy of it
 
@@ -95,6 +95,44 @@ const instrumented = instrumentSource(source, 'oven.ts', 'rev-7', [{ from: 40, t
 **Unavailable rather than uncertain.** A missing probe is a screen with one fewer value on it; a transform that was nearly equivalent is a plant running code nobody approved. So an initialiser holding a function body is reported rather than wrapped — the arrow inside it is instrumented as its own region, and a probe around it would have to be rewritten as another probe rewrote its inside — and a single-statement `if` branch is reported rather than given braces, because adding braces is a change to the program even where it reads as the same one. Loops and `try` bodies are probed as the statements they are: a coverage limit, stated, not an equivalence risk.
 
 The invariants that matter are tested by **running** the instrumented code against a recording stub, because "evaluated exactly once" and "short-circuit preserved" are claims about execution that no comparison of syntax trees can check. Conditions are wrapped whole and never by operand, so `a && b` short-circuits exactly as it did. Returns are found by their own scan at every depth, so entry and exit pair up even when the return is inside a block, a loop or a `try` — otherwise an overlay shows a function that was entered and never left.
+
+## Swapping the instrumented copy in, and taking it back out
+
+Instrumenting a component is not a special way of replacing it. It is the ordinary way of replacing it with something that was proved to be the same program — so activation is `@source-repo/continuity`'s `handOver`, and the design's section 16 maps onto it step for step: shadow with output fenced, quiescence barrier, capture, restore the identical state schema without migration, re-establish obligations, atomic epoch swap.
+
+```typescript
+const outcome = await activateDiagnosticVariant({
+    manifest, approved, evidence,
+    obligations: runtime.manifest(),      // what the incumbent is holding, read before preparing
+    timerPolicy: 'preserve-deadline',
+    handoff                               // fences, buffer, capture, restore: the caller's
+})
+```
+
+**The variant is proved admissible before the plant is touched at all**, which is why the design says to validate while the base activation is still running. A variant that could never be activated costs nothing — the component is never quiesced for it. A handoff refused at the barrier has already stopped a plant.
+
+**This is the one handoff where blanket `assumed` is a conclusion rather than an assumption.** Everywhere else a successor that says nothing about an obligation is refused, because a different revision cannot be presumed to know what `mix-dwell` was for. Here the successor was *proved* to be the same program plus probes, so it knows every obligation by the same id, and `declarationsForVariant` reports that proof rather than hoping. What no proof can settle is what a timer should do about the handoff window — so the policy is still asked for, by name, from somebody who knows what the timer is for.
+
+An obligation the component took on *after* preparation is deliberately not covered: `planRestore` re-runs against the snapshot actually captured and refuses on anything undeclared. A paused activation is refused too — it is not quiescent, so it cannot reach a barrier — and that rule is encoded now, before anything can pause, rather than discovered when the first breakpoint exists and a handoff hangs.
+
+Removal is the same protocol run the other way. The check that differs is which artifact is arriving: going in, a variant must be proved a derivative of what is running; coming out, what returns must be the approved artifact itself.
+
+## Where a probe writes
+
+A variant imports `__rpcProbe`, and `RpcProbeSink` is what that is. It is deliberately dull, because it runs on a plant between statements that control machinery:
+
+- **Never throws into component logic.** Every entry point swallows its own failures. A probe that threw would turn watching a component into breaking one, in the handler somebody was watching precisely because it was already going wrong.
+- **Returns the observed value by identity**, which is what makes probes removable and the program the program.
+- **Bounded**: a ring of samples and a byte cap on every rendered value, with `dropped` visible — a viewer that cannot see what was dropped cannot trust the trace. A component in a hot loop must not be able to fill a node's memory by being watched.
+- **Never awaits, never reaches the network, the filesystem or the plant.** A value is rendered at capture rather than held, so nothing stays alive because it was once observed, and a getter that throws becomes `unrepresentable` rather than an exception on the component's stack.
+
+## What a node advertises, and why it is derived
+
+`capabilitiesFor` reads what the host actually wired. `diagnosticVariants` is true when a deployment has given the node an ownership store, fences and a coordinator; the probe flags are true when there is a sink for probes to write to, because generating a value probe is not the same as being able to say what it saw. Two nodes running this same package can honestly answer differently, and a package that guessed would advertise something the deployment never arranged.
+
+Still `false`, and not by oversight: `tracepoints` — a tracepoint is a probe with a condition and a message, and neither exists — along with `safeBoundaryPause`, `exactPause` and `stepping`, which are the phase after.
+
+**What is not here yet is the telemetry transport.** Samples land in an in-process sink and are read by whoever holds it. Serving them over Source RPC is a second data path in a way the source catalogue never was — locals are not otherwise observable — so it waits for the observation session and the authority model that go with it, rather than arriving as a convenience method.
 
 ## License
 

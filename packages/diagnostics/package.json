@@ -37,6 +37,10 @@
             "types": "./dist/Variant.d.ts",
             "default": "./dist/Variant.js"
         },
+        "./probes": {
+            "types": "./dist/Probes.d.ts",
+            "default": "./dist/Probes.js"
+        },
         "./package.json": "./package.json"
     },
     "files": [
@@ -51,6 +55,7 @@
         "prepack": "npm run clean && npm run build"
     },
     "dependencies": {
+        "@source-repo/continuity": "^0.1.0",
         "@source-repo/rpc": "^5.1.0"
     },
     "devDependencies": {

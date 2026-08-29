@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+### The instrumented copy takes over, and the plant does not notice
+
+The diagnostics design's section 16 is `handOver` step for step, and this is the commit that says so in code: shadow activation with output fenced, the normal quiescence barrier, capture, restore of the identical state schema with no migration, obligations re-established under the ordinary rules, and one atomic epoch swap. `@source-repo/diagnostics` gains a dependency on `@source-repo/continuity`, which the workspace build order already anticipated.
+
+**Instrumenting a component is not a special way of replacing it.** It is the ordinary way of replacing it with something that was proved to be the same program - so there is no diagnostic handoff protocol, and the only thing this adds ahead of the coordinator is the proof. Which runs *first*, while the base activation is still going: a variant that could never be activated costs nothing, because the component is never quiesced for it. A handoff refused at the barrier has already stopped a plant.
+
+**This is the one handoff where blanket `assumed` is a conclusion rather than an assumption.** Everywhere else, a successor that says nothing about an obligation is refused - a different revision cannot be presumed to know what `mix-dwell` was for. Here the successor was proved to be the same program plus probes, so it knows every obligation by the same id, and `declarationsForVariant` reports that proof. What no proof settles is what a timer should do about the handoff window, so the policy is still asked for by name. An obligation taken on after preparation is not covered, and `planRestore` refuses on it at the barrier - which is the design's *final validation is repeated against the barrier snapshot* earning its place.
+
+**A paused activation is refused, before anything can pause.** It is not quiescent, so it cannot reach a barrier and cannot be replaced. Encoding it now costs one branch; discovering it when the first breakpoint exists costs a handoff hanging on a barrier that can never be reached.
+
+**A variant imports `__rpcProbe`, so that had to become something.** `RpcProbeSink` is it, and it is deliberately dull because it runs between statements that control machinery: it never throws into component logic, returns the observed value by identity, is bounded by a ring and a byte cap with its drops visible, renders values at capture rather than holding references, and never awaits or reaches the network, the filesystem or the plant. A getter that throws becomes `unrepresentable` on the sample rather than an exception on the component's stack.
+
+**Capabilities are now derived from what the host wired rather than declared.** `diagnosticVariants` is true when a deployment has an ownership store, fences and a coordinator; the probe flags are true when there is a sink, because generating a value probe is not the same as being able to say what it saw. Two nodes running this same build can honestly answer differently, and a package that guessed would advertise what the deployment never arranged. `tracepoints`, `safeBoundaryPause`, `exactPause` and `stepping` remain `false`.
+
+What is still not here is the telemetry transport. Samples land in an in-process sink and are read by whoever holds it; serving them over Source RPC is a second data path in a way the source catalogue never was, since locals are not otherwise observable, so it waits for the observation session and the authority model rather than arriving as a convenience method.
+
 ### Probes generated into a copy of the source, and the program still does what it did
 
 The other half of the diagnostics transformer, written second on purpose. `instrumentSource` produces the derivatives that `provesDerivative` was already able to refuse, and every test it has ends by handing its output to the verifier - a generator that also defined what counted as correct would be marking its own homework. It emits all six probe kinds: entry, exit, statement, value, condition and branch.

@@ -115,25 +115,62 @@ export interface RpcDiagnosticsCapabilities {
 
 export const DIAGNOSTICS_PROTOCOL_VERSION = 1
 
-/** What this phase can honestly claim. Everything a later phase adds is present and false. */
-export const phaseOneCapabilities = (sourceAvailable: boolean): RpcDiagnosticsCapabilities => ({
-    protocolVersion: DIAGNOSTICS_PROTOCOL_VERSION,
-    sourceAvailable,
-    sourceLinkedProps: true,
-    sourceLinkedState: true,
-    // Everything below needs an instrumented derivative of the running artifact, which needs
-    // state-preserving component replacement, which is not built.
-    diagnosticVariants: false,
-    valueProbes: false,
-    statementHits: false,
-    branchOutcomes: false,
-    orderedTrace: false,
-    tracepoints: false,
-    safeBoundaryPause: false,
-    exactPause: false,
-    stepping: false,
-    limits: { maxSessions: 0, maxProbesPerSession: 0, maxValueBytes: 0, maxTraceEvents: 0 }
-})
+/**
+ * What this node is actually wired for.
+ *
+ * Derived from what the host handed the service rather than declared, which is the only way this
+ * stays true: a capability set written as a constant drifts the moment a phase lands, and it drifts
+ * in the direction that costs - advertising something nobody built. A viewer is entitled to plan
+ * around every `true` here.
+ */
+export interface RpcDiagnosticsSupport {
+    readonly sourceAvailable: boolean
+    /**
+     * This node can prove a diagnostic variant and swap it in over a state-preserving handoff.
+     *
+     * Needs an ownership store, fences and a coordinator wired by the host, so it is a fact about
+     * the deployment and not about the package - two nodes running the same build can honestly
+     * answer differently.
+     */
+    readonly variantActivation?: boolean
+    /** Probes have somewhere to write, so what they observe can be read back rather than only fire. */
+    readonly probeSink?: { readonly maxProbesPerSession: number; readonly maxValueBytes: number; readonly maxTraceEvents: number }
+}
+
+export const capabilitiesFor = (support: RpcDiagnosticsSupport): RpcDiagnosticsCapabilities => {
+    const probes = support.probeSink !== undefined
+    return {
+        protocolVersion: DIAGNOSTICS_PROTOCOL_VERSION,
+        sourceAvailable: support.sourceAvailable,
+        sourceLinkedProps: true,
+        sourceLinkedState: true,
+        diagnosticVariants: support.variantActivation === true,
+        // A probe that fires into nothing is not an observable probe. These follow the sink rather
+        // than the transformer: generating a value probe is not the same as being able to say what
+        // it saw, and a viewer told `valueProbes` would ask for values.
+        valueProbes: probes,
+        statementHits: probes,
+        branchOutcomes: probes,
+        orderedTrace: probes,
+        // A tracepoint is a probe with a condition and a message, and neither exists yet. Pausing
+        // and stepping are the phase after that.
+        tracepoints: false,
+        safeBoundaryPause: false,
+        exactPause: false,
+        stepping: false,
+        limits: {
+            // One session, because nothing arbitrates two: a second observer would union its regions
+            // into the first one's plan and quietly change what the first was watching.
+            maxSessions: probes ? 1 : 0,
+            maxProbesPerSession: support.probeSink?.maxProbesPerSession ?? 0,
+            maxValueBytes: support.probeSink?.maxValueBytes ?? 0,
+            maxTraceEvents: support.probeSink?.maxTraceEvents ?? 0
+        }
+    }
+}
+
+/** What a node with source linking and nothing else can claim. The first phase, still honest. */
+export const phaseOneCapabilities = (sourceAvailable: boolean): RpcDiagnosticsCapabilities => capabilitiesFor({ sourceAvailable })
 
 /**
  * Why a viewer must not overlay live values on this document, or nothing when it may.
