@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+### A breakpoint that stops on the line rather than after the handler
+
+The last box in the diagnostics design's architecture diagram, wired to the one before it. `RpcPauseSupervisor` now takes either a barrier or the gate of a component hosted on its own thread, and **the kind of pause is a property of which** - a barrier can only stop what has not started, and a gate stops the logic between two statements of a handler.
+
+**Exactly one mechanism, refused at construction otherwise.** A supervisor with both could claim either kind of stop while producing the other, and the design requires the two to be clearly distinguished; the surest way to distinguish them is to make claiming the wrong one impossible rather than incorrect. `exactPause` is advertised from the mechanism for the same reason - a node that offered a control producing something else would be worse than one that offered nothing.
+
+Everything around the stop is unchanged, which is what makes this a wiring change rather than a second debugger. The lease still governs a resume, the deadline still ends a pause nobody ended, the expiry actions are the same three, and the probe that asks does not know which mechanism is underneath. What differs is where the component is when it stops, and `kind` says which - `safe-boundary` means execution stopped *after* a handler, `exact` means it stopped *at* that line with the next statement still to run.
+
+**A request that never parks is now withdrawn**, on both mechanisms. Both can fail to stop - a barrier waits on a handler that may never return, a gate waits for logic that may reach no further gate - and a pause request left standing is worse than one that failed, because the component would park later with nobody watching for it. `requested` therefore answers with the pause *or nothing*, which is a signature that admits what was always true.
+
+One thing the tests taught rather than confirmed: asking for a pause *after* issuing a call is a race with another thread, because a request only affects gates reached after it lands. That is the mechanism being honest rather than flaky, so the fixture gained a handler that gates over a span - what a handler doing actual work between probes looks like - and the tests that want a stop *before* a handler starts now ask first and call second.
+
+`stepping` remains `false`. It is this gate with a frame-depth predicate the worker evaluates, which is protocol on top of what now exists rather than another mechanism.
+
 ### A component's logic can live on a thread of its own
 
 The feasibility note measured a pause gate and found the gate was never the expensive part: what exact pause costs is that a component's logic has to be somewhere the transport is not. `Atomics.wait` parks a thread outright, so a component sharing a thread with the socket that carries its calls cannot be parked without parking the socket. `RpcWorkerHost` and `serveInWorker` are that thread, and `RpcPauseGate` moved from `@source-repo/diagnostics` to here on the way - the package that owns execution should own the primitive that parks it, and diagnostics re-exports it so a debugger still finds it where it always was.

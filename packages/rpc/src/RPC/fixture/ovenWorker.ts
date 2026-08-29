@@ -32,6 +32,26 @@ class Oven {
         return { ...this.state }
     }
 
+    /**
+     * Gates repeatedly over a span, so a pause request arriving at any moment meets one.
+     *
+     * `bake` gates three times in a row with nothing in between, which makes a test that asks for a
+     * pause *after* issuing the call a race against the scheduler - two real threads, and the worker
+     * may finish before the request lands. That is not a flaw in the mechanism but a fact about it:
+     * a request only affects gates reached after it. This is the handler for testing what happens
+     * when one is reached, and it is what a handler doing actual work between probes looks like.
+     */
+    @rpc({ semantics: 'query', effect: 'observe' })
+    soak(ms: number): number {
+        const until = Date.now() + ms
+        let passes = 0
+        while (Date.now() < until) {
+            held.gate()
+            passes++
+        }
+        return passes
+    }
+
     /** No gates: a handler that reaches none cannot be paused, which is a limit worth testing. */
     @rpc({ semantics: 'query', effect: 'observe' })
     ungated(): number {

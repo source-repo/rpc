@@ -128,7 +128,10 @@ export class RpcDiagnostics extends RpcComponent<RpcDiagnosticsProps, RpcDiagnos
         const capabilities = capabilitiesFor({
             ...options.support,
             sourceAvailable: sourceRoot !== undefined,
-            ...(options.pauses ? { safeBoundaryPause: true } : {}),
+            // Derived from the mechanism the supervisor was given rather than from its presence: a
+            // supervisor driving a barrier cannot make an exact stop, and a node that advertised one
+            // would be offering a viewer a control that produces something else.
+            ...(options.pauses ? { safeBoundaryPause: true, ...(options.pauses.kind === 'exact' ? { exactPause: true } : {}) } : {}),
             ...(serving ? { probeSink: { maxProbesPerSession: 500, maxValueBytes: options.sink!.bounds.maxValueBytes, maxTraceEvents: options.sink!.bounds.maxSamples } } : {})
         })
         super(

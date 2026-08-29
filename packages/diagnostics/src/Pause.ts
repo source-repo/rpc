@@ -1,6 +1,22 @@
 import type { RpcExecutionHold } from '@source-repo/rpc'
 
 /**
+ * What an exact pause is driven through: the gate a component's own logic parks at.
+ *
+ * `RpcPauseGate` satisfies this, and `RpcWorkerHost.gate` is where a worker-hosted component's
+ * comes from. Taken structurally rather than by class so that a deployment with its own pausable
+ * runtime - another language, another isolation mechanism - can drive this supervisor with it.
+ */
+export interface RpcExactPauseControl {
+    /** Ask the logic to park at its next gate. Returns at once; it parks when it arrives. */
+    request(): void
+    /** Let it go. The statement after the gate is next. */
+    release(): void
+    readonly paused: boolean
+    untilPaused(timeoutMs: number): Promise<boolean>
+}
+
+/**
  * Stopping a component *between* units of work, which is the pause a general actor can survive.
  *
  * The design's safe-boundary mode: a probe is hit, the runtime records it and asks for a pause, the
@@ -40,6 +56,16 @@ export type RpcPauseExpiryAction =
  */
 export type RpcIncomingWorkPolicy = 'buffer-bounded' | 'refuse-as-paused' | 'supervisor-queries-only'
 
+/**
+ * Which kind of stop this is, and it is a property of the mechanism rather than a label.
+ *
+ * A supervisor driving a barrier can only produce `safe-boundary`, and one driving a gate can only
+ * produce `exact`. That is enforced by there being one mechanism per supervisor: the design requires
+ * the two to be clearly distinguished, and the surest way to distinguish them is to make claiming
+ * the wrong one impossible rather than incorrect.
+ */
+export type RpcPauseKind = 'safe-boundary' | 'exact'
+
 /** Where a component is stopped, published so a viewer can say so plainly. */
 export interface RpcPauseState {
     readonly pauseId: string
@@ -49,12 +75,14 @@ export interface RpcPauseState {
     /** Which probe asked. The line it is drawn beside is where the *request* came from. */
     readonly probeId: string
     /**
-     * Always `safe-boundary` here, and present so that a viewer never has to infer it.
+     * Which stop this is, and a viewer must say which - the design requires it.
      *
-     * The design requires the two to be clearly distinguished, and a field that only ever holds one
-     * value today is how a client written now keeps working when the other one exists.
+     * `safe-boundary` means execution stopped **after** a handler, so a caret on the probe's line
+     * would put the component where it is not. `exact` means it stopped *at* that line, with the
+     * statement after the gate still to run. They are different facts about where a plant is, and a
+     * screen that showed them the same way would be wrong about one of them.
      */
-    readonly kind: 'safe-boundary'
+    readonly kind: RpcPauseKind
     readonly pausedAt: string
     readonly expiresAt: number
     readonly controllerLeaseId?: string
@@ -79,13 +107,33 @@ export interface RpcPauseSupervisorOptions {
     readonly semanticRevisionId: string
     readonly activationEpoch: string
     /**
-     * Take the barrier. `server.rpc.holdExecution` bound to the instance being watched.
+     * Take the barrier, for a safe-boundary stop. `server.rpc.holdExecution` bound to the instance.
      *
      * Injected rather than reached for, like the freshness signal in `@source-repo/query`: the thing
      * that owns the execution queue is in a better position to say what holding it means, and a
      * diagnostics package that reached into a server would be deciding that on its behalf.
+     *
+     * Exactly one of this and `gate` - a supervisor with both would be a supervisor that could
+     * claim either kind of pause while producing the other.
      */
-    readonly hold: () => RpcExecutionHold
+    readonly hold?: () => RpcExecutionHold
+    /**
+     * The gate, for an exact stop: `RpcWorkerHost.gate` for a component hosted on its own thread.
+     *
+     * This is the mechanism the feasibility work measured. It parks the logic thread *between two
+     * statements of a handler*, which is what an exact breakpoint means and what a barrier cannot
+     * do - a barrier can only stop what has not started.
+     */
+    readonly gate?: RpcExactPauseControl
+    /**
+     * How long to wait for the component to actually stop before withdrawing the request.
+     *
+     * Both mechanisms can fail to stop: a barrier waits on a handler that may never return, and a
+     * gate waits for logic that may reach no further gate. **The request is withdrawn on the way
+     * out**, because a pause request left outstanding is worse than one that failed - the component
+     * would park later, unexpectedly, with nobody watching for it.
+     */
+    readonly maxWaitForPauseMs?: number
     /** What to do when a pause outlives its lease. Declared up front, and visible before it matters. */
     readonly expiryAction: RpcPauseExpiryAction
     /** How long a pause may last unrenewed. A bound, because a stopped plant is a stopped plant. */
@@ -103,6 +151,7 @@ export interface RpcPauseSupervisorOptions {
 }
 
 const DEFAULT_MAX_PAUSE_MS = 60_000
+const DEFAULT_MAX_WAIT_FOR_PAUSE_MS = 5_000
 
 /**
  * One component's pauses, one at a time.
@@ -116,8 +165,9 @@ export class RpcPauseSupervisor {
     private held?: RpcExecutionHold
     private state_?: RpcPauseState
     private lease_?: RpcDebuggerLease
-    private pausing?: Promise<RpcPauseState>
+    private pausing?: Promise<RpcPauseState | undefined>
     private readonly maxPauseMs: number
+    private readonly maxWaitForPauseMs: number
     private readonly now: () => number
     private readonly newId: (kind: string) => string
     private counter = 0
@@ -127,13 +177,29 @@ export class RpcPauseSupervisor {
             throw new Error(
                 `${options.componentId}'s pause policy is to terminate on expiry and nothing was given to terminate with: ending an activation means swapping the approved artifact back or fencing what is running, and both belong to the deployment`
             )
+        if ((options.hold === undefined) === (options.gate === undefined))
+            throw new Error(
+                `${options.componentId}'s pause supervisor needs exactly one mechanism: a barrier for a safe-boundary stop or a gate for an exact one. With both it could claim either kind while producing the other, and with neither it cannot stop anything.`
+            )
         this.maxPauseMs = Math.max(1, options.maxPauseMs ?? DEFAULT_MAX_PAUSE_MS)
+        this.maxWaitForPauseMs = Math.max(1, options.maxWaitForPauseMs ?? DEFAULT_MAX_WAIT_FOR_PAUSE_MS)
         this.now = options.now ?? Date.now
         this.newId = options.newId ?? ((kind) => `${kind}-${++this.counter}`)
     }
 
     get state(): RpcPauseState | undefined {
         return this.state_
+    }
+
+    /**
+     * Which kind of stop this supervisor can produce, decided by which mechanism it was given.
+     *
+     * Read by the service to work out whether the node may advertise `exactPause`, which is the
+     * point of the kind being a property of the mechanism: a node cannot advertise a stop it has no
+     * way of making.
+     */
+    get kind(): RpcPauseKind {
+        return this.options.gate ? 'exact' : 'safe-boundary'
     }
 
     get lease(): RpcDebuggerLease | undefined {
@@ -150,12 +216,19 @@ export class RpcPauseSupervisor {
      *
      * Safe to call from a probe: it does bounded work and returns a promise nobody has to await.
      */
-    requested(probeId: string): Promise<RpcPauseState> {
+    requested(probeId: string): Promise<RpcPauseState | undefined> {
         if (this.state_) return Promise.resolve(this.state_)
         if (this.pausing) return this.pausing
-        const hold = this.options.hold()
-        this.held = hold
-        this.pausing = hold.quiescent.then(() => {
+        this.pausing = (this.options.gate ? this.parkAtGate() : this.parkAtBarrier()).then((waiting) => {
+            this.pausing = undefined
+            // It never stopped: a handler that has not returned, or logic that reached no further
+            // gate. The request is withdrawn rather than left standing, because a component that
+            // parked ten minutes later with nobody watching would be worse than one that did not
+            // park at all.
+            if (waiting === undefined) {
+                this.let_go()
+                return undefined
+            }
             const pausedAt = this.now()
             this.state_ = {
                 pauseId: this.newId('pause'),
@@ -163,17 +236,54 @@ export class RpcPauseSupervisor {
                 semanticRevisionId: this.options.semanticRevisionId,
                 activationEpoch: this.options.activationEpoch,
                 probeId,
-                kind: 'safe-boundary',
+                kind: this.kind,
                 pausedAt: new Date(pausedAt).toISOString(),
                 expiresAt: pausedAt + this.maxPauseMs,
                 ...(this.lease_ ? { controllerLeaseId: this.lease_.leaseId } : {}),
-                waiting: hold.waiting(),
+                waiting,
                 incomingWork: 'buffer-bounded'
             }
-            this.pausing = undefined
             return this.state_
         })
         return this.pausing
+    }
+
+    /**
+     * The barrier: what was running finishes, and the component stops before the next unit of work.
+     *
+     * The deadline is on reaching quiescence, not on the pause: a handler that never returns is a
+     * component that cannot be stopped this way, and waiting for it forever would leave a barrier in
+     * the queue holding back every call behind it.
+     */
+    private async parkAtBarrier(): Promise<number | undefined> {
+        const hold = this.options.hold!()
+        this.held = hold
+        let expiry: ReturnType<typeof setTimeout> | undefined
+        const quiescent = await Promise.race([
+            hold.quiescent.then(() => true as const),
+            new Promise<false>((resolve) => {
+                expiry = setTimeout(() => resolve(false), this.maxWaitForPauseMs)
+                expiry.unref?.()
+            })
+        ]).finally(() => clearTimeout(expiry))
+        return quiescent ? hold.waiting() : undefined
+    }
+
+    /**
+     * The gate: the logic thread parks *between two statements of a handler*.
+     *
+     * Nothing here blocks. The supervisor asks and waits asynchronously, because the whole point of
+     * putting the logic on another thread was that the thing capable of releasing it stays running -
+     * a supervisor that blocked to watch a component stop would have stopped itself as well.
+     *
+     * Zero waiting calls, and that is not a placeholder: with the logic on its own thread, what
+     * queues behind a pause queues on the server's side and is counted there. A number invented here
+     * would be a different queue's depth reported as this one's.
+     */
+    private async parkAtGate(): Promise<number | undefined> {
+        const gate = this.options.gate!
+        gate.request()
+        return (await gate.untilPaused(this.maxWaitForPauseMs)) ? 0 : undefined
     }
 
     /**
@@ -267,10 +377,11 @@ export class RpcPauseSupervisor {
         return 'terminate'
     }
 
-    /** Release the barrier and forget the pause. The one path out, so it cannot be half-taken. */
+    /** Let the component go, by whichever mechanism holds it. One path out, so it cannot be half-taken. */
     private let_go(): void {
         this.held?.release()
         this.held = undefined
+        this.options.gate?.release()
         this.state_ = undefined
     }
 }

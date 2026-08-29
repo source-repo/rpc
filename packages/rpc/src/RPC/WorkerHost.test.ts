@@ -59,7 +59,7 @@ test('the worker says which methods it serves, so nothing here has to be told tw
     const { host } = await hosted(t)
     const methods = await host.methods()
 
-    t.deepEqual([...methods].sort(), ['bake', 'refuse', 'unclonable', 'ungated'], 'walked from the instance rather than listed on this side')
+    t.deepEqual([...methods].sort(), ['bake', 'refuse', 'soak', 'unclonable', 'ungated'], 'walked from the instance rather than listed on this side')
 })
 
 test('a handler is stopped between its own statements, and the server keeps answering', async (t) => {

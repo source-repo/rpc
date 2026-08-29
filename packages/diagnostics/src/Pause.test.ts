@@ -81,8 +81,9 @@ test('the handler that was running finishes, and the component stops before the 
 
     t.is(await first, 1, 'the handler ran to its end under ordinary semantics')
     const state = await paused
-    t.is(state.kind, 'safe-boundary')
-    t.is(state.probeId, 'breakpoint:oven.ts:12:9')
+    t.truthy(state, 'it reached quiescence and stopped')
+    t.is(state?.kind, 'safe-boundary')
+    t.is(state?.probeId, 'breakpoint:oven.ts:12:9')
     t.false(oven.state.inHandler, 'and the component is between units of work, not inside one')
 
     const next = proxy.bake(5)
@@ -203,8 +204,8 @@ test('a second probe while paused is the same pause, not a second one', async (t
     await first
 
     const two = await pauses.requested('breakpoint:2')
-    t.is(two.pauseId, one.pauseId, 'the component is already stopped; the second probe has not run and will not until it is resumed')
-    t.is(two.probeId, 'breakpoint:1')
+    t.is(two?.pauseId, one?.pauseId, 'the component is already stopped; the second probe has not run and will not until it is resumed')
+    t.is(two?.probeId, 'breakpoint:1')
 })
 
 test('a command queued through a pause runs once, because nothing here retries anything', async (t) => {

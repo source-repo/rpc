@@ -2,7 +2,7 @@
 
 Live values beside the source that declares them, for a [Source RPC](https://github.com/source-repo/rpc) node. The oldest way of looking at a machine — the program on screen with what each thing currently is written next to it — without a debugger, without instrumentation, and without a second data path.
 
-**Phases 1 and 2 of the node diagnostics design.** Source-linked props and state; a diagnostic variant that can be proved a derivative, generated, and swapped in over a state-preserving handoff; and a bounded sink for what its probes see. Tracepoints capture without stopping and safe-boundary breakpoints stop between units of work; exact breakpoints and stepping are advertised as `false` rather than left out, and there is a measured prototype of the mechanism they would need.
+**Phases 1 to 3 of the node diagnostics design.** Source-linked props and state; a diagnostic variant that can be proved a derivative, generated, and swapped in over a state-preserving handoff; and a bounded sink for what its probes see. Tracepoints capture without stopping, safe-boundary breakpoints stop between units of work, and an exact breakpoint stops on the line — the last of those needing the component's logic on a thread of its own. Stepping is advertised as `false` rather than left out.
 
 ## The whole economy of it
 
@@ -210,7 +210,22 @@ A viewer must say which pause this is, and `kind: 'safe-boundary'` is on the sta
 
 Nothing here retries anything. A command that arrived while the component was stopped runs exactly once when it is let go, and its caller's ordinary timeout and `UnknownOutcome` behaviour is untouched.
 
-What is still not here: exact breakpoints and stepping, both advertised `false`. They need the worker `RpcPauseGate` was built to measure — see below.
+## Stopping on a line
+
+The same supervisor, handed a different mechanism. Given a barrier it can only stop what has not started; given the gate of a component hosted on its own thread it stops the logic **between two statements of a handler**.
+
+```typescript
+const host = new RpcWorkerHost({ module: './oven.worker.js' })          // @source-repo/rpc
+const pauses = new RpcPauseSupervisor({ ...identity, gate: host.gate, expiryAction: 'resume' })
+```
+
+**Exactly one mechanism, and the kind of pause follows from it.** A supervisor given both would be one that could claim either kind while producing the other, so it is refused at construction — the design requires the two to be clearly distinguished, and the surest way is to make claiming the wrong one impossible rather than incorrect. `exactPause` is advertised from the mechanism for the same reason: a node cannot offer a control that produces something else.
+
+Everything around the stop is unchanged, which is the point. The lease still governs a resume, the deadline still ends a pause nobody ended, and the probe that asked does not know which mechanism is underneath. What differs is where the component is when it stops, and `kind` on the pause state says which.
+
+**Two limits worth holding on to.** A request only affects gates reached *after* it lands — asking after a call has already gone out is a race with another thread, and a handler that reaches no further gate parks at the boundary before its next call instead, which is a safe-boundary stop arrived at from the other direction. And a request that does not park within its wait is **withdrawn**, because a component that parked ten minutes later with nobody watching would be worse than one that never stopped.
+
+What is still not here: stepping, advertised `false`. `step into`, `over` and `out` are this gate with a frame-depth predicate the worker evaluates, which is protocol on top of what exists rather than another mechanism.
 
 ## Stopping a component, and what that would cost
 

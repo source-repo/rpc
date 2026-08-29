@@ -143,6 +143,14 @@ export interface RpcDiagnosticsSupport {
      * needs to know which of the two it has.
      */
     readonly safeBoundaryPause?: boolean
+    /**
+     * This node can stop a component *between two statements of a handler*.
+     *
+     * A strictly larger power than the one above and a separately advertised one, because it needs
+     * something the other does not: the component's logic on a thread of its own, with a gate the
+     * supervisor can park it at. A barrier can only stop what has not started.
+     */
+    readonly exactPause?: boolean
 }
 
 export const capabilitiesFor = (support: RpcDiagnosticsSupport): RpcDiagnosticsCapabilities => {
@@ -167,7 +175,9 @@ export const capabilitiesFor = (support: RpcDiagnosticsSupport): RpcDiagnosticsC
         // A pause needs a supervisor holding a real barrier. Advertised from that rather than from
         // the package's ability to describe one.
         safeBoundaryPause: support.safeBoundaryPause === true,
-        exactPause: false,
+        // An exact stop is also a safe boundary reached the hard way, but the reverse is not true -
+        // so these are two flags and a node that can do the second says so separately.
+        exactPause: support.exactPause === true,
         stepping: false,
         limits: {
             // One session, because nothing arbitrates two: a second observer would union its regions
