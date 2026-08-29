@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+### A component can be stopped dead, and the thing that stopped it keeps answering
+
+A feasibility prototype for the diagnostics design's third phase, built before anything was built on it. Phase 3 asks for an isolated pausable logic worker and a supported runtime pause gate, and whether this runtime can honestly provide either is a question better answered with a working gate than with a plan. `RpcPauseGate` is that gate. **It is not a breakpoint** - no supervisor protocol, no controller lease, no stepping - so `exactPause` and `stepping` are still advertised `false` and nothing a viewer can ask for has changed.
+
+`Atomics.wait` parks a worker's JavaScript thread in the kernel: not a promise that resolves later, the thread itself, with its microtasks, its timers and its socket callbacks all stopped. That is what *the component logic execution context is blocked* has to mean, and it is why the supervisor cannot live on that thread. The supervisor side uses `Atomics.waitAsync`, which returns a promise instead of parking - a supervisor that blocked to wait for a pause would have suspended the only thing capable of ending it.
+
+Every test runs a real worker thread, because every claim is about threads and a promise-based imitation would pass all of them while proving nothing. **A resume continues the same stack**: the handler is entered once, parks once, and carries on - `['entry:released', 'clamped=300:ran-through', 'doubled=600:ran-through']` - which is the design's second acceptance criterion and the thing that separates an exact breakpoint from re-running a handler and hoping it takes the same path. A pause nobody ends ends itself on the parked thread's own deadline, reporting `expired` rather than `released`, because the failure being guarded against is precisely the supervisor being gone.
+
+Measured rather than asserted: the fast path is one `Atomics.load` at about 5 ns per arrival, against 1 ns for a plain read and 0.36 ns for an empty loop. Twenty statements cost 100 ns, which is nothing beside the RPC that called them; a million-iteration loop with a gate in its body costs 5 ms, which is not. Probe budgets should be about *where* probes go and not only how many.
+
+**The limits are the reason for building this first**, and they are written up in `notes/exact-pause-feasibility.md`. The one that decides the shape of the phase: a parked thread freezes everything sharing it, so a pause scope of one component means one worker per component - a node with fifty components paying fifty threads - or pausing one component stops its neighbours, which is a very different thing to advertise. Deadlines do not pause while timers inside the paused thread do, so a component that watches itself stops watching itself the moment it is paused. Requesting a pause is not stopping: the thread parks at its next gate, and a handler that reaches no further probe cannot be paused at all.
+
+And the finding that matters for planning: the expensive part is not the gate. Today `RpcServer` holds the transport and its components on one thread, so making components pausable means moving component logic into workers and passing calls across a thread boundary - an architectural change to `@source-repo/rpc`. Stepping, by contrast, needs no new mechanism at all: it is this gate with a frame-depth predicate over the entry and exit probes that already exist.
+
 ### A tracepoint captures without stopping, and its condition may not do anything
 
 The last of diagnostics Phase 2. A tracepoint watches a line, captures named locals when a condition holds, and emits an event without pausing the component - the mode the design calls appropriate to the widest range of nodes, and the only one of its three this package implements, because the other two stop a plant.

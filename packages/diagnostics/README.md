@@ -186,6 +186,20 @@ Captures are bounded and what the bound discarded is counted, like everything el
 
 What is still not here: safe-boundary and exact breakpoints, and stepping — all advertised `false`.
 
+## Stopping a component, and what that would cost
+
+`RpcPauseGate` is the mechanism an exact breakpoint would be built on, built and measured on its own before anything was built on top of it. **It is not a breakpoint**: there is no supervisor protocol, no controller lease and no stepping, so `exactPause` and `stepping` stay `false` and nothing a viewer can ask for has changed.
+
+`Atomics.wait` parks a worker's JavaScript thread in the kernel — not a promise that resolves later, the thread itself — which is what "the component logic execution context is blocked" has to mean. The supervisor side uses `Atomics.waitAsync` instead, so the process holding the component keeps answering while the component is stopped; a supervisor that blocked to wait for a pause would have suspended the only thing capable of ending it.
+
+The property worth having is that **a resume continues the same stack**. The gate returns into the middle of the handler it stopped: the next statement is next, the locals are the locals, and nothing has been re-executed. That is what separates an exact breakpoint from re-running a handler and hoping it takes the same path.
+
+A pause nobody ends ends itself, on the parked thread's own deadline, because the case that matters is the one where the supervisor is gone. Richer expiry policies need something alive to apply them.
+
+The fast path is one `Atomics.load` — about 5 ns per arrival, against 1 ns for a plain read. Twenty statements cost 100 ns; a million-iteration loop with a gate in it costs 5 ms.
+
+[The full findings](https://github.com/source-repo/rpc/blob/main/notes/exact-pause-feasibility.md), including the limit that shapes the phase: a parked thread freezes *everything* sharing it, so a pause scope of one component means a worker per component — and the expensive part is not this gate but moving component logic off the transport's thread.
+
 ## License
 
 MIT

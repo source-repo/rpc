@@ -1,7 +1,11 @@
 {
     "compilerOptions": {
         "target": "ES2022",
-        "lib": ["ES2022"],
+        // ES2024 for the library only, and for one symbol: Atomics.waitAsync, which is how the
+        // supervisor waits for a pause without becoming the thing that is paused. The emit target
+        // stays where it was - this asks the type system to know about a method the engines this
+        // package supports have had for years, not to compile differently.
+        "lib": ["ES2024"],
         "module": "NodeNext",
         "moduleResolution": "NodeNext",
 

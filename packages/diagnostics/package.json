@@ -49,7 +49,8 @@
     },
     "files": [
         "dist",
-        "!dist/**/*.test.*"
+        "!dist/**/*.test.*",
+        "!dist/fixture"
     ],
     "scripts": {
         "build": "tsc -p tsconfig.json",
