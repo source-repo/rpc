@@ -2,7 +2,7 @@
 
 A feasibility prototype for the third phase of the [node live diagnostics design](source-rpc-node-live-diagnostics-design/source-rpc-node-live-diagnostics-design-spec.md), written before any breakpoint was built on it. The design's Phase 3 asks for an *isolated pausable TypeScript logic worker* and a *supported language/runtime pause gate*; whether this runtime can honestly provide either is a question better answered with a working gate than with a plan.
 
-The gate is `RpcPauseGate` in `@source-repo/diagnostics`, and its tests in `PauseGate.test.ts` run real worker threads because every claim here is about threads — a promise-based imitation would pass all of them and prove nothing. No breakpoint, no supervisor protocol, no controller lease, no stepping: `exactPause` and `stepping` are still advertised `false`, and this changes nothing a viewer can ask for.
+The gate is `RpcPauseGate` — written in `@source-repo/diagnostics` and since moved to `@source-repo/rpc`, which owns the execution it parks — and its tests run real worker threads because every claim here is about threads — a promise-based imitation would pass all of them and prove nothing. No breakpoint, no supervisor protocol, no controller lease, no stepping: `exactPause` and `stepping` are still advertised `false`, and this changes nothing a viewer can ask for.
 
 ## What it proves
 
@@ -54,3 +54,11 @@ Stepping needs no new mechanism, which is the good news. `step into`, `step over
 What is genuinely unbuilt is the supervisor protocol around it — the controller lease with at most one holder, read-only observers of a pause, audited transfer, the pause-state publication, and the three expiry actions where only *resume* can be enforced by the parked thread itself. The other two need something alive to enforce them, which is precisely the case where the supervisor may not be.
 
 If this is taken further, the honest order is: safe-boundary breakpoints first, since they need no worker at all and reach five of Phase 3's seven acceptance criteria on machinery that already exists; then the per-component worker model in `@source-repo/rpc`, which is the expensive part; then this gate behind it.
+
+## What was built afterwards
+
+All three, in that order. Safe-boundary breakpoints are `RpcPauseSupervisor` in `@source-repo/diagnostics`; the per-component worker model is `RpcWorkerHost` and `serveInWorker` in `@source-repo/rpc`, with this gate moved there beside them, since the package that owns execution should own the primitive that parks it.
+
+The estimate above was wrong in one direction worth recording: **the expensive part turned out not to be the worker either.** The seam is `handler(...params)` and nothing else — everything the server does before that call is policy about a *call* and belongs on the thread calls arrive on, so a worker-hosted instance is exposed through the ordinary path and the dispatch code was never touched. What the work actually consisted of was the boundary's honesty: arguments and results crossing by structured clone, an exception crossing as message-name-code, and the `@rpc` declarations having to be carried across explicitly — because a forwarding object built at runtime never saw a decorator, and a `non-repeatable-command` silently becoming an undeclared method would have been a safety regression caused by a change of hosting.
+
+The limits above all held. One instance per worker is now enforced by the shape rather than recommended, and a handler that reaches no gate still cannot be paused inside — it parks at the boundary before the call instead, which is a safe-boundary pause arrived at from the other direction.

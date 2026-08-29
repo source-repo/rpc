@@ -59,6 +59,9 @@ export * from './RPC/Invocation.js'
 export * from './RPC/TopologyFileStore.js'
 // What this peer has asked other peers to do, and how each turned out. See RPC/Operations.ts.
 export * from './RPC/Operations.js'
+export * from './RPC/PauseGate.js'
+export * from './RPC/WorkerHost.js'
+export * from './RPC/WorkerRuntime.js'
 export * from './RPC/RpcClientHandler.js'
 export * from './RPC/RpcServerHandler.js'
 

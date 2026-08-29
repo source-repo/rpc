@@ -327,6 +327,22 @@ export const rpcNamespace =
     }
 
 /** The namespace an instance's class declares, walking up so a subclass inherits it. */
+/**
+ * Apply declarations to a constructor that had no decorators to write them.
+ *
+ * For one case, and it is worth naming rather than leaving as a general facility: an instance hosted
+ * on another thread. Its class *is* decorated, on the thread where it lives, and the forwarding
+ * object standing in for it here was built at runtime and never saw a decorator. Without this, a
+ * `non-repeatable-command` would be exposed as an undeclared method and quietly lose its idempotency
+ * protection - a safety regression caused by a change of hosting, which is precisely the kind of
+ * thing a change of hosting must not cause.
+ *
+ * The declarations still come from the class that declared them; this only carries them across.
+ */
+export const markMethodsOn = (constructor: object, declarations: { readonly [method: string]: RpcMethodOptions }): void => {
+    for (const [method, options] of Object.entries(declarations)) markOn(constructor, method, options)
+}
+
 export const declaredNamespace = (instance: object) => {
     for (let ctor: object | null = instance.constructor; ctor; ctor = Object.getPrototypeOf(ctor)) {
         const declared = namespaces.get(ctor)

@@ -1,5 +1,5 @@
 import { parentPort, workerData } from 'node:worker_threads'
-import { RpcPauseGate } from '../PauseGate.js'
+import { RpcPauseGate } from '@source-repo/rpc'
 
 /**
  * A stand-in for component logic running where it can be stopped.

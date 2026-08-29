@@ -1,16 +1,17 @@
 /**
  * Stopping a component's logic dead, while the thing that stopped it stays answering.
  *
- * This is the mechanism an exact breakpoint would be built on, built and measured on its own before
- * anything is built on top of it - the design's Phase 3 asks for an *isolated pausable logic worker*
- * and a *supported runtime pause gate*, and whether this runtime can honestly provide either is a
- * question to answer with a working gate rather than with a plan.
+ * **In this package because this package owns execution.** It began in `@source-repo/diagnostics`,
+ * measured on its own before anything was built on it, and moved here the moment something needed
+ * to stop a component rather than describe stopping one: the queue a call runs on is here, the
+ * worker that holds a component's logic is here, and a primitive that parks the second while the
+ * first keeps answering belongs beside both. Diagnostics still re-exports it, because a debugger is
+ * the thing that will ask.
  *
- * **It is the mechanism and not the feature.** There is no breakpoint here, no supervisor protocol,
- * no controller lease and no stepping, so `exactPause` and `stepping` stay advertised `false`. What
- * is here is the one primitive those would need, with its limits established rather than assumed -
- * and the limits are in `notes/exact-pause-feasibility.md`, because several of them decide what the
- * feature can be.
+ * **It is a mechanism and not a feature.** There is no breakpoint here, no supervisor protocol, no
+ * controller lease and no stepping. What is here is the primitive those need, with its limits
+ * established rather than assumed - and the limits are in `notes/exact-pause-feasibility.md`,
+ * because several of them decide what can be built on it.
  *
  * ## How it stops something
  *

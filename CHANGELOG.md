@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+### A component's logic can live on a thread of its own
+
+The feasibility note measured a pause gate and found the gate was never the expensive part: what exact pause costs is that a component's logic has to be somewhere the transport is not. `Atomics.wait` parks a thread outright, so a component sharing a thread with the socket that carries its calls cannot be parked without parking the socket. `RpcWorkerHost` and `serveInWorker` are that thread, and `RpcPauseGate` moved from `@source-repo/diagnostics` to here on the way - the package that owns execution should own the primitive that parks it, and diagnostics re-exports it so a debugger still finds it where it always was.
+
+**The seam is `handler(...params)` and nothing else**, which is the finding that made this smaller than the note estimated. Everything the server does before that call - deadline, authority, ownership fence, idempotency, injection - is policy about a *call*, and calls arrive on the transport's thread and are answered there. Only the body of a method is component logic. So `callable()` returns a forwarder, `exposeClassInstance` takes it like any other instance, and **not one line of the dispatch path changed**. A change that had reached into that path would have put the whole policy stack behind a message boundary in order to move one function call.
+
+What the work actually consisted of was the boundary's honesty. Arguments and results cross by structured clone, and an argument that cannot is refused with the reason rather than silently flattened - a handler whose arguments cannot be copied cannot run somewhere else. A result that cannot cross fails as itself rather than as a timeout ten minutes later. An exception crosses as its message, its name and its code, because a thrown class instance is not the same object on the other side and what a caller acts on is the code.
+
+**And the declarations had to be carried across explicitly.** A forwarding object built at runtime never saw a decorator, so without this a `non-repeatable-command` would have been exposed as an undeclared method and quietly lost its idempotency protection - a safety regression caused by nothing but a change of hosting. The worker reports what its class declared and `markMethodsOn` re-applies it, which is one narrow addition to `Expose.ts` for exactly this case.
+
+Two things the tests settled rather than assumed. A forwarder's methods have to live on a **prototype**, because `exposeClassInstance` walks `instance.constructor.prototype` and an object whose methods are its own properties is invisible to it - a stand-in has to present itself the way the thing it stands in for is looked at. And a handler may not choose any error code it likes: the server's allow-list decides which a *handler* may claim, and the ones it produces itself for authority and ownership are not among them. A worker-hosted handler is a handler, so the same list applies - moving to a thread neither widens nor narrows what it may claim.
+
+`exactPause` is still advertised `false`, and that is not an oversight: the mechanism is here, and the diagnostics supervisor that would drive it - a breakpoint that stops at a probe, with the lease and the pause state an exact pause needs - still drives `holdExecution` for a safe-boundary stop. The mechanism existing is not the feature existing, which is the same line this work has held throughout.
+
 ### A journal written in one language chains to the same hashes in the other
 
 The journal arrived last time with its portability stated as a property of the shape rather than a demonstrated fact, because no second implementation read it. `SourceRpc.Continuity` now does, against a fixture both suites read verbatim - `oven-journal.json`, six entries covering all four kinds, produced once by the TypeScript implementation and committed.

@@ -1,7 +1,10 @@
 {
     "compilerOptions": {
         "target": "ES2022",
-        "lib": ["ES2022", "DOM"],
+        // ES2024 for the library only, and for one symbol: Atomics.waitAsync, which is how a
+        // supervisor waits for a worker to park without becoming the thing that is parked. The emit
+        // target stays where it was.
+        "lib": ["ES2024", "DOM"],
         "module": "NodeNext",
         "moduleResolution": "NodeNext",
 
