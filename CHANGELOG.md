@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+### A worker can be a peer, not only somebody's host
+
+The third row of the review's table, and the last of them. `MessagePortTransport` carries this library's frames over a `MessagePort`, so a whole `RpcServer` can live on a worker thread with a name of its own, appear in presence, be addressed like anything else on the network - and **call outward**, which is the direction that makes it a peer rather than a hosting arrangement wearing a transport's clothes.
+
+**Symmetric, because a channel has two ends and no broker.** socket.io has a client and a server and MQTT has a broker; a `MessageChannel` has neither, so one class serves both ends: each announces its name and what it carries, each records the other's, and neither is in charge. Pretending one end was a server would put an arbitration nobody needs into a link that cannot have more than two participants.
+
+**The null codec, and it is sharper than it sounds.** A frame is projected to the same flat wire shape every other transport sends and then simply posted: structured clone copies it, so there is nothing to encode and nothing to parse - no MsgPack, no `$` to find, no header to walk. But the projection is not a formality. The library's `Message` is a *class*, and a class crossing by structured clone arrives with its prototype gone - which is precisely the mistake `RpcValue` was written to catch, and this transport's own check caught it on the first run. Null encoding is not an identity boundary, which was the point the review made and is now enforced rather than asserted.
+
+Presence is an announcement each way on open and a `peerGone` when the port closes; a terminated worker does close its port, which was checked rather than assumed. `carrying` does the routing: the host advertises the peers it can reach and the worker addresses them through this link without knowing they are elsewhere.
+
+One bug, and a satisfying one: the reply-to-an-announcement guard was briefly this peer's own name in `knownPeers`. It worked, and it quietly made the transport report *itself* gone when the link closed - that set is the far side's, and nothing of this one's belongs in it.
+
 ### A component on a worker is still a component
 
 The gap a review of the worker seam called the important one. `callable()` returns a forwarder, which is enough for a class and not for a *component*: the server installs snapshot publication, and accepts `sets` and `requiresAuthority`, only for a real `RpcComponent`. `serveComponentInWorker` and `RpcWorkerHost.component()` are the two halves that make one.
