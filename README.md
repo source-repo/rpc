@@ -167,6 +167,8 @@ npm test             # the MQTT tests need a broker:
 
 Without a broker the MQTT tests skip themselves, which is right on a laptop and wrong in CI; `SOURCE_RPC_REQUIRE_BROKER=1` turns the skip into a failure, and the workflow sets it alongside the broker it starts.
 
+The broker is named by `MSGRPC_TEST_BROKER`, which defaults to `mqtt://localhost:1883` — where the compose file puts EMQX. Point it at a broker that is already running instead of starting another: `MSGRPC_TEST_BROKER=mqtt://localhost:1884 npm test` for a mosquitto on 1884. Whatever it names must accept an anonymous CONNECT, since no peer in the suite sends credentials — that is what `EMQX_AUTHENTICATION: '[]'` in the compose file is for, and mosquitto needs `allow_anonymous true`.
+
 [`docs/mqtt5-frame-spec.md`](https://github.com/source-repo/rpc/blob/main/docs/mqtt5-frame-spec.md) and [`docs/flat-frame-spec.md`](https://github.com/source-repo/rpc/blob/main/docs/flat-frame-spec.md) describe the two wire formats. [`CHANGELOG.md`](https://github.com/source-repo/rpc/blob/main/CHANGELOG.md) covers what breaks between versions.
 
 The packages and the command were renamed in 3.0 — `msgrpc` became Source RPC — but **the protocol did not change**. Topic prefixes are still `msgrpc/v1` and `msgrpc/v2`, introspection is still the `msgrpc` namespace, and MQTT 5 user properties still carry the `mr-` prefix: renaming those would strand every deployed peer for no engineering gain.
