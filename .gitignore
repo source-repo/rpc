@@ -17,6 +17,10 @@ examples/display-context/dist/
 # committed into this one - git records them as a gitlink that no clone can resolve.
 .claude/worktrees/
 
+# One person's permission grants for this checkout. Personal by design: what somebody is willing to
+# let an agent do without being asked is a decision about their machine, not about this project.
+.claude/settings.local.json
+
 # Design material for commercial products, kept here to work on and never committed to a public
 # repository. Untracked is not protection on its own - a `git add -A` sweeps up whatever is there,
 # which is exactly how a worktree got committed once already.
