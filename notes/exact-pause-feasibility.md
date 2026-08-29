@@ -51,6 +51,8 @@ There is a cheaper variant that is worth knowing about and was not taken: a plai
 
 Stepping needs no new mechanism, which is the good news. `step into`, `step over` and `step out` are the same gate with a predicate the worker evaluates: a logical frame depth maintained by the entry and exit probes that already exist, and a rule of the form *park at the next gate whose depth is ≤ d*. That is protocol on top of what is here, not another primitive.
 
+*(Built, and the estimate held — with one correction. `depth ≤ d` is not quite the rule for stepping over: an exit probe is depth-equal once it has decremented, so that predicate lands on the callee's exit, which is exactly the frame the step was asked to go around. The rule is `depth < d, or depth = d and this is not an exit`.)*
+
 What is genuinely unbuilt is the supervisor protocol around it — the controller lease with at most one holder, read-only observers of a pause, audited transfer, the pause-state publication, and the three expiry actions where only *resume* can be enforced by the parked thread itself. The other two need something alive to enforce them, which is precisely the case where the supervisor may not be.
 
 If this is taken further, the honest order is: safe-boundary breakpoints first, since they need no worker at all and reach five of Phase 3's seven acceptance criteria on machinery that already exists; then the per-component worker model in `@source-repo/rpc`, which is the expensive part; then this gate behind it.

@@ -225,7 +225,28 @@ Everything around the stop is unchanged, which is the point. The lease still gov
 
 **Two limits worth holding on to.** A request only affects gates reached *after* it lands — asking after a call has already gone out is a race with another thread, and a handler that reaches no further gate parks at the boundary before its next call instead, which is a safe-boundary stop arrived at from the other direction. And a request that does not park within its wait is **withdrawn**, because a component that parked ten minutes later with nobody watching would be worse than one that never stopped.
 
-What is still not here: stepping, advertised `false`. `step into`, `over` and `out` are this gate with a frame-depth predicate the worker evaluates, which is protocol on top of what exists rather than another mechanism.
+## Stepping
+
+The design's five commands, each one predicate over a frame depth the entry and exit probes maintain. No new mechanism — the gate was always able to do this; what was missing was the arithmetic.
+
+```typescript
+await pauses.step(leaseId, 'over')                                  // run the call, land on the next line
+await pauses.step(leaseId, 'run-to-probe', host.indexOfProbe(id))   // run to a cursor
+```
+
+| | where it lands |
+|---|---|
+| `into` | the very next point there is — which is the same predicate as a breakpoint's, because stepping into *is* stopping at the next place there is to stop |
+| `over` | shallower than here, or the same frame and not an exit — so a call runs to its end, and stepping over the last statement still lands on the function's exit |
+| `out` | shallower than here — the current frame's exit |
+| `run-to-probe` | the probe named, **by index** |
+| `continue` | nowhere: it means *run until something else stops you*, so there is nothing to wait for |
+
+**A cursor is an index, and that is forced rather than chosen.** A step command reaches a *parked* thread, so it cannot arrive as a message — a parked thread does not read its queue. It travels through shared memory, and shared memory holds integers. Matching on a hash of the probe's name would mean stopping at the wrong line on a collision, so both sides hold the same registry and a probe the artifact does not carry is refused rather than resolved to the nearest thing.
+
+**Every step is a resume**, so every step is the lease holder's to issue and none of them is silently repeatable. A step that meets no further gate leaves the component running rather than paused — a step off the end of a program is where the program ends, not a failure to stop.
+
+Two waits had to be got right, and both were wrong first. The pause state names **where it stopped**, read from the gate rather than carried forward from the probe that asked — otherwise a stepping viewer draws its caret one step behind the truth. And a step waits for the **next park by count**, not for the logic to be seen running and then parked: between two adjacent gates the logic parks again before this side observes it leaving, so the obvious wait times out on a component that is stepping perfectly.
 
 ## Stopping a component, and what that would cost
 

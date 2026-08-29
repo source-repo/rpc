@@ -14,7 +14,34 @@ export interface RpcExactPauseControl {
     release(): void
     readonly paused: boolean
     untilPaused(timeoutMs: number): Promise<boolean>
+    /**
+     * Let it go, and stop it again where the step names. Absent on a gate that cannot step.
+     *
+     * Optional because stepping is a strictly larger power than pausing, and a deployment with a
+     * pausable runtime that keeps no frame stack can honestly offer the one without the other -
+     * which is what `stepping` in the capability set is for.
+     */
+    step?(mode: RpcStepMode, target?: number): void
+    /**
+     * Resolve once whatever was parked here has gone. Needed by every step, and not optional to it.
+     *
+     * A step waits for the logic to stop again, and *the logic has not left yet* at the moment the
+     * command is issued - so a wait that only asked "is it parked" would be answered by the park the
+     * step was meant to end, and report the position the debugger was already standing at. Every
+     * step would appear to go nowhere, one step behind the truth.
+     */
+    untilRunning?(timeoutMs: number): Promise<boolean>
+    /** How many times the logic has parked, and a wait for the next one. What a step waits on. */
+    readonly parks?: number
+    untilParkedSince?(since: number, timeoutMs: number): Promise<boolean>
+    /** The logical frame depth, for a viewer showing where in the program the logic is standing. */
+    readonly depth?: number
+    /** Which probe it is parked at, where the mechanism can say. What a viewer draws its caret on. */
+    readonly at?: string | undefined
 }
+
+/** The design's five commands, meaning exactly what section 23 says they mean. */
+export type RpcStepMode = 'continue' | 'into' | 'over' | 'out' | 'run-to-probe'
 
 /**
  * Stopping a component *between* units of work, which is the pause a general actor can survive.
@@ -89,6 +116,8 @@ export interface RpcPauseState {
     /** Calls queued behind the barrier. What resuming is about to let through. */
     readonly waiting: number
     readonly incomingWork: RpcIncomingWorkPolicy
+    /** How deep in its own frames the logic is standing. Present where a frame stack is kept. */
+    readonly frameDepth?: number
 }
 
 export interface RpcDebuggerLease {
@@ -202,6 +231,17 @@ export class RpcPauseSupervisor {
         return this.options.gate ? 'exact' : 'safe-boundary'
     }
 
+    /**
+     * Whether this supervisor can step, which is a fact about its mechanism rather than about it.
+     *
+     * A barrier cannot: stepping is a predicate over a frame stack, and a barrier stops what has not
+     * started rather than standing anywhere in a program. A gate can, when the runtime behind it
+     * keeps the stack.
+     */
+    get canStep(): boolean {
+        return typeof this.options.gate?.step === 'function'
+    }
+
     get lease(): RpcDebuggerLease | undefined {
         return this.lease_
     }
@@ -235,7 +275,9 @@ export class RpcPauseSupervisor {
                 componentId: this.options.componentId,
                 semanticRevisionId: this.options.semanticRevisionId,
                 activationEpoch: this.options.activationEpoch,
-                probeId,
+                // The probe that asked, unless the mechanism can say where it actually stopped: a
+                // request parks at the *next* gate, which is not always the one that asked.
+                probeId: this.options.gate?.at ?? probeId,
                 kind: this.kind,
                 pausedAt: new Date(pausedAt).toISOString(),
                 expiresAt: pausedAt + this.maxPauseMs,
@@ -343,6 +385,68 @@ export class RpcPauseSupervisor {
         const was = this.state_
         this.let_go()
         return was
+    }
+
+    /**
+     * Resume, and stop again where the step names. The design's five commands, on the lease.
+     *
+     * **The same authority as a resume, because it is one.** Every step lets the component run - the
+     * question a step answers is only *how far* - so it is the lease holder's to issue, and a step
+     * command is no more repeatable than a continue: a retry arriving after one completed would step
+     * a second time, from somewhere the caller has not seen.
+     *
+     * `run-to-probe` needs a probe the artifact actually carries. A cursor the build does not have
+     * is refused rather than resolved to the nearest thing, which is the same rule the plan and the
+     * artifact are already held to.
+     */
+    async step(leaseId: string, mode: RpcStepMode, targetProbe?: number): Promise<RpcPauseState | undefined | RpcPauseRefusal> {
+        if (!this.state_) return { why: `${this.options.componentId} is not paused, so there is nowhere to step from` }
+        if (!this.lease_ || this.lease_.leaseId !== leaseId)
+            return { why: `${this.options.componentId} is paused and this caller does not hold its debugger control: stepping resumes a component, and resuming one is an act somebody has to be named for` }
+        const gate = this.options.gate
+        if (!gate?.step)
+            return { why: `${this.options.componentId} is stopped at a barrier rather than at a gate, so there is no frame stack to step over: a barrier stops what has not started, and a step is a question about where in a program the logic is standing` }
+        if (mode === 'run-to-probe' && targetProbe === undefined)
+            return { why: `running to a cursor needs a probe this artifact carries, and none was named - a cursor the build does not have is one nothing can run to` }
+
+        const probeId = this.state_.probeId
+        this.state_ = undefined
+        // Read before the step, waited on after it: a step ends at the *next* park, and asking
+        // "is it parked" would be answered by the one this step is ending.
+        const since = gate.parks ?? 0
+        gate.step(mode, targetProbe)
+        // `continue` is not a step: it means run until something else stops you, so there is nothing
+        // to wait for. The next pause will arrive through whatever asks for it.
+        if (mode === 'continue') return undefined
+        // Waiting for it to be *running* and then parked was tried and is wrong: between two
+        // adjacent gates the logic parks again before this side observes it leaving, so the first
+        // wait times out on a component that is stepping perfectly - two seconds a step, and the
+        // answer right anyway. A park count cannot be missed however fast the round trip is.
+        const parked = gate.untilParkedSince ? await gate.untilParkedSince(since, this.maxWaitForPauseMs) : await gate.untilPaused(this.maxWaitForPauseMs)
+        if (!parked) {
+            // It stepped and never met another gate - the frame ran out, or the handler ended. The
+            // component is running again and nothing is holding it, which is the honest outcome and
+            // not a failure: a step off the end of a program is where a program ends.
+            gate.release()
+            return undefined
+        }
+        const pausedAt = this.now()
+        this.state_ = {
+            pauseId: this.newId('pause'),
+            componentId: this.options.componentId,
+            semanticRevisionId: this.options.semanticRevisionId,
+            activationEpoch: this.options.activationEpoch,
+            // Where it actually stopped, which after a step is not where it was asked to stop from.
+            probeId: gate.at ?? probeId,
+            kind: 'exact',
+            pausedAt: new Date(pausedAt).toISOString(),
+            expiresAt: pausedAt + this.maxPauseMs,
+            controllerLeaseId: this.lease_.leaseId,
+            waiting: 0,
+            incomingWork: 'buffer-bounded',
+            ...(gate.depth !== undefined ? { frameDepth: gate.depth } : {})
+        }
+        return this.state_
     }
 
     /**

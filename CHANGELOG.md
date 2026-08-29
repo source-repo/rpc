@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+### Stepping, which is one predicate and some arithmetic
+
+The last flag. The design's five commands are a frame depth maintained by the entry and exit probes that already existed, and a rule evaluated where the logic is - so this needed no new mechanism, which the feasibility note predicted and which held.
+
+`into` stops at the next point there is; `over` runs a call to its end; `out` leaves the current frame; `run to cursor` stops at a named probe; `continue` means run until something else stops you, so it waits for nothing. Two of those rules are not what they first look like. **Step into is the same predicate as a breakpoint's** - stepping into *is* stopping at the next place there is to stop, and the only difference is which command asked; excluding exits was tried and made stepping into the last statement of a function run off the end of the program. And **step over is not `depth <= target`**: an exit probe is depth-equal once it has decremented, so that rule lands on the callee's exit - precisely the frame the step was asked to go around. It is `depth < target, or depth = target and not an exit`, and both halves earn their place.
+
+**A cursor is an index rather than a name, and that is forced.** A step command reaches a *parked* thread, so it cannot arrive as a message - a parked thread does not read its queue - and shared memory holds integers. Matching a hash of the name would mean stopping at the wrong line on a collision, so both sides hold the same registry, and a probe the artifact does not carry is refused rather than resolved to the nearest thing.
+
+Two waits were wrong first, and the tests caught both. The pause state carried the probe that *asked* rather than the one it stopped at, which for a stepping viewer means drawing the caret one step behind the truth; the gate now publishes where it parked. And a step waited for the logic to be seen running and then parked, which looks equivalent to waiting for the next park and is not: between two adjacent gates the logic parks again before this side observes it leaving, so every step took the full deadline and was right anyway. A park **count** cannot be missed however fast the round trip is.
+
+One thing that came out of the fixture rather than the design: a worker-hosted instance was forwarding every function on the prototype, including ones the class calls private - TypeScript's `private` is a compile-time word. The server treats `@rpc` marks as an allow-list, so the worker boundary now does too. A change of hosting must not widen a component's surface, which is the same rule as not losing its declarations, arrived at from the other direction.
+
 ### A breakpoint that stops on the line rather than after the handler
 
 The last box in the diagnostics design's architecture diagram, wired to the one before it. `RpcPauseSupervisor` now takes either a barrier or the gate of a component hosted on its own thread, and **the kind of pause is a property of which** - a barrier can only stop what has not started, and a gate stops the logic between two statements of a handler.

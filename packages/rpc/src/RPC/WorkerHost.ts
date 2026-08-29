@@ -93,22 +93,39 @@ export class RpcWorkerHost {
     private readonly worker: Worker
     private readonly pending = new Map<number, { resolve: (value: unknown) => void; reject: (failure: unknown) => void; timer: ReturnType<typeof setTimeout> }>()
     private readonly callTimeoutMs: number
-    private ready: Promise<{ readonly methods: readonly string[]; readonly declarations: { readonly [method: string]: RpcMethodOptions } }>
+    private ready: Promise<{ readonly methods: readonly string[]; readonly declarations: { readonly [method: string]: RpcMethodOptions }; readonly probeIds: readonly string[] }>
     private next = 1
     private closed = false
 
     /** The gate this instance parks at. Shared with the worker, and read by both without messages. */
     readonly gate = RpcPauseGate.create()
 
+    /** The probe registry the worker declared, in plan order. Empty for a build with no probes. */
+    private probeIds: readonly string[] = []
+
+    /**
+     * This probe's index, or `undefined` when this build does not carry it.
+     *
+     * The honest half of *run to cursor*: a probe the artifact does not have is a cursor nothing can
+     * run to, and saying so is better than running to whatever happens to match.
+     */
+    indexOfProbe(probeId: string): number | undefined {
+        const index = this.probeIds.indexOf(probeId)
+        return index < 0 ? undefined : index
+    }
+
     constructor(private readonly options: RpcWorkerHostOptions) {
         this.callTimeoutMs = options.callTimeoutMs ?? DEFAULT_CALL_TIMEOUT_MS
         this.worker = new Worker(options.module, { workerData: { gate: this.gate.buffer, value: options.data } })
         this.ready = new Promise((resolve, reject) => {
             const started = (message: unknown) => {
-                const announced = message as { ready?: readonly string[]; declarations?: { [method: string]: RpcMethodOptions } }
+                const announced = message as { ready?: readonly string[]; declarations?: { [method: string]: RpcMethodOptions }; probeIds?: readonly string[] }
                 if (!announced?.ready) return
                 this.worker.off('message', started)
-                resolve({ methods: announced.ready, declarations: announced.declarations ?? {} })
+                this.probeIds = announced.probeIds ?? []
+                // Both sides hold the same list, so an index means the same thing to each.
+                this.gate.knowProbes(this.probeIds)
+                resolve({ methods: announced.ready, declarations: announced.declarations ?? {}, probeIds: this.probeIds })
             }
             this.worker.on('message', started)
             this.worker.once('error', reject)

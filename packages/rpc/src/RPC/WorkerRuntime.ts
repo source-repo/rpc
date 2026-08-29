@@ -1,6 +1,6 @@
 import { parentPort, workerData } from 'node:worker_threads'
 import { declaredAuthority, declaredConflation, declaredEffect, declaredSemantics, declaredSets, markedMethods, type RpcMethodOptions } from './Expose.js'
-import { RpcPauseGate, type RpcGateOutcome } from './PauseGate.js'
+import { RpcPauseGate, type RpcFrameEvent, type RpcGateOutcome } from './PauseGate.js'
 
 /**
  * The other side of a worker-hosted instance: what runs where the logic is.
@@ -32,8 +32,19 @@ export interface RpcWorkerContext {
      * probes call, which is how an exact breakpoint stops on a line rather than between calls.
      */
     gate(maxPauseMs?: number): RpcGateOutcome
+    /**
+     * Arrive at a gate that is part of a frame: an entry, an exit, or a statement inside one.
+     *
+     * What makes stepping possible, and it is only bookkeeping: the entries and exits maintain a
+     * depth, and a step is a predicate over that depth. `probeId` is matched against the registry
+     * this worker declared, so *run to cursor* lands on the probe it named rather than on one whose
+     * name happened to hash the same way.
+     */
+    at(frame: RpcFrameEvent, probeId?: string, maxPauseMs?: number): RpcGateOutcome
     /** Whether a pause has been asked for and not yet reached. For a handler that wants to hurry to one. */
     readonly pauseRequested: boolean
+    /** The logical frame depth right now, for a handler that wants to report where it is. */
+    readonly depth: number
 }
 
 export interface RpcServeInWorkerOptions {
@@ -47,16 +58,35 @@ export interface RpcServeInWorkerOptions {
     readonly maxPauseMs?: number
     /** What the instance may reach, if it wants the gate. Filled in by the runtime. */
     readonly context?: (context: RpcWorkerContext) => void
+    /**
+     * Every probe id this build carries, in the order the plan lists them.
+     *
+     * The registry that makes *run to cursor* exact. A step command reaches a **parked** thread, so
+     * it travels through shared memory and shared memory holds integers - which means the two sides
+     * need an agreed integer for each probe, and an agreed list is the only way to have one that
+     * cannot collide. A build with no probes needs none of this.
+     */
+    readonly probeIds?: readonly string[]
 }
 
 const DEFAULT_MAX_PAUSE_MS = 60_000
 
-/** Every method the instance serves, walked the way the server's own exposure walks a class. */
+/**
+ * Every method the instance serves, by the same rule the server's own exposure uses.
+ *
+ * **Marked methods are an allow-list**, exactly as they are in `exposeClassInstance`: a class that
+ * marks any `@rpc` method serves those and no others. Without that rule a worker-hosted instance
+ * would forward more than the same class hosted in-process - TypeScript's `private` is a
+ * compile-time word and a private helper is an ordinary function on the prototype - and a change of
+ * hosting would have widened a component's surface. That is the same failure as losing a
+ * declaration at the boundary, arrived at from the other direction.
+ */
 const methodsOf = (instance: object): readonly string[] => {
+    const allowed = markedMethods(instance)
     const found = new Set<string>()
     for (let held = instance; held && held !== Object.prototype; held = Object.getPrototypeOf(held) as object)
         for (const name of Object.getOwnPropertyNames(held))
-            if (name !== 'constructor' && typeof (instance as Record<string, unknown>)[name] === 'function') found.add(name)
+            if (name !== 'constructor' && typeof (instance as Record<string, unknown>)[name] === 'function' && (!allowed || allowed.has(name))) found.add(name)
     return [...found]
 }
 
@@ -95,10 +125,19 @@ export const serveInWorker = (instance: object, options: RpcServeInWorkerOptions
     const gate = buffer ? new RpcPauseGate(buffer) : undefined
     const maxPauseMs = options.maxPauseMs ?? DEFAULT_MAX_PAUSE_MS
 
+    const probeIds = options.probeIds ?? []
+    const indexOf = new Map(probeIds.map((probeId, index) => [probeId, index]))
+    gate?.knowProbes(probeIds)
+
     const context: RpcWorkerContext = {
         gate: (ms = maxPauseMs) => gate?.arrive(ms) ?? 'ran-through',
+        at: (frame, probeId, ms = maxPauseMs) =>
+            gate?.arrive(ms, { frame, ...(probeId !== undefined && indexOf.has(probeId) ? { probe: indexOf.get(probeId)! } : {}) }) ?? 'ran-through',
         get pauseRequested() {
             return gate?.requested ?? false
+        },
+        get depth() {
+            return gate?.depth ?? 0
         }
     }
     options.context?.(context)
@@ -144,5 +183,5 @@ export const serveInWorker = (instance: object, options: RpcServeInWorkerOptions
     // class is, and the forwarding object on the host's side was built at runtime and never saw a
     // decorator - so without this a non-repeatable command would be exposed as an undeclared method
     // and lose its idempotency protection by having been moved to a thread.
-    port.postMessage({ ready: methodsOf(instance), declarations: declarationsOf(instance) })
+    port.postMessage({ ready: methodsOf(instance), declarations: declarationsOf(instance), probeIds })
 }

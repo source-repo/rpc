@@ -151,6 +151,14 @@ export interface RpcDiagnosticsSupport {
      * supervisor can park it at. A barrier can only stop what has not started.
      */
     readonly exactPause?: boolean
+    /**
+     * This node can step: resume to the next statement, over a call, or out of a frame.
+     *
+     * Larger again than an exact pause, and separately advertised, because it needs the runtime
+     * behind the gate to keep a logical frame stack. A pause is a question about *whether* the logic
+     * runs; a step is a question about where it stands, and not every pausable runtime can answer it.
+     */
+    readonly stepping?: boolean
 }
 
 export const capabilitiesFor = (support: RpcDiagnosticsSupport): RpcDiagnosticsCapabilities => {
@@ -178,7 +186,7 @@ export const capabilitiesFor = (support: RpcDiagnosticsSupport): RpcDiagnosticsC
         // An exact stop is also a safe boundary reached the hard way, but the reverse is not true -
         // so these are two flags and a node that can do the second says so separately.
         exactPause: support.exactPause === true,
-        stepping: false,
+        stepping: support.stepping === true,
         limits: {
             // One session, because nothing arbitrates two: a second observer would union its regions
             // into the first one's plan and quietly change what the first was watching.

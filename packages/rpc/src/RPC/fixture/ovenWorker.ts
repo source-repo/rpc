@@ -33,6 +33,34 @@ class Oven {
     }
 
     /**
+     * A frame that calls another, with entry, statement and exit gates in both.
+     *
+     * What stepping is a predicate over: `into` should land inside `clamp`, `over` should let
+     * `clamp` run to its end and land on the next statement of `heat`, and `out` should land on the
+     * exit of whichever frame is current. Written by hand here; in a real build the transformer's
+     * function-entry, statement and function-exit probes are these gates.
+     */
+    @rpc({ semantics: 'idempotent-command', effect: 'operate' })
+    heat(target: number): number {
+        held.at('enter', 'heat:entry')
+        held.at('step', 'heat:1')
+        const clamped = this.clamp(target)
+        held.at('step', 'heat:2')
+        this.state.setpoint = clamped
+        held.at('exit', 'heat:exit')
+        return clamped
+    }
+
+    /** The deeper frame. Not exposed: it is called, not called *on*. */
+    private clamp(target: number): number {
+        held.at('enter', 'clamp:entry')
+        held.at('step', 'clamp:1')
+        const clamped = target > 300 ? 300 : target
+        held.at('exit', 'clamp:exit')
+        return clamped
+    }
+
+    /**
      * Gates repeatedly over a span, so a pause request arriving at any moment meets one.
      *
      * `bake` gates three times in a row with nothing in between, which makes a test that asks for a
@@ -80,4 +108,9 @@ class Oven {
     }
 }
 
-serveInWorker(new Oven(), { maxPauseMs: 5_000, context: (context) => (held = context) })
+serveInWorker(new Oven(), {
+    maxPauseMs: 5_000,
+    context: (context) => (held = context),
+    // The registry both sides index into, in plan order.
+    probeIds: ['heat:entry', 'heat:1', 'clamp:entry', 'clamp:1', 'clamp:exit', 'heat:2', 'heat:exit']
+})
