@@ -1804,3 +1804,48 @@ textarea.control {
 .elevation.unbounded {
     color: var(--bad);
 }
+
+/* A tree resource, browsed a branch at a time. Indentation is inline, from the row's depth, because
+   the depth is data here rather than markup: a branch is fetched when it is opened and its rows do
+   not exist until then, so there is no nesting for a stylesheet to describe. */
+.tree-row {
+    display: flex;
+    align-items: baseline;
+    gap: 0.5rem;
+    padding: 0.15rem 0;
+}
+.tree-toggle {
+    width: 1.2rem;
+    flex: 0 0 1.2rem;
+    background: none;
+    border: none;
+    padding: 0;
+    cursor: pointer;
+    color: inherit;
+    font: inherit;
+    text-align: left;
+}
+.tree-leaf {
+    cursor: default;
+}
+.tree-label {
+    font-weight: 500;
+}
+.tree-detail {
+    font-size: 0.85em;
+    white-space: nowrap;
+}
+.tree-note {
+    margin: 0.2rem 0;
+    font-size: 0.9em;
+}
+.tree-more {
+    margin: 0.2rem 0;
+    background: none;
+    border: none;
+    padding: 0;
+    cursor: pointer;
+    color: inherit;
+    text-decoration: underline;
+    font: inherit;
+}

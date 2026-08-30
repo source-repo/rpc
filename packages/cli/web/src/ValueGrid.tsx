@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useState } from 'react'
 import { matchesFilter, type RpcFilter, type RpcSort } from '@source-repo/rpc'
 import type { RpcDataCache, RpcFreshness, RpcQuestion } from '@source-repo/query'
-import { leavesUnder, typeAt, type ScopeLeaf } from './scope'
+import { leavesUnder, treeResourceAt, typeAt, type ScopeLeaf } from './scope'
 import { staticSource, ValueTree, type EditAffordance, type ValueSource } from './ValueTree'
 import { compileFilter } from './filter'
 import { pageControls } from './pager'
 import { useRpcData } from './data'
+import { ResourceTree, type BranchQuestion } from './ResourceTree'
 import { useDebounced, useWaitedSeconds } from './timing'
 import type { DescribedAction, DescribedComponent, TypeNode } from './types'
 
@@ -261,6 +262,7 @@ export const ValueGrid = ({
     edit,
     cache,
     pageQuestion,
+    branchQuestion,
     period,
     actionsFor,
     onAction,
@@ -275,12 +277,20 @@ export const ValueGrid = ({
     edit?: EditAffordance
     cache: RpcDataCache
     pageQuestion: PageQuestion
+    /** How to name one branch of a tree resource. Absent leaves such a resource undrawable. */
+    branchQuestion?: BranchQuestion
     period: number | undefined
     /** What may be done to a row of the resource at this path, if anything. */
     actionsFor: (path: string[]) => DescribedAction[] | undefined
     onAction?: (action: DescribedAction, id: string, resource: readonly string[]) => void
     pageSize?: number
 }) => {
+    // Decided before anything else in this pane, because a tree is not a page of the same thing: it
+    // has no page number, its filter belongs to a branch rather than to the collection, and the
+    // question it asks names a parent. Sharing the grid's machinery would mean explaining, in both
+    // directions, which half of it does not apply.
+    const tree = treeResourceAt(component, scope)
+
     const [typed, setTyped] = useState('')
     // Settled rather than live, so eight keystrokes are one question and not eight.
     const search = useDebounced(typed, 400)
@@ -309,6 +319,20 @@ export const ValueGrid = ({
     // two different things either side of one pane would be worse than no search at all. The id of a
     // typed leaf is its path, which is what makes `setp` find `state.zones.top.setpoint`.
     const plain = filter ? all.filter((leaf) => matchesFilter(filter, source.read(leaf.path), leaf.path.join('.'))) : all
+
+    // A tree is the whole pane when one is selected. There is nothing else under that scope node -
+    // a resource has no typed leaves of its own - so drawing the empty grid furniture around it
+    // would be a filter box and a field count for something that has neither.
+    if (tree)
+        return (
+            <div className="value-grid">
+                {branchQuestion ? (
+                    <ResourceTree resource={tree} cache={cache} branchQuestion={branchQuestion} period={period} />
+                ) : (
+                    <p className="muted">this pane was given no way to ask for a branch, so the tree cannot be drawn</p>
+                )}
+            </div>
+        )
 
     return (
         <div className="value-grid">

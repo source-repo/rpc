@@ -47,8 +47,16 @@ export interface MarkdownDocument {
     /** Where it actually is, relative to the root and always with forward slashes. */
     readonly path: string
     readonly topics: readonly string[]
-    readonly words: number
-    readonly modified: string
+    /**
+     * Absent on a folder or a topic, which are structure rather than documents.
+     *
+     * A folder reporting `words: 0` is not saying it is empty, it is saying nothing at all - and a
+     * viewer drawing the hint's columns has no way to tell those apart. Worse was the first draft's
+     * topic row, which put a *document count* under the `words` label: a number that is true about
+     * something else is harder to catch than a missing one.
+     */
+    readonly words?: number
+    readonly modified?: string
 }
 
 export interface MarkdownLibraryProps extends Record<string, unknown> {
@@ -290,7 +298,7 @@ export class MarkdownLibrary extends RpcComponent<MarkdownLibraryProps, Markdown
         const here = this.folders.get(params.parentId ?? '')
         if (!here) return this.branch([], params)
         const rows = [
-            ...here.folders.map((path) => ({ id: path, title: basename(path), path, kind: 'folder' as const, topics: [], words: 0, modified: '' })),
+            ...here.folders.map((path) => ({ id: path, title: basename(path), path, kind: 'folder' as const, topics: [] })),
             ...here.documents.map((id) => ({ ...this.documents.get(id)!, kind: 'document' as const }))
         ]
         return this.branch(rows, params)
@@ -306,7 +314,7 @@ export class MarkdownLibrary extends RpcComponent<MarkdownLibraryProps, Markdown
         if (params.parentId === undefined) {
             const rows = [...this.topics.entries()]
                 .sort(([a], [b]) => (a < b ? -1 : 1))
-                .map(([topic, ids]) => ({ id: `topic:${topic}`, title: topic, path: '', kind: 'topic' as const, topics: [], words: ids.length, modified: '' }))
+                .map(([topic]) => ({ id: `topic:${topic}`, title: topic, path: '', kind: 'topic' as const, topics: [] }))
             return this.branch(rows, params)
         }
         const topic = params.parentId.startsWith('topic:') ? params.parentId.slice('topic:'.length) : undefined

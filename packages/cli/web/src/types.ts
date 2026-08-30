@@ -70,6 +70,11 @@ export interface DescribedResource {
     shape?: 'list' | 'tree'
     label?: string
     actions?: DescribedAction[]
+    /**
+     * Which columns to draw first. Advice, not a schema: a path the row does not have is not drawn,
+     * and every other field stays readable - this decides what is shown first, never what may be.
+     */
+    presentation?: { defaultColumns?: string[] }
 }
 
 /** An observable component's shape: structure and a live count, never the snapshot itself. */

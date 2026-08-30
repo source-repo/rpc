@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { actionsFor, leavesUnder, scopeTree, typeAt, type ScopeNode } from './scope'
+import { actionsFor, leavesUnder, scopeTree, treeResourceAt, typeAt, type ScopeNode } from './scope'
 import type { DescribedComponent, TypeNode } from './types'
 
 /**
@@ -215,5 +215,39 @@ describe('what may be done to a row', () => {
     it('has nothing to say about a resource it does not name, or a path that is not one', () => {
         expect(actionsFor(component, ['state', 'tags'], methods)).toBeUndefined()
         expect(actionsFor({ subscribers: 0 }, ['deadLetters'], methods)).toBeUndefined()
+    })
+})
+
+describe('a resource declared as a tree', () => {
+    const component: DescribedComponent = {
+        subscribers: 0,
+        resources: [
+            { path: ['folders'], verbs: ['getChildren'], shape: 'tree', label: 'By folder', presentation: { defaultColumns: ['title', 'words'] } },
+            { path: ['documents'], verbs: ['getList'], shape: 'list', label: 'All documents' },
+            // Says it is a tree and will not answer for one. A viewer that offered this would draw a
+            // node that refuses every selection, which is worse than one that is not offered.
+            { path: ['claimed'], verbs: ['getList'], shape: 'tree' },
+            // Answers the verb without claiming the shape: the pane has no reason to think it is a
+            // hierarchy, so it stays a list.
+            { path: ['unclaimed'], verbs: ['getChildren'] }
+        ]
+    }
+
+    it('appears in the scope beside the ones that answer getList', () => {
+        const names = scopeTree(component).map((node: ScopeNode) => node.name)
+        expect(names).toContain('By folder')
+        expect(names).toContain('All documents')
+    })
+
+    it('is recognised only when the shape and the verb agree', () => {
+        expect(treeResourceAt(component, ['folders'])?.label).toBe('By folder')
+        expect(treeResourceAt(component, ['documents'])).toBeUndefined()
+        expect(treeResourceAt(component, ['claimed'])).toBeUndefined()
+        expect(treeResourceAt(component, ['unclaimed'])).toBeUndefined()
+        expect(treeResourceAt(component, ['nothing'])).toBeUndefined()
+    })
+
+    it('carries the columns to open on, which stay advice rather than a schema', () => {
+        expect(treeResourceAt(component, ['folders'])?.presentation?.defaultColumns).toEqual(['title', 'words'])
     })
 })

@@ -7,6 +7,7 @@ import { overlayRefusal, type RpcSourceBinding, type RpcSourceCatalogue, type Rp
 import { staticSource, storeSource, type EditAffordance } from './ValueTree'
 import { ScopeTree } from './ScopeTree'
 import { ValueGrid, type PageQuestion } from './ValueGrid'
+import type { BranchQuestion } from './ResourceTree'
 import { actionsFor, leavesUnder, scopeTree } from './scope'
 import type { DescribedAction, DescribedComponent, DescribedMethod, TypeNode } from './types'
 
@@ -361,6 +362,20 @@ export const ComponentPanel = ({
     })
 
     /**
+     * One branch of a tree resource, named the same way and answered from the same cache.
+     *
+     * An absent `parentId` is the roots, and it is left out of the params rather than sent as
+     * empty - the two are different questions, and the cache keys on what is actually asked.
+     */
+    const branchQuestion: BranchQuestion = (resource, parentId, page, pageSize) => ({
+        target: peer,
+        namespace,
+        method: 'getChildren',
+        resource,
+        params: { pagination: { page, pageSize }, ...(parentId !== undefined ? { parentId } : {}) }
+    })
+
+    /**
      * State only: props are the host's inputs and are not the caller's to set. Depth is no longer
      * the limit it was - a declaration can name `zones.top.setpoint` - so a path renders with an
      * editor exactly when some method claims it, and without one when none does, which is the
@@ -463,7 +478,7 @@ export const ComponentPanel = ({
                             // channel of its own and can show nothing the grid could not.
                             <SourceView document={listing.document} bindings={listing.bindings} source={source} stale={stale} refusal={listing.refusal} />
                         ) : (
-                            <ValueGrid component={component} types={types} scope={scope} source={source} edit={edit} cache={data} pageQuestion={pageQuestion} period={period} actionsFor={(path) => actionsFor(component, path, methods)} onAction={(action, id, resource) => void runAction(action, id, resource)} />
+                            <ValueGrid component={component} types={types} scope={scope} source={source} edit={edit} branchQuestion={branchQuestion} cache={data} pageQuestion={pageQuestion} period={period} actionsFor={(path) => actionsFor(component, path, methods)} onAction={(action, id, resource) => void runAction(action, id, resource)} />
                         )}
                     </div>
                 </div>

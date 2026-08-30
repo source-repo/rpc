@@ -75,15 +75,18 @@ const useConsole = () => {
                 ask: async ({ target, namespace, method, resource, params }) => {
                     const link = peer.current
                     if (!link) throw new Error('no link')
-                    // The console browses collections and nothing else so far. Said out loud rather
-                    // than cast, because serving a `getMany` as a `getList` would answer the wrong
-                    // question with a straight face.
-                    if (method !== 'getList') throw new Error(`the console asks for lists; ${method} is not wired here`)
+                    // Two verbs, and the list is still an allow-list rather than a pass-through.
+                    // `getList` is a page of a collection and `getChildren` is one branch of a tree;
+                    // the console can draw both. The others stay refused out loud, because serving
+                    // a `getMany` as a `getList` would answer the wrong question with a straight
+                    // face - and the verb is passed through rather than re-stated, so a question
+                    // asking for a branch cannot be answered with a page.
+                    if (method !== 'getList' && method !== 'getChildren') throw new Error(`the console asks for lists and tree branches; ${method} is not wired here`)
                     const proxy = await link.proxy<DataProxy>(namespace, target)
                     // Declared, because it is true and because it is what keeps the operations tray
                     // readable: `$data` reads and answers, so a page of rows is not a row an
                     // operator has to look at twice. The claim travels nowhere and decides nothing.
-                    return proxy.$with({ semantics: 'query' }).$data('getList', resource, params as RpcGetListParams)
+                    return proxy.$with({ semantics: 'query' }).$data(method, resource, params as RpcGetListParams)
                 }
             }),
         []
@@ -217,7 +220,7 @@ const download = (rows: unknown[], filename: string) => {
 }
 
 /** Just the DataProvider verb, so the page needs no generic over anybody's component class. */
-type DataProxy = { $data(method: 'getList', resource: readonly string[], params?: RpcGetListParams): Promise<RpcGetListResult> }
+type DataProxy = { $data(method: 'getList' | 'getChildren', resource: readonly string[], params?: RpcGetListParams): Promise<RpcGetListResult> }
 
 /** Which of the side panel's three views is showing. */
 type SideTab = 'chat' | 'events' | 'traffic' | 'problems' | 'presence' | 'operations'

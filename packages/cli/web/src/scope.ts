@@ -127,13 +127,26 @@ export const scopeTree = (component: DescribedComponent, types?: Types): ScopeNo
     // children, which is the record rule holding one level up - the resource is named by the
     // component, its rows are data, and selecting it puts those rows in the grid.
     //
-    // Only those answering `getList`, because that is the only thing this grid can do with one. A
-    // resource that appeared and then refused every selection would be worse than one that is not
-    // offered, and the verb list exists precisely so a viewer can offer what is there.
+    // Only those this pane can actually show, which the verb list is there to say: `getList` for a
+    // page of rows, and `getChildren` for a tree browsed a branch at a time. A resource that
+    // appeared and then refused every selection would be worse than one that is not offered.
     ...(component.resources ?? [])
-        .filter((resource) => resource.verbs.includes('getList'))
+        .filter((resource) => resource.verbs.includes('getList') || resource.verbs.includes('getChildren'))
         .map((resource) => ({ name: resource.label ?? resource.path.join('.'), path: [...resource.path], children: [] }))
 ]
+
+/**
+ * The resource at this path when it is a tree this console can browse, and nothing otherwise.
+ *
+ * Both halves are required rather than either: `shape` says what it is and the verb says the node
+ * will answer for it, and a resource claiming one without the other is a declaration the viewer
+ * cannot act on. Offering a tree that refuses `getChildren` would be the thing the verb list exists
+ * to prevent.
+ */
+export const treeResourceAt = (component: DescribedComponent, path: readonly string[]) => {
+    const resource = component.resources?.find((declared) => declared.path.length === path.length && declared.path.every((segment, at) => segment === path[at]))
+    return resource?.shape === 'tree' && resource.verbs.includes('getChildren') ? resource : undefined
+}
 
 /**
  * The resource a path names, when a component declared one.
