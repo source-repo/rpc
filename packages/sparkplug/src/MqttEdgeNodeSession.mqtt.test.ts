@@ -167,7 +167,18 @@ test.serial('mqtt: a missed QoS 0 DDATA converges through complete Node and Devi
         clean: true,
         reconnectPeriod: 0
     })
+    // The loss this test is about happens at the receiver, which is what losing a QoS 0 message
+    // actually looks like: the broker forwards it and nobody ever hears it. An earlier version
+    // arranged it by unsubscribing around the publish, which raced - `deviceData` resolves when the
+    // publish is handed off, not when the broker has routed it, so the message it meant to lose
+    // could be processed after the resubscribe and arrive after all. Dropping it here cannot race
+    // with anything, and does not depend on how promptly a broker applies an unsubscribe.
+    let droppedOne = false
     host.on('message', (topic, payload) => {
+        if (topic === deviceTopic('DDATA', { groupId, edgeNodeId, deviceId }) && !droppedOne) {
+            droppedOne = true
+            return
+        }
         seen.push({ topic, payload: new Uint8Array(payload) })
     })
     const nBirthTopic = nodeTopic('NBIRTH', { groupId, edgeNodeId })
@@ -196,9 +207,8 @@ test.serial('mqtt: a missed QoS 0 DDATA converges through complete Node and Devi
     ])
     await waitFor(() => seen.some((message) => message.topic === dBirthTopic))
 
-    await host.unsubscribeAsync(dDataTopic)
+    // Seq 2, which the host above drops on the floor; then seq 3, which it keeps.
     await edge.session.deviceData(deviceId, [{ alias: 1, timestamp: 1001, datatype: SparkplugDataType.Double, value: 22 }])
-    await host.subscribeAsync(dDataTopic, { qos: 0 })
     await edge.session.deviceData(deviceId, [{ alias: 1, timestamp: 1002, datatype: SparkplugDataType.Double, value: 23 }])
     await waitFor(() => seen.some((message) => message.topic === dDataTopic))
 
