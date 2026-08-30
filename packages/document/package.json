@@ -1,6 +1,6 @@
 {
     "name": "@source-repo/document",
-    "version": "5.3.1",
+    "version": "5.3.2",
     "description": "Source Document: serve an existing MongoDB database to a Source RPC network as DataProvider resources",
     "keywords": [
         "rpc",
@@ -47,11 +47,11 @@
         "prepack": "npm run clean && npm run build"
     },
     "dependencies": {
-        "@source-repo/rpc": "^5.3.1",
+        "@source-repo/rpc": "^5.3.2",
         "mongodb": "^7.5.0"
     },
     "devDependencies": {
-        "@source-repo/conformance": "^5.3.1",
+        "@source-repo/conformance": "^5.3.2",
         "@types/node": "^26.1.2",
         "ava": "^8.0.1",
         "rimraf": "^6.0.1",

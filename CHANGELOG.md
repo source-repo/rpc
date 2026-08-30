@@ -1,5 +1,23 @@
 # Changelog
 
+## 5.3.2
+
+**The library is unchanged.** This releases the console and a test fix; the version moves because a whole-repository tag is what publishes them, and the `@source-repo/rpc` published as 5.3.2 is byte-for-byte the 5.3.1 one.
+
+### The object panel shows what an industrial object actually carries
+
+Driving the console against a live OPC UA server found the gap that driving it was for. All three aspects appeared, the address space browsed a branch at a time, the derived arrangements served from the index - and opening a node showed a heading and nothing else.
+
+The panel was built for documents. A UA variable has no content blocks: what it has is a node id, a browse name, a class, and a binding saying it can be observed over OPC UA at an endpoint. Fields render before content now, because an object with no content is usually one whose fields *are* the content, and bindings render as a statement rather than a control - this console does not follow a binding and does not offer to, because a binding says how an object can be reached rather than that this page may reach it.
+
+Both are read from the aspects vocabulary rather than from anything OPC UA, so `@source-repo/documentation` gained its path, topics and word count in the same change without being touched.
+
+Tree labels also stopped losing the space fight to the columns beside them, which are `nowrap` and had been leaving `S..` where `Speed` should have been.
+
+### A lost QoS 0 message is lost at the receiver
+
+The fifth flake of the same family, and it stopped a release. `a missed QoS 0 DDATA converges through complete Node and Device rebirth` arranged the loss by unsubscribing around the publish, which races: `deviceData` resolves when the publish is handed off, not when the broker has routed it, so the message meant to be lost could be delivered after the resubscribe. Dropping it in the host's own handler cannot race with anything, and is a truer model of what losing a QoS 0 message looks like.
+
 ## opcua 0.1.0
 
 `@source-repo/opcua`, published for the first time: an OPC UA address space served as aspects.

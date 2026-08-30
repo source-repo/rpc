@@ -1,6 +1,6 @@
 {
     "name": "@source-repo/diagnostics",
-    "version": "5.3.1",
+    "version": "5.3.2",
     "description": "Live values beside the source that declares them: a build-time binding catalogue, an active-source identity, and a node service that serves both - carrying no values and needing no instrumentation",
     "keywords": [
         "rpc",
@@ -60,8 +60,8 @@
         "prepack": "npm run clean && npm run build"
     },
     "dependencies": {
-        "@source-repo/continuity": "^5.3.1",
-        "@source-repo/rpc": "^5.3.1"
+        "@source-repo/continuity": "^5.3.2",
+        "@source-repo/rpc": "^5.3.2"
     },
     "devDependencies": {
         "@types/node": "^26.1.2",

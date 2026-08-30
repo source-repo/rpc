@@ -13,7 +13,7 @@
     registry, so a tag that changed nothing here publishes nothing here.
   -->
   <PropertyGroup>
-    <SourceRpcVersion>5.3.1</SourceRpcVersion>
+    <SourceRpcVersion>5.3.2</SourceRpcVersion>
   </PropertyGroup>
 
   <PropertyGroup>
