@@ -339,6 +339,52 @@ jobs:
                   echo "devtags=${image}:${version}-dev,${image}:${version%.*}-dev,${image}:${version%%.*}-dev,${image}:dev" >> "$GITHUB_OUTPUT"
                   echo "version=${version}" >> "$GITHUB_OUTPUT"
 
+            # A package published a minute ago is not necessarily installable yet. npm's write
+            # path returns before its read path has the packument, and `npm install` resolves
+            # through the packument - so `https://registry.npmjs.org/<pkg>/<version>` can answer 200
+            # with a real manifest while `npm install` still gets a 404 for the same version.
+            #
+            # 5.2.0 hit exactly that. `continuity` and `diagnostics` were published for the first
+            # time by the npm job above, and this image's install failed on `diagnostics` while its
+            # tarball was already on the registry and its provenance already in the transparency
+            # log. A first publish is when the gap is widest, which is also when a release is most
+            # likely to add a package the CLI depends on.
+            #
+            # Waiting rather than retrying the build: the image is multi-arch and the arm64 half is
+            # emulated, so rebuilding it to discover the registry is still catching up costs minutes
+            # an attempt. This asks the same question the install will ask, and asks it cheaply.
+            - name: Wait until the registry serves what the image installs
+              env:
+                  VERSION: ${{ steps.tags.outputs.version }}
+              run: |
+                  # Read from the CLI's own manifest, so this cannot drift from what it depends on -
+                  # and take each dependency's declared range rather than assuming the release
+                  # version, since a package outside the lockstep (the queue's rule) would not have
+                  # it.
+                  # Semicolons deliberately, unlike the rest of this repository: the last line
+                  # opens with `[`, and without them it parses as an index on the line above.
+                  specs=$(node -p "
+                    const cli = require('./packages/cli/package.json');
+                    const ours = Object.entries(cli.dependencies || {}).filter(([name]) => name.startsWith('@source-repo/'));
+                    ['@source-repo/rpc-cli@' + process.env.VERSION, ...ours.map(([name, range]) => name + '@' + range)].join(' ');
+                  ")
+                  for spec in $specs; do
+                    for attempt in $(seq 1 40); do
+                      # `npm view` resolves the packument, which is the path `npm install` takes.
+                      # Asking the version endpoint instead would answer before the install can.
+                      if npm view "$spec" version > /dev/null 2>&1; then
+                        echo "$spec resolves"
+                        break
+                      fi
+                      if [ "$attempt" = 40 ]; then
+                        echo "$spec never became installable - the npm job published it, so this is"
+                        echo "the registry rather than the release. Re-run this job."
+                        exit 1
+                      fi
+                      sleep 15
+                    done
+                  done
+
             # arm64 is built on an amd64 runner, so the emulators have to be registered first.
             # buildx alone accepts the platform and then fails inside the build with an exec format
             # error, which reads like a broken Dockerfile rather than a missing setup step.
