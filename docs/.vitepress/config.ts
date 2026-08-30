@@ -20,6 +20,7 @@ export default defineConfig({
             { text: 'Guide', link: '/guide/getting-started' },
             { text: 'Operations', link: '/deploying-a-network' },
             { text: 'Packages', link: '/packages/rpc' },
+            { text: 'Releases', link: '/releases' },
             { text: 'npm', link: 'https://www.npmjs.com/package/@source-repo/rpc' }
         ],
         sidebar: [
@@ -81,6 +82,10 @@ export default defineConfig({
             {
                 text: 'Design',
                 items: [{ text: 'Extensions and an ecosystem', link: '/extensions-and-ecosystem' }]
+            },
+            {
+                text: 'Releases',
+                items: [{ text: 'Changelog', link: '/releases' }]
             }
         ],
         outline: { level: [2, 3] },
