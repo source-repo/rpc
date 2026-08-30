@@ -1,6 +1,6 @@
 {
     "name": "@source-repo/aspects",
-    "version": "0.1.0",
+    "version": "0.2.0",
     "description": "Several structures over the same objects, and links that keep their context - IEC 81346's aspects, over Source RPC",
     "keywords": [
         "aspects",

@@ -1,5 +1,35 @@
 # Changelog
 
+## 5.3.1
+
+**The library and the CLI are unchanged in this release.** Their version moves because a tag is spelled with the library's version and a tag is what publishes anything - so a release that carries only an `@source-repo/aspects` change still has to move the number. Said here rather than left for somebody to diff: there is nothing to read in `@source-repo/rpc` between 5.3.0 and 5.3.1.
+
+### An aspect may say which aspect it is
+
+`@source-repo/aspects` 0.2.0. An aspect's `id` is a local name, and two providers written by different people may each offer a `functional` aspect and mean the same thing, or not - which is fine for a console drawing a tree and useless for anything that has to line two providers up: an OPC UA bridge, an import, an assessment, an MCP client reasoning across peers.
+
+So `AspectDescriptor` gained an optional `semantics: { scheme, term }`, deliberately not the same field as its own name. IEC 81346's function aspect is a thing with a definition; `functional` is a string a developer typed. Keeping them apart lets a provider adopt a convention without renaming its ids, and lets another decline it entirely.
+
+Two fields rather than one URI, because a consumer should switch on the scheme without a parser and without an unenforced convention about `iec81346:function` against `IEC81346/function`. A canonical string is derivable from the pair; the pair is not derivable from an arbitrary string.
+
+`IEC81346.function`, `.product`, `.location` and `.type` ship as constants because typos are the failure mode, not because an aspect must be one of them. No scheme is privileged, nothing is required, and one claim per aspect rather than a list - a descriptor asserting three conventional identities is stating a mapping between vocabularies, which belongs where mappings are curated rather than scattered across every provider with an opinion.
+
+`sameAspectSemantics` treats unclaimed as equal to nothing, including another unclaimed one: saying nothing is not a claim to agree.
+
+### The type aspect, which the documentation had been missing
+
+IEC 81346's 2022 edition added a fourth aspect and this repository named three. Function (`=`), product (`-`) and location (`+`) are structures over individuals; **type** (`%`) is not - it places an object under the *class* it belongs to. This pump and every other of that model sit under one type, so what is said once about the type is true of all of them, and a system without that aspect says the model's things about each instance and eventually disagrees with itself.
+
+### Documentation claims no scheme, on purpose
+
+`@source-repo/documentation` 0.2.0, which is a republish rather than a change: its dependency range had to move, since `^0.1.0` on a 0.x package cannot see 0.2.0.
+
+Neither of its arrangements declares `semantics`, and that is the demonstration rather than an omission. Filing by folder is not IEC's function aspect, and borrowing the nearest word would make a consumer believe two providers agreed when one of them had only reused a string.
+
+### The site carries the new packages
+
+`aspects` and `documentation` published on 5.3.0 with nowhere on the site to be read about. Both have pages now, and the README gained them and a paragraph on the idea, so a reader who never leaves the front page still learns that several structures over one set of objects is something this library does.
+
 ## 5.3.0
 
 ### A tree is fetched a branch at a time

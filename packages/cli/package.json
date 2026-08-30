@@ -1,6 +1,6 @@
 {
     "name": "@source-repo/rpc-cli",
-    "version": "5.3.0",
+    "version": "5.3.1",
     "description": "Source RPC tooling: extract a contract from TypeScript, check it against a build or a live device, and browse, tap, fake, record and bench a live network",
     "keywords": [
         "rpc",
@@ -53,12 +53,12 @@
         "check:contract:rpc": "node dist/index.js check --project ../rpc/tsconfig.contract.json --against ../rpc/src/RPC/Introspection.types.json"
     },
     "dependencies": {
-        "@source-repo/diagnostics": "^5.3.0",
-        "@source-repo/rpc": "^5.3.0",
+        "@source-repo/diagnostics": "^5.3.1",
+        "@source-repo/rpc": "^5.3.1",
         "ts-morph": "^28.0.0"
     },
     "devDependencies": {
-        "@source-repo/query": "^5.3.0",
+        "@source-repo/query": "^5.3.1",
         "@types/node": "^26.1.2",
         "@types/react": "^19.0.0",
         "@types/react-dom": "^19.0.0",

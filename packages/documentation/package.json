@@ -1,6 +1,6 @@
 {
     "name": "@source-repo/documentation",
-    "version": "0.1.0",
+    "version": "0.2.0",
     "description": "The documentation aspect of a system: what describes a thing, in whatever format it was written",
     "keywords": [
         "documentation",
@@ -43,7 +43,7 @@
     },
     "dependencies": {
         "@source-repo/rpc": "^5.2.0",
-        "@source-repo/aspects": "^0.1.0"
+        "@source-repo/aspects": "^0.2.0"
     },
     "devDependencies": {
         "@types/node": "^26.1.2",
