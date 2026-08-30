@@ -44,8 +44,33 @@ export interface Commanding {
     dismiss(): void
 }
 
-/** A key per press. `randomUUID` is available in every browser this console runs in. */
-const mint = () => globalThis.crypto.randomUUID()
+/**
+ * A key per press.
+ *
+ * `randomUUID` is **secure-context only**, which loopback satisfies and a plain-HTTP address on a
+ * LAN or a tailnet does not: on `http://localhost:7844` it is there, and on the same browser at
+ * `http://plant-console:7844` it is `undefined`. That is not a browser this console cannot run in -
+ * it is the ordinary deployment, the console served to the machines operators actually sit at.
+ *
+ * `getRandomValues` is the same CSPRNG and carries no such gate, so the fallback gives up nothing in
+ * unguessability - which is the property a key needs, since anybody able to guess one could have a
+ * genuine second command mistaken for a repeat of the first.
+ *
+ * What breaks if this goes back to calling `randomUUID` unguarded: on such an origin every command
+ * throws *before* it is made, where no result and no error is drawn. The button appears to do
+ * nothing whatsoever, which is a far worse thing to debug than a failure that says so.
+ */
+export const mint = (): string => {
+    const source = globalThis.crypto
+    if (source.randomUUID) return source.randomUUID()
+    const bytes = source.getRandomValues(new Uint8Array(16))
+    // Version 4 and variant 1, the two fields RFC 4122 pins - so this is a UUID rather than sixteen
+    // random bytes wearing the punctuation of one.
+    bytes[6] = (bytes[6] & 0x0f) | 0x40
+    bytes[8] = (bytes[8] & 0x3f) | 0x80
+    const hex = [...bytes].map((byte) => byte.toString(16).padStart(2, '0')).join('')
+    return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`
+}
 
 export const useCommanding = (): Commanding => {
     const [pending, setPending] = useState<string | undefined>()

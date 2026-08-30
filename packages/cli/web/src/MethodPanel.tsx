@@ -55,6 +55,37 @@ const writePresets = (namespace: string, method: string, presets: Preset[]) => {
     }
 }
 
+/**
+ * Put text on the clipboard, from an address where there may not be one.
+ *
+ * `navigator.clipboard` is secure-context only, exactly as `randomUUID` is, and the optional chain
+ * that used to guard it here short-circuited into silence: on a plain-HTTP address the button
+ * flashed nothing and left the operator to conclude the console was broken. The pre-2015 way still
+ * works everywhere, so it is what such an origin gets.
+ */
+const copyText = async (text: string): Promise<boolean> => {
+    if (navigator.clipboard)
+        try {
+            await navigator.clipboard.writeText(text)
+            return true
+        } catch {
+            // Refused by permission rather than absent, which the same fallback also answers.
+        }
+    const area = document.createElement('textarea')
+    area.value = text
+    // Off-screen rather than hidden, because `display: none` cannot be selected - and a visible
+    // flash of the command being copied is the other thing to avoid.
+    area.style.position = 'fixed'
+    area.style.top = '-1000px'
+    document.body.append(area)
+    area.select()
+    try {
+        return document.execCommand('copy')
+    } finally {
+        area.remove()
+    }
+}
+
 const median = (values: number[]) => {
     if (!values.length) return 0
     const sorted = [...values].sort((a, b) => a - b)
@@ -183,9 +214,14 @@ export const MethodPanel = ({
                         () => once(idempotencyKey)
                     )
                 )
-        } catch {
-            // Already on screen: `once` sets the outcome before it throws, and one that fails stops
-            // the repeat - twenty identical failures are one finding.
+        } catch (failure) {
+            // `once` sets the outcome before it throws, and one that fails stops the repeat - twenty
+            // identical failures are one finding. A throw from *before* the call is a different
+            // thing, with nothing on screen to have explained it: minting a key, resolving the
+            // relay. Swallowing that one leaves a button that does nothing at all, which is how a
+            // `crypto.randomUUID` absent outside a secure context survived a session of being
+            // pressed. Anything that never reached `once` is reported here.
+            if (!last) setOutcome({ ok: false, text: (failure as Error)?.message ?? String(failure) })
         } finally {
             setTimes((current) => [...current, ...collected].slice(-200))
             setBusy(false)
@@ -217,7 +253,10 @@ export const MethodPanel = ({
         } catch {
             args = []
         }
-        void navigator.clipboard?.writeText(asCommand(peer, namespace, method.name, args, network)).then(() => {
+        void copyText(asCommand(peer, namespace, method.name, args, network)).then((done) => {
+            // Said rather than shrugged off: a copy that did not happen and a copy that did look
+            // identical from the keyboard, and the operator pastes whatever was there before.
+            if (!done) return setOutcome({ ok: false, text: 'this browser would not give the page the clipboard' })
             setCopied(true)
             setTimeout(() => setCopied(false), 1500)
         })
