@@ -41,8 +41,8 @@ const link = (target: AspectRef, navigation?: AspectLink['navigation']): AspectL
 
 const at = (aspectId: string, occurrenceId: string): AspectLocation => ({ target: pump, aspectId, occurrenceId, inherited: false })
 
-test('a link with no opinion keeps the aspect the reader is already in', (t) => {
-    const where = resolveLink(link(valve), at('location', 'loc:hall-a/room-3/P-101'), structure())
+test('a link with no opinion keeps the aspect the reader is already in', async (t) => {
+    const where = await resolveLink(link(valve), at('location', 'loc:hall-a/room-3/P-101'), structure())
 
     t.false(isRefusal(where))
     if (isRefusal(where)) return
@@ -54,8 +54,8 @@ test('a link with no opinion keeps the aspect the reader is already in', (t) => 
     t.is(where.fallbackUsed, undefined)
 })
 
-test('a link that names an aspect gets it, whatever the reader was reading', (t) => {
-    const where = resolveLink(link(valve, { aspect: { id: 'documentation' } }), at('location', 'loc:hall-a/room-3/P-101'), structure())
+test('a link that names an aspect gets it, whatever the reader was reading', async (t) => {
+    const where = await resolveLink(link(valve, { aspect: { id: 'documentation' } }), at('location', 'loc:hall-a/room-3/P-101'), structure())
 
     t.false(isRefusal(where))
     if (isRefusal(where)) return
@@ -63,38 +63,38 @@ test('a link that names an aspect gets it, whatever the reader was reading', (t)
     t.false(where.inherited)
 })
 
-test('among several placements, the one nearest where the reader is', (t) => {
+test('among several placements, the one nearest where the reader is', async (t) => {
     // The pump is in two loops. A reader already inside loop-12 means the loop-12 placement, and
     // "nearest" in a tree is the longest shared ancestry - there is no other measure available.
-    const where = resolveLink(link(pump), at('functional', 'fn:loop-12/V-204'), structure())
+    const where = await resolveLink(link(pump), at('functional', 'fn:loop-12/V-204'), structure())
 
     t.false(isRefusal(where))
     if (isRefusal(where)) return
     t.is(where.occurrenceId, 'fn:loop-12/P-101')
 })
 
-test('an explicit neighbourhood beats the reader’s own position', (t) => {
-    const where = resolveLink(link(pump, { near: 'fn:loop-31/P-101' }), at('functional', 'fn:loop-12/V-204'), structure())
+test('an explicit neighbourhood beats the reader’s own position', async (t) => {
+    const where = await resolveLink(link(pump, { near: 'fn:loop-31/P-101' }), at('functional', 'fn:loop-12/V-204'), structure())
 
     t.false(isRefusal(where))
     if (isRefusal(where)) return
     t.is(where.occurrenceId, 'fn:loop-31/P-101', 'a caller who was explicit is not second-guessed')
 })
 
-test('with no ancestry to compare, the provider’s own order decides', (t) => {
+test('with no ancestry to compare, the provider’s own order decides', async (t) => {
     // A provider that cannot answer ancestry cheaply is allowed to say nothing, and the resolver
     // degrades to a stable choice rather than failing or guessing.
-    const where = resolveLink(link(pump), at('functional', 'fn:loop-31/P-101'), structure(false))
+    const where = await resolveLink(link(pump), at('functional', 'fn:loop-31/P-101'), structure(false))
 
     t.false(isRefusal(where))
     if (isRefusal(where)) return
     t.is(where.occurrenceId, 'fn:loop-12/P-101')
 })
 
-test('an aspect that cannot place the target falls back, and says so', (t) => {
+test('an aspect that cannot place the target falls back, and says so', async (t) => {
     // The pump has no documentation. Following a link to it from the documentation aspect is not a
     // failure - it is a change of subject, and the reader has to be able to notice.
-    const where = resolveLink(link(pump), at('documentation', 'doc:manuals/valves/V-204'), structure())
+    const where = await resolveLink(link(pump), at('documentation', 'doc:manuals/valves/V-204'), structure())
 
     t.false(isRefusal(where))
     if (isRefusal(where)) return
@@ -103,16 +103,16 @@ test('an aspect that cannot place the target falls back, and says so', (t) => {
     t.false(where.inherited, 'and it does not claim to have kept a context it did not keep')
 })
 
-test('a link may insist rather than accept a change of subject', (t) => {
-    const where = resolveLink(link(pump, { fallback: 'refuse' }), at('documentation', 'doc:manuals/valves/V-204'), structure())
+test('a link may insist rather than accept a change of subject', async (t) => {
+    const where = await resolveLink(link(pump, { fallback: 'refuse' }), at('documentation', 'doc:manuals/valves/V-204'), structure())
 
     t.true(isRefusal(where))
     if (!isRefusal(where)) return
     t.regex(where.refused, /P-101 does not appear in documentation/)
 })
 
-test('a link may ask for the object with no structure at all', (t) => {
-    const where = resolveLink(link(pump, { fallback: 'canonical' }), at('documentation', 'doc:manuals/valves/V-204'), structure())
+test('a link may ask for the object with no structure at all', async (t) => {
+    const where = await resolveLink(link(pump, { fallback: 'canonical' }), at('documentation', 'doc:manuals/valves/V-204'), structure())
 
     t.false(isRefusal(where))
     if (isRefusal(where)) return
@@ -120,8 +120,8 @@ test('a link may ask for the object with no structure at all', (t) => {
     t.is(where.fallbackUsed, 'canonical')
 })
 
-test('an object no aspect places resolves to no aspect, rather than to an empty one', (t) => {
-    const where = resolveLink(link(orphan), at('functional', 'fn:loop-12/V-204'), structure())
+test('an object no aspect places resolves to no aspect, rather than to an empty one', async (t) => {
+    const where = await resolveLink(link(orphan), at('functional', 'fn:loop-12/V-204'), structure())
 
     t.false(isRefusal(where))
     if (isRefusal(where)) return
@@ -133,9 +133,9 @@ test('an object no aspect places resolves to no aspect, rather than to an empty 
     t.is(where.fallbackUsed, 'canonical')
 })
 
-test('the default aspect is still used when it can actually place the target', (t) => {
+test('the default aspect is still used when it can actually place the target', async (t) => {
     // The other half of the same rule: falling back is right whenever there is somewhere to fall to.
-    const where = resolveLink(link(pump), at('documentation', 'doc:manuals/valves/V-204'), structure())
+    const where = await resolveLink(link(pump), at('documentation', 'doc:manuals/valves/V-204'), structure())
 
     t.false(isRefusal(where))
     if (isRefusal(where)) return
@@ -144,8 +144,8 @@ test('the default aspect is still used when it can actually place the target', (
     t.is(where.fallbackUsed, 'target-default')
 })
 
-test('a reader who is nowhere yet gets the default aspect', (t) => {
-    const where = resolveLink(link(valve), undefined, structure())
+test('a reader who is nowhere yet gets the default aspect', async (t) => {
+    const where = await resolveLink(link(valve), undefined, structure())
 
     t.false(isRefusal(where))
     if (isRefusal(where)) return
@@ -153,8 +153,8 @@ test('a reader who is nowhere yet gets the default aspect', (t) => {
     t.is(where.fallbackUsed, 'target-default')
 })
 
-test('focus is carried through untouched', (t) => {
-    const where = resolveLink(link(valve, { focus: 'block-3' }), at('location', 'loc:hall-a/room-3/P-101'), structure())
+test('focus is carried through untouched', async (t) => {
+    const where = await resolveLink(link(valve, { focus: 'block-3' }), at('location', 'loc:hall-a/room-3/P-101'), structure())
 
     t.false(isRefusal(where))
     if (isRefusal(where)) return

@@ -50,22 +50,22 @@ const library = () => {
 }
 
 const rows = (answer: RpcGetChildrenResult) => answer.data as Row[]
-const branch = (docs: DocumentLibrary, aspect: string, parent?: string) => docs.dataRequest('getChildren', [aspect], parent === undefined ? {} : { parentId: parent })
+const branch = async (docs: DocumentLibrary, aspect: string, parent?: string) => docs.dataRequest('getChildren', [aspect], parent === undefined ? {} : { parentId: parent })
 
-test('documentation is the aspect, and the format is a kind', (t) => {
+test('documentation is the aspect, and the format is a kind', async (t) => {
     const { root, docs } = library()
     t.teardown(() => rmSync(root, { recursive: true, force: true }))
 
     t.is(docs.state.documents, 4, 'three Markdown files and one text file, and not the one under a dot-directory')
 
-    const reference = rows(branch(docs, 'by-folder', 'folder:reference'))
+    const reference = rows(await branch(docs, 'by-folder', 'folder:reference'))
     t.deepEqual(reference.map((row) => row.kind).sort(), ['document.markdown', 'document.text'])
     // Both are documents in the same aspect. Nothing about the tree, the links or the wire knows
     // which reader answered - that is what makes a new format a reader rather than a change here.
     t.deepEqual(reference.map((row) => row.title).sort(), ['The wire format', 'changes'])
 })
 
-test('the two arrangements are aspects, and the folder one is the default', (t) => {
+test('the two arrangements are aspects, and the folder one is the default', async (t) => {
     const { root, docs } = library()
     t.teardown(() => rmSync(root, { recursive: true, force: true }))
 
@@ -82,18 +82,18 @@ test('the two arrangements are aspects, and the folder one is the default', (t) 
     )
 })
 
-test('a branch is fetched on its own', (t) => {
+test('a branch is fetched on its own', async (t) => {
     const { root, docs } = library()
     t.teardown(() => rmSync(root, { recursive: true, force: true }))
 
-    const roots = branch(docs, 'by-folder')
+    const roots = await branch(docs, 'by-folder')
     t.deepEqual(
         rows(roots).map((row) => row.title),
         ['guide', 'reference']
     )
     t.deepEqual(roots.hasChildren, [true, true])
 
-    const guide = branch(docs, 'by-folder', 'folder:guide')
+    const guide = await branch(docs, 'by-folder', 'folder:guide')
     t.deepEqual(
         rows(guide).map((row) => row.title),
         ['deep', 'Getting started']
@@ -101,26 +101,26 @@ test('a branch is fetched on its own', (t) => {
     t.false(JSON.stringify(guide).includes('Internals'), 'expanding guide said nothing about what is under deep')
 })
 
-test('one document, two aspects, one reference', (t) => {
+test('one document, two aspects, one reference', async (t) => {
     const { root, docs } = library()
     t.teardown(() => rmSync(root, { recursive: true, force: true }))
 
-    const inFolder = rows(branch(docs, 'by-folder', 'folder:guide')).find((row) => row.kind === 'document.markdown')
-    const inTopic = rows(branch(docs, 'by-topic', 'topic:onboarding')).find((row) => row.title === 'Getting started')
+    const inFolder = rows(await branch(docs, 'by-folder', 'folder:guide')).find((row) => row.kind === 'document.markdown')
+    const inTopic = rows(await branch(docs, 'by-topic', 'topic:onboarding')).find((row) => row.title === 'Getting started')
 
     t.is(inFolder?.id, 'getting-started')
     t.is(inTopic?.id, 'getting-started')
     t.not(inFolder?.occurrenceId, inTopic?.occurrenceId, 'two placements of one object')
 })
 
-test('following a link keeps the arrangement the reader is in', (t) => {
+test('following a link keeps the arrangement the reader is in', async (t) => {
     const { root, docs } = library()
     t.teardown(() => rmSync(root, { recursive: true, force: true }))
 
     // Reading by topic, under `onboarding`, and following a link to the wire format - which is also
     // filed under `onboarding`. The reader should stay in the topic arrangement.
     const from: AspectLocation = { target: ref('getting-started'), aspectId: 'by-topic', occurrenceId: 'topic:onboarding/getting-started', inherited: false }
-    const where = docs.follow({ id: 'l1', target: ref('reference/wire.md') }, from)
+    const where = await docs.follow({ id: 'l1', target: ref('reference/wire.md') }, from)
 
     t.false(isRefusal(where))
     if (isRefusal(where)) return
@@ -129,14 +129,14 @@ test('following a link keeps the arrangement the reader is in', (t) => {
     t.true(where.inherited)
 })
 
-test('a link to something the arrangement cannot place says so', (t) => {
+test('a link to something the arrangement cannot place says so', async (t) => {
     const { root, docs } = library()
     t.teardown(() => rmSync(root, { recursive: true, force: true }))
 
     // `internals.md` declares no topics, so the topic arrangement has nowhere to put it. That is
     // not a failure - it is a change of subject, and the answer says which.
     const from: AspectLocation = { target: ref('getting-started'), aspectId: 'by-topic', occurrenceId: 'topic:onboarding/getting-started', inherited: false }
-    const where = docs.follow({ id: 'l2', target: ref('guide/deep/internals.md') }, from)
+    const where = await docs.follow({ id: 'l2', target: ref('guide/deep/internals.md') }, from)
 
     t.false(isRefusal(where))
     if (isRefusal(where)) return
@@ -145,58 +145,58 @@ test('a link to something the arrangement cannot place says so', (t) => {
     t.false(where.inherited)
 })
 
-test('opening a document gives its content in blocks its format chose', (t) => {
+test('opening a document gives its content in blocks its format chose', async (t) => {
     const { root, docs } = library()
     t.teardown(() => rmSync(root, { recursive: true, force: true }))
 
-    const markdown = docs.openObject(ref('getting-started'))
+    const markdown = await docs.openObject(ref('getting-started'))
     t.is(markdown.kind, 'document.markdown')
     t.is(markdown.content?.[0].kind, 'markdown')
     t.regex(String((markdown.content?.[0] as { markdown: string }).markdown), /Two sentences of prose/)
 
     // Plain text is a `code` block, not Markdown: a text file full of asterisks would otherwise
     // render as emphasis nobody wrote.
-    const text = docs.openObject(ref('reference/changes.txt'))
+    const text = await docs.openObject(ref('reference/changes.txt'))
     t.is(text.kind, 'document.text')
     t.is(text.content?.[0].kind, 'code')
     t.regex(String((text.content?.[0] as { code: string }).code), /somebody in a hurry/)
 })
 
-test('a document with no declared id is identified by where it is', (t) => {
+test('a document with no declared id is identified by where it is', async (t) => {
     const { root, docs } = library()
     t.teardown(() => rmSync(root, { recursive: true, force: true }))
 
-    const deep = rows(branch(docs, 'by-folder', 'folder:guide/deep'))
+    const deep = rows(await branch(docs, 'by-folder', 'folder:guide/deep'))
     t.is(deep[0].id, 'guide/deep/internals.md', 'and moving it would break links to it, which is the file’s property')
     t.is(deep[0].title, 'Internals', 'the title comes from the first heading when nothing declares one')
 })
 
-test('rescan picks up a change, and the revision moves with it', (t) => {
+test('rescan picks up a change, and the revision moves with it', async (t) => {
     const { root, docs } = library()
     t.teardown(() => rmSync(root, { recursive: true, force: true }))
-    const before = branch(docs, 'by-folder').revision
+    const before = (await branch(docs, 'by-folder')).revision
 
     writeFileSync(join(root, 'reference', 'errors.md'), ['---', 'topics: reference', '---', '', '# Error codes'].join('\n'))
     t.is(docs.state.documents, 4, 'the index is what was scanned, not what is on disk right now')
 
     t.is(docs.rescan(), 5)
-    const after = branch(docs, 'by-folder')
+    const after = await branch(docs, 'by-folder')
     t.true(after.revision > before, 'a caller holding an older page can tell it is older')
-    t.is(after.epoch, branch(docs, 'by-topic').epoch, 'and the epoch is the incarnation, which did not change')
+    t.is(after.epoch, (await branch(docs, 'by-topic')).epoch, 'and the epoch is the incarnation, which did not change')
 })
 
-test('a body past the size bound is refused rather than half-served', (t) => {
+test('a body past the size bound is refused rather than half-served', async (t) => {
     const root = mkdtempSync(join(tmpdir(), 'documentation-big-'))
     t.teardown(() => rmSync(root, { recursive: true, force: true }))
     writeFileSync(join(root, 'huge.md'), `# Huge\n\n${'word '.repeat(400)}`)
     const docs = new DocumentLibrary(root, { maxBytes: 200, identity: provider })
 
     t.is(docs.state.documents, 1, 'indexed, so it can be found')
-    const refused = t.throws(() => docs.openObject(ref('huge.md')))
+    const refused = await t.throwsAsync(() => docs.openObject(ref('huge.md')))
     t.regex(String(refused?.message), /past the 200 this library serves/)
 })
 
-test('a depth bound stops a walk that would not end', (t) => {
+test('a depth bound stops a walk that would not end', async (t) => {
     const root = mkdtempSync(join(tmpdir(), 'documentation-deep-'))
     t.teardown(() => rmSync(root, { recursive: true, force: true }))
     let here = root
@@ -245,11 +245,11 @@ test('a console browses both arrangements, and follows a link, over the wire', a
     t.is(where.aspectId, 'by-topic', 'context survives the wire as well as the call')
 })
 
-test('a link written in a document becomes a link the system can follow', (t) => {
+test('a link written in a document becomes a link the system can follow', async (t) => {
     const { root, docs } = library()
     t.teardown(() => rmSync(root, { recursive: true, force: true }))
 
-    const opened = docs.openObject(ref('guide/deep/internals.md'))
+    const opened = await docs.openObject(ref('guide/deep/internals.md'))
 
     // The relative path names a document this library has, so it becomes a reference - which
     // survives that document being refiled, where the path in the prose would not.
@@ -259,17 +259,17 @@ test('a link written in a document becomes a link the system can follow', (t) =>
     t.is(opened.links?.[0].relation, 'references')
 
     // And it is followable, which is the point of making it a reference rather than a path.
-    const where = docs.follow(opened.links![0], { target: opened.ref, aspectId: 'by-folder', occurrenceId: 'folder:guide/deep/guide/deep/internals.md', inherited: false })
+    const where = await docs.follow(opened.links![0], { target: opened.ref, aspectId: 'by-folder', occurrenceId: 'folder:guide/deep/guide/deep/internals.md', inherited: false })
     t.false(isRefusal(where))
     if (isRefusal(where)) return
     t.is(where.aspectId, 'by-folder')
 })
 
-test('a link that leaves the library is left as it was written', (t) => {
+test('a link that leaves the library is left as it was written', async (t) => {
     const { root, docs } = library()
     t.teardown(() => rmSync(root, { recursive: true, force: true }))
 
-    const opened = docs.openObject(ref('guide/deep/internals.md'))
+    const opened = await docs.openObject(ref('guide/deep/internals.md'))
     t.regex(String((opened.content?.[0] as { markdown: string }).markdown), /https:\/\/example\.com\/page/, 'still in the text, untouched')
     t.false(opened.links?.some((link) => link.label?.includes('web')))
 })

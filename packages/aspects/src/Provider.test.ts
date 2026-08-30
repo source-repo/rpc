@@ -87,9 +87,9 @@ interface Face {
     follow(link: AspectLink, from?: AspectLocation): Promise<AspectLocation | LinkRefusal>
 }
 
-test('each aspect is published as a tree resource, without the provider serving one', (t) => {
+test('each aspect is published as a tree resource, without the provider serving one', async (t) => {
     const plant = new Plant()
-    const resources = plant.dataResources()
+    const resources = await plant.dataResources()
 
     t.deepEqual(
         resources.map((resource) => resource.path[0]),
@@ -99,14 +99,14 @@ test('each aspect is published as a tree resource, without the provider serving 
     t.deepEqual(resources[0].label, 'By loop')
 })
 
-test('a branch answers occurrences, keyed by placement rather than by object', (t) => {
+test('a branch answers occurrences, keyed by placement rather than by object', async (t) => {
     const plant = new Plant()
-    const roots = plant.dataRequest('getChildren', ['functional'], {})
+    const roots = await plant.dataRequest('getChildren', ['functional'], {})
 
     t.deepEqual(roots.ids, ['fn:loop-12', 'fn:loop-31'])
     t.deepEqual(roots.hasChildren, [true, true])
 
-    const branch = plant.dataRequest('getChildren', ['functional'], { parentId: 'fn:loop-12' })
+    const branch = await plant.dataRequest('getChildren', ['functional'], { parentId: 'fn:loop-12' })
     // The row id is the placement, because that is what a caller passes back as the next parent -
     // and because one object may be several rows, which a reference-keyed row could not express.
     t.deepEqual(branch.ids, ['fn:loop-12/P-101', 'fn:loop-12/V-204'])
@@ -114,10 +114,10 @@ test('a branch answers occurrences, keyed by placement rather than by object', (
     t.is((branch.data[0] as { id: string }).id, 'P-101', 'while the object reference travels beside it')
 })
 
-test('the same object is in both aspects under one reference', (t) => {
+test('the same object is in both aspects under one reference', async (t) => {
     const plant = new Plant()
-    const byLoop = plant.dataRequest('getChildren', ['functional'], { parentId: 'fn:loop-12' })
-    const byRoom = plant.dataRequest('getChildren', ['location'], { parentId: 'loc:room-3' })
+    const byLoop = await plant.dataRequest('getChildren', ['functional'], { parentId: 'fn:loop-12' })
+    const byRoom = await plant.dataRequest('getChildren', ['location'], { parentId: 'loc:room-3' })
 
     const pumpInLoop = (byLoop.data as { id: string; occurrenceId: string }[]).find((row) => row.id === 'P-101')
     const pumpInRoom = (byRoom.data as { id: string; occurrenceId: string }[]).find((row) => row.id === 'P-101')
@@ -126,18 +126,18 @@ test('the same object is in both aspects under one reference', (t) => {
     t.not(pumpInLoop?.occurrenceId, pumpInRoom?.occurrenceId, 'two placements')
 })
 
-test('a page is bounded by the provider rather than by the caller', (t) => {
+test('a page is bounded by the provider rather than by the caller', async (t) => {
     const plant = new Plant()
-    const page = plant.dataRequest('getChildren', ['functional'], { pagination: { page: 0, pageSize: 100000 } })
+    const page = await plant.dataRequest('getChildren', ['functional'], { pagination: { page: 0, pageSize: 100000 } })
 
     t.is(page.ids.length, 2, 'there are only two, and asking for a hundred thousand did not change that')
-    t.is(plant.capability().limits.maxPageSize, 200)
+    t.is((await plant.capability()).limits.maxPageSize, 200)
 })
 
-test('the epoch holds across a read and the revision does not move on its own', (t) => {
+test('the epoch holds across a read and the revision does not move on its own', async (t) => {
     const plant = new Plant()
-    const first = plant.dataRequest('getChildren', ['functional'], {})
-    const second = plant.dataRequest('getChildren', ['location'], {})
+    const first = await plant.dataRequest('getChildren', ['functional'], {})
+    const second = await plant.dataRequest('getChildren', ['location'], {})
 
     t.is(first.epoch, second.epoch, 'one incarnation, so a cached page is comparable')
     t.is(first.revision, 1, 'a provider whose structures have not changed says so')
@@ -174,7 +174,7 @@ test('an object this provider does not have is refused by name', async (t) => {
     t.regex(String(refused?.message), /no object nothing-like-this in equipment/)
 })
 
-test('an aspect may say what it is in somebody else’s vocabulary', (t) => {
+test('an aspect may say what it is in somebody else’s vocabulary', async (t) => {
     const plant = new Plant()
     const [functional, location] = plant.aspects()
 
@@ -187,7 +187,7 @@ test('an aspect may say what it is in somebody else’s vocabulary', (t) => {
     t.false(sameAspectSemantics(functional.semantics, IEC81346.product))
 })
 
-test('two providers using the same word are not thereby talking about the same aspect', (t) => {
+test('two providers using the same word are not thereby talking about the same aspect', async (t) => {
     // The whole reason the field is separate from the id. One of these means IEC's function aspect;
     // the other is a structure somebody happened to call the same thing.
     const conventional = { id: 'functional', label: 'By loop', revision: '1', semantics: IEC81346.function }

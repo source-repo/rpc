@@ -63,16 +63,16 @@ export const isRefusal = (result: AspectLocation | LinkRefusal): result is LinkR
  */
 export interface AspectPlacements {
     /** Where this object appears in that aspect, in the provider's own order. Empty if nowhere. */
-    placements(target: AspectRef, aspectId: string): readonly string[]
+    placements(target: AspectRef, aspectId: string): readonly string[] | Promise<readonly string[]>
     /** The aspect a provider would choose for this object when nothing else decides. */
-    defaultAspectFor(target: AspectRef): string | undefined
+    defaultAspectFor(target: AspectRef): string | undefined | Promise<string | undefined>
     /**
      * The ancestor chain of an occurrence, root first, including the occurrence itself.
      *
      * Used only to choose between placements. A provider that cannot answer cheaply may return the
      * occurrence alone, and the resolver degrades to the provider's own order rather than failing.
      */
-    ancestorsOf?(occurrenceId: string, aspectId: string): readonly string[]
+    ancestorsOf?(occurrenceId: string, aspectId: string): readonly string[] | Promise<readonly string[]>
 }
 
 /** How much of two ancestor chains agree, from the root down. */
@@ -91,15 +91,15 @@ const sharedDepth = (a: readonly string[], b: readonly string[]): number => {
  * only sense a tree has - and, failing any information at all, the provider's first, because an
  * arbitrary choice made consistently is easier to live with than one that moves.
  */
-const chooseOccurrence = (placements: readonly string[], aspectId: string, from: AspectLocation | undefined, near: string | undefined, structure: AspectPlacements): string => {
+const chooseOccurrence = async (placements: readonly string[], aspectId: string, from: AspectLocation | undefined, near: string | undefined, structure: AspectPlacements): Promise<string> => {
     if (near && placements.includes(near)) return near
     const anchor = from?.aspectId === aspectId ? from.occurrenceId : undefined
     if (!anchor || !structure.ancestorsOf) return placements[0]
-    const here = structure.ancestorsOf(anchor, aspectId)
+    const here = await structure.ancestorsOf(anchor, aspectId)
     let best = placements[0]
     let bestDepth = -1
     for (const placement of placements) {
-        const depth = sharedDepth(here, structure.ancestorsOf(placement, aspectId))
+        const depth = sharedDepth(here, await structure.ancestorsOf(placement, aspectId))
         if (depth > bestDepth) {
             best = placement
             bestDepth = depth
@@ -124,19 +124,19 @@ const chooseOccurrence = (placements: readonly string[], aspectId: string, from:
  * opinion about what: whether a block id exists is the provider's question, and whether a renderer
  * can honour it is the viewer's.
  */
-export const resolveLink = (link: AspectLink, from: AspectLocation | undefined, structure: AspectPlacements): AspectLocation | LinkRefusal => {
+export const resolveLink = async (link: AspectLink, from: AspectLocation | undefined, structure: AspectPlacements): Promise<AspectLocation | LinkRefusal> => {
     const asked = link.navigation?.aspect
     const wanted = asked && asked !== 'inherit' ? asked.id : from?.aspectId
     const inherited = !asked || asked === 'inherit'
     const focus = link.navigation?.focus
 
     if (wanted) {
-        const placements = structure.placements(link.target, wanted)
+        const placements = await structure.placements(link.target, wanted)
         if (placements.length)
             return {
                 target: link.target,
                 aspectId: wanted,
-                occurrenceId: chooseOccurrence(placements, wanted, from, link.navigation?.near, structure),
+                occurrenceId: await chooseOccurrence(placements, wanted, from, link.navigation?.near, structure),
                 ...(focus ? { focus } : {}),
                 inherited
             }
@@ -150,8 +150,8 @@ export const resolveLink = (link: AspectLink, from: AspectLocation | undefined, 
 
     if (fallback === 'canonical') return { target: link.target, ...(focus ? { focus } : {}), inherited: false, fallbackUsed: 'canonical' }
 
-    const preferred = structure.defaultAspectFor(link.target)
-    const fallbackPlacements = preferred ? structure.placements(link.target, preferred) : []
+    const preferred = await structure.defaultAspectFor(link.target)
+    const fallbackPlacements = preferred ? await structure.placements(link.target, preferred) : []
     // The default aspect could not place it either, so there is no structure to answer with. Naming
     // one anyway - an aspect with no occurrence in it - reads to a viewer as *show this in that
     // tree*, and there is nothing in that tree to show: it would draw an empty structure, or
@@ -160,7 +160,7 @@ export const resolveLink = (link: AspectLink, from: AspectLocation | undefined, 
     return {
         target: link.target,
         aspectId: preferred,
-        occurrenceId: chooseOccurrence(fallbackPlacements, preferred, undefined, link.navigation?.near, structure),
+        occurrenceId: await chooseOccurrence(fallbackPlacements, preferred, undefined, link.navigation?.near, structure),
         ...(focus ? { focus } : {}),
         inherited: false,
         fallbackUsed: 'target-default'

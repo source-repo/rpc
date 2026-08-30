@@ -3,6 +3,12 @@ import { RpcComponent, rpc, type RpcDataMethod, type RpcDataResource, type RpcGe
 import { resolveLink, type AspectLink, type AspectLocation, type AspectPlacements, type LinkRefusal } from './Link.js'
 import type { AspectDescriptor, AspectRef, ObjectDetail, Occurrence } from './Model.js'
 
+/** One branch: what is directly under a node, and how many there are when that is knowable. */
+export interface Branch {
+    readonly occurrences: readonly Occurrence[]
+    readonly total?: number
+}
+
 /**
  * A component that serves several structures over the same objects.
  *
@@ -28,7 +34,20 @@ import type { AspectDescriptor, AspectRef, ObjectDetail, Occurrence } from './Mo
  * means. That refusal is deliberate and is the difference between a contract and a database.
  */
 
-/** What a subclass answers. Everything else in this file follows from these. */
+/**
+ * What a subclass answers. Everything else in this file follows from these.
+ *
+ * Everything that consults the source may return a promise, and that is not decoration. The first
+ * provider read an index it held in memory and could answer at once; the second browses an OPC UA
+ * server, where every question is a round trip and holding the answers would mean holding an
+ * address space of two hundred thousand nodes to avoid asking about eight. A source that must ask
+ * is the ordinary case for anything foreign, and a synchronous interface ruled out every one.
+ *
+ * **`aspects()` is the exception and stays synchronous**, because the library decides that rather
+ * than this file: a component's resources are read at describe time and `describe()` does not wait.
+ * The split turns out to be the right one anyway - a provider knows which structures it offers
+ * without asking anybody, and only what is *inside* them requires a round trip.
+ */
 export interface AspectSource {
     /** The structures this provider offers. Read fresh, so one can appear as the source changes. */
     aspects(): readonly AspectDescriptor[]
@@ -38,13 +57,13 @@ export interface AspectSource {
      * Returning a `total` lets a viewer page a wide branch; returning none says only that this page
      * is what there is, which is honest for a source that cannot count cheaply.
      */
-    children(aspectId: string, parentOccurrenceId: string | undefined, page: { readonly from: number; readonly size: number }): { readonly occurrences: readonly Occurrence[]; readonly total?: number }
+    children(aspectId: string, parentOccurrenceId: string | undefined, page: { readonly from: number; readonly size: number }): Branch | Promise<Branch>
     /** Where an object appears in one aspect. Empty when that aspect does not place it. */
-    placements(target: AspectRef, aspectId: string): readonly string[]
+    placements(target: AspectRef, aspectId: string): readonly string[] | Promise<readonly string[]>
     /** Opening one object. `undefined` when this provider has nothing by that reference. */
-    open(target: AspectRef): ObjectDetail | undefined
+    open(target: AspectRef): ObjectDetail | undefined | Promise<ObjectDetail | undefined>
     /** The ancestor chain of an occurrence, root first. Optional: it only sharpens link resolution. */
-    ancestorsOf?(occurrenceId: string, aspectId: string): readonly string[]
+    ancestorsOf?(occurrenceId: string, aspectId: string): readonly string[] | Promise<readonly string[]>
 }
 
 /** What a viewer needs to know before it asks this provider anything. */
@@ -66,9 +85,9 @@ const DEFAULT_MAX_PAGE = 200
  */
 export abstract class AspectProvider<Props extends Record<string, unknown>, State extends Record<string, unknown>> extends RpcComponent<Props, State> implements AspectSource {
     abstract aspects(): readonly AspectDescriptor[]
-    abstract children(aspectId: string, parentOccurrenceId: string | undefined, page: { readonly from: number; readonly size: number }): { readonly occurrences: readonly Occurrence[]; readonly total?: number }
-    abstract placements(target: AspectRef, aspectId: string): readonly string[]
-    abstract open(target: AspectRef): ObjectDetail | undefined
+    abstract children(aspectId: string, parentOccurrenceId: string | undefined, page: { readonly from: number; readonly size: number }): Branch | Promise<Branch>
+    abstract placements(target: AspectRef, aspectId: string): readonly string[] | Promise<readonly string[]>
+    abstract open(target: AspectRef): ObjectDetail | undefined | Promise<ObjectDetail | undefined>
 
     /** The largest page this provider will answer, whatever a caller asks for. */
     protected maxPageSize = DEFAULT_MAX_PAGE
@@ -101,13 +120,13 @@ export abstract class AspectProvider<Props extends Record<string, unknown>, Stat
      * disagree and the wrong one would be the one on the wire.
      */
     @rpc({ semantics: 'query', effect: 'observe' })
-    capability(): AspectCapability {
+    async capability(): Promise<AspectCapability> {
         return { protocol: 1, aspects: this.aspects().length, opensObjects: true, limits: { maxPageSize: this.maxPageSize } }
     }
 
     /** The structures on offer, so a viewer can let somebody choose one. */
     @rpc({ semantics: 'query', effect: 'observe' })
-    aspectList(): readonly AspectDescriptor[] {
+    async aspectList(): Promise<readonly AspectDescriptor[]> {
         return this.aspects()
     }
 
@@ -118,8 +137,8 @@ export abstract class AspectProvider<Props extends Record<string, unknown>, Stat
      * a link to something removed or a caller with the wrong provider, and both are worth saying.
      */
     @rpc({ semantics: 'query', effect: 'observe' })
-    openObject(target: AspectRef): ObjectDetail {
-        const object = this.open(target)
+    async openObject(target: AspectRef): Promise<ObjectDetail> {
+        const object = await this.open(target)
         if (!object) throw new Error(`no object ${target.id} in ${target.resource.join('.')}`)
         return object
     }
@@ -133,7 +152,7 @@ export abstract class AspectProvider<Props extends Record<string, unknown>, Stat
      * avoid. What the viewer gets back says whether its context survived.
      */
     @rpc({ semantics: 'query', effect: 'observe' })
-    follow(link: AspectLink, from?: AspectLocation): AspectLocation | LinkRefusal {
+    follow(link: AspectLink, from?: AspectLocation): Promise<AspectLocation | LinkRefusal> {
         return resolveLink(link, from, this.structure())
     }
 
@@ -174,14 +193,14 @@ export abstract class AspectProvider<Props extends Record<string, unknown>, Stat
         }))
     }
 
-    dataRequest(method: RpcDataMethod, resource: RpcResource, params: RpcGetChildrenParams): RpcGetChildrenResult {
+    async dataRequest(method: RpcDataMethod, resource: RpcResource, params: RpcGetChildrenParams): Promise<RpcGetChildrenResult> {
         if (method !== 'getChildren') throw new Error(`an aspect answers getChildren, not ${method}`)
         const aspect = this.aspects().find((declared) => declared.id === resource[0])
         if (!aspect) throw new Error(`no aspect ${resource.join('.')}`)
 
         const size = Math.min(params.pagination?.pageSize ?? this.maxPageSize, this.maxPageSize)
         const from = (params.pagination?.page ?? 0) * size
-        const branch = this.children(aspect.id, params.parentId, { from, size })
+        const branch = await this.children(aspect.id, params.parentId, { from, size })
 
         return {
             // The occurrence id is the row id, because that is what a caller passes back as the

@@ -1,0 +1,68 @@
+{
+    "name": "@source-repo/opcua",
+    "version": "0.1.0",
+    "description": "An OPC UA address space as aspects: browse a server's objects a branch at a time, with identity that survives a reconnect",
+    "keywords": [
+        "opcua",
+        "opc-ua",
+        "aspects",
+        "industrial",
+        "rpc",
+        "typescript"
+    ],
+    "type": "module",
+    "license": "MIT",
+    "author": "anderswestberg",
+    "repository": {
+        "type": "git",
+        "url": "git+https://github.com/source-repo/rpc.git",
+        "directory": "packages/opcua"
+    },
+    "engines": {
+        "node": ">=22"
+    },
+    "sideEffects": false,
+    "main": "./dist/index.js",
+    "types": "./dist/index.d.ts",
+    "exports": {
+        ".": {
+            "types": "./dist/index.d.ts",
+            "default": "./dist/index.js"
+        },
+        "./package.json": "./package.json"
+    },
+    "files": [
+        "dist",
+        "!dist/**/*.test.*"
+    ],
+    "scripts": {
+        "build": "tsc -p tsconfig.json",
+        "clean": "rimraf dist",
+        "typecheck": "tsc --noEmit -p tsconfig.json",
+        "test": "npm run clean && npm run build && ava",
+        "prepack": "npm run clean && npm run build"
+    },
+    "dependencies": {
+        "@source-repo/rpc": "^5.3.1",
+        "@source-repo/aspects": "^0.2.1",
+        "node-opcua-client": "^2.179.0"
+    },
+    "devDependencies": {
+        "@types/node": "^26.1.2",
+        "ava": "^8.0.1",
+        "rimraf": "^6.0.1",
+        "typescript": "^7.0.2",
+        "node-opcua": "^2.179.0"
+    },
+    "ava": {
+        "files": [
+            "dist/**/*.test.js"
+        ],
+        "workerThreads": false,
+        "concurrency": 1
+    },
+    "homepage": "https://github.com/source-repo/rpc/tree/main/packages/opcua#readme",
+    "bugs": {
+        "url": "https://github.com/source-repo/rpc/issues"
+    }
+}
