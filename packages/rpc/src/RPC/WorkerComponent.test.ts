@@ -112,7 +112,10 @@ test('a console still reads the last snapshot while the worker is parked at a br
     const ticking = setInterval(() => ticks++, 5)
     await sleep(60)
     clearInterval(ticking)
-    t.true(ticks > 3, 'this side kept running')
+    // Zero against any, rather than a rate: a thread parked by `Atomics.wait` ticks exactly
+    // zero times, so that is the whole discriminator. Asking for more measured how much
+    // timer resolution a loaded CI runner had left, and failed there while passing here.
+    t.true(ticks > 0, 'this side kept running')
     t.true(host.paused)
     t.is(facade.state.setpoint, 1100, 'and the last snapshot the component published is still here to read')
 

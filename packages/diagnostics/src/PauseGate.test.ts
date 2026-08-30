@@ -59,7 +59,10 @@ test('a requested pause parks the logic thread, and the supervisor keeps answeri
     await sleep(60)
     clearInterval(ticking)
 
-    t.true(ticks > 3, `the supervisor ran ${ticks} times while the component was stopped`)
+    // Zero against any, rather than a rate: a thread parked by `Atomics.wait` ticks exactly
+    // zero times, so that is the whole discriminator. Asking for more measured how much
+    // timer resolution a loaded CI runner had left, and failed there while passing here.
+    t.true(ticks > 0, `the supervisor ran ${ticks} times while the component was stopped`)
     t.true(gate.paused, 'and the component is still stopped')
     t.falsy(stood.answered(), 'having produced no answer, because it is not running')
 
@@ -146,5 +149,8 @@ test('the supervisor side never blocks, even waiting for a pause that never come
     clearInterval(ticking)
 
     t.false(paused, 'nothing parked, and the wait ended on its own deadline')
-    t.true(ticks > 3, 'and this thread was running throughout')
+    // Zero against any, rather than a rate: a thread parked by `Atomics.wait` ticks exactly
+    // zero times, so that is the whole discriminator. Asking for more measured how much
+    // timer resolution a loaded CI runner had left, and failed there while passing here.
+    t.true(ticks > 0, 'and this thread was running throughout')
 })

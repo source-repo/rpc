@@ -77,7 +77,10 @@ test('a handler is stopped between its own statements, and the server keeps answ
     await sleep(60)
     clearInterval(ticking)
 
-    t.true(ticks > 3, `the server ran ${ticks} times while the component was stopped`)
+    // Zero against any, rather than a rate: a thread parked by `Atomics.wait` ticks exactly
+    // zero times, so that is the whole discriminator. Asking for more measured how much
+    // timer resolution a loaded CI runner had left, and failed there while passing here.
+    t.true(ticks > 0, `the server ran ${ticks} times while the component was stopped`)
     t.true(host.paused)
 
     host.resume()
