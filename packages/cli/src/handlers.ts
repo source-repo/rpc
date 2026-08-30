@@ -26,6 +26,23 @@ import { createInterface } from 'node:readline'
 /** How long one handler may run before the call is failed rather than waited out. */
 const CALL_BUDGET_MS = 200
 
+/**
+ * How long the handlers get to *compile*, which is not the same question as how long one gets to run.
+ *
+ * It still needs a bound. The line below evaluates the source rather than parsing it, so a script
+ * can run code at compile time - `(function () { while (true) {} })()` is a valid expression - and
+ * an unbounded compile wedges startup instead of a call.
+ *
+ * But it must not be the call budget. This is the first thing to enter a cold `node:vm` context, so
+ * it pays for the context, the compiler and whatever the machine is doing instead of this; 200 ms is
+ * a statement about how long a *handler* may hold the process, and charging startup against it makes
+ * a correct script fail with `did not compile: Script execution timed out` on a slow machine. That
+ * is not a hypothetical - it is what a Windows CI runner did to a two-line arrow function. Python
+ * above already has its own number for the same reason, and this is that reason applied to the
+ * runtime that happens to be in-process.
+ */
+const COMPILE_BUDGET_MS = 5000
+
 /** How long Python gets to answer, allowing for an interpreter doing real work on the first call. */
 const PYTHON_BUDGET_MS = 5000
 
@@ -72,7 +89,7 @@ export const javascriptRuntime = (handlers: { [target: string]: string }, state:
     for (const [target, source] of Object.entries(handlers)) {
         try {
             // Wrapped in parentheses so `(v) => …` and `function (v) { … }` both read as expressions.
-            runInContext(`__handlers[${JSON.stringify(target)}] = (${source})`, context, { timeout: CALL_BUDGET_MS })
+            runInContext(`__handlers[${JSON.stringify(target)}] = (${source})`, context, { timeout: COMPILE_BUDGET_MS })
         } catch (e) {
             // At construction, so a typo is a startup failure rather than a call that fails later on
             // a screen somebody is watching.
