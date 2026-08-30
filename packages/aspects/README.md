@@ -60,7 +60,11 @@ That division is the point. Serving a tree over `$data` correctly — the verb, 
 
 A path is a fact about a tree at a moment. Structures get rebuilt and objects get refiled, and a saved path then points somewhere plausible and wrong.
 
-So a link stores what it wants — *the aspect I am in, near where I am* — and is re-resolved every time. A reader browsing the security aspect who follows a link lands on the target **in the security aspect**, because the aspect is why they are reading; dropping them into the folder tree is not a smaller answer, it is a different subject. When the wanted aspect cannot place the target, the result **says a fallback was used**, so a viewer can tell the reader rather than quietly changing the subject. A link may also insist: `fallback: 'refuse'`.
+So a link stores what it wants — *the aspect I am in, near where I am* — and is re-resolved every time. A reader browsing the security aspect who follows a link lands on the target **in the security aspect**, because the aspect is why they are reading; dropping them into the folder tree is not a smaller answer, it is a different subject. When the wanted aspect cannot place the target, the result **says a fallback was used**, so a viewer can tell the reader rather than quietly changing the subject.
+
+Falling back means the provider's default aspect — but only when that aspect can actually place the target. When nothing places it, the answer names no aspect at all and the object stands on its own, because naming a structure with no occurrence in it reads as *show this in that tree* and there is nothing in that tree to show: a viewer would draw an empty structure, or highlight nothing in a full one, and either way say the object is somewhere it is not.
+
+A link may also insist rather than accept any of that: `fallback: 'refuse'`.
 
 ## What it deliberately is not
 
