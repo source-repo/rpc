@@ -2,6 +2,8 @@ import test from 'ava'
 import { DataType, OPCUAServer, Variant } from 'node-opcua'
 import { IEC81346, isRefusal, type AspectLocation } from '@source-repo/aspects'
 import { OpcUaAspectProvider, portableNodeIdFromText, portableNodeIdToText, toSessionNodeId, type DerivedAspect, type PortableNodeId } from './index.js'
+import { RpcClient, RpcServer } from '@source-repo/rpc'
+import type { ObjectDetail } from '@source-repo/aspects'
 import type { AspectRef, RpcGetChildrenResult } from './testing.js'
 
 /**
@@ -330,4 +332,45 @@ test.serial('following a link keeps the arrangement the reader is in', async (t)
     t.not(moved.aspectId, 'location')
     t.false(moved.inherited)
     t.truthy(moved.fallbackUsed)
+})
+
+test.serial('a node says how it can be reached, and an object says nothing', async (t) => {
+    const opcua = await connected(t)
+    const ref = (identifier: string) => ({ provider, resource: ['nodes'], id: portableNodeIdToText({ namespaceUri: NAMESPACE_URI, identifierType: 's', identifier }) }) as AspectRef
+
+    const speed = await opcua.openObject(ref('Filler01.Speed'))
+    t.is(speed.bindings?.length, 1)
+    const [binding] = speed.bindings!
+    t.is(binding.kind, 'opcua.node')
+    // The library's own word, not a parallel one: authorization is written in these, and a console
+    // showing `command` beside methods marked `operate` would leave nobody sure they meant the same.
+    t.is(binding.role, 'observe')
+    t.deepEqual(binding.target, { type: 'external', system: 'opcua', id: speed.ref.id, endpoint: endpointUrl })
+    t.true((binding.fields as { readable: boolean }).readable, 'read from the AccessLevel mask rather than assumed')
+
+    // An Object is a place things hang off; there is nothing to reach on it directly, and an empty
+    // list would say something different from no list at all.
+    const filler = await opcua.openObject(ref('Filler01'))
+    t.deepEqual(filler.bindings, [])
+})
+
+test.serial('a binding travels to a console without it knowing any OPC UA', async (t) => {
+    const opcua = await connected(t)
+    const server = new RpcServer({ name: 'ua-host', transports: [{ port: 4997, host: '127.0.0.1' }], exposeIntrospection: true })
+    server.exposeClassInstance(opcua, 'plant')
+    await server.ready()
+    const client = new RpcClient('http://localhost:4997', { name: 'ua-reader', defaultTarget: 'ua-host' })
+    t.teardown(async () => {
+        await client.close()
+        await server.close()
+    })
+
+    const face = await client.proxy<{ openObject(target: AspectRef): Promise<ObjectDetail> }>('plant')
+    const speed = await face.openObject({ provider, resource: ['nodes'], id: portableNodeIdToText({ namespaceUri: NAMESPACE_URI, identifierType: 's', identifier: 'Filler01.Speed' }) } as AspectRef)
+
+    // The point of putting bindings in the aspects vocabulary rather than in this package: what
+    // crosses the wire is `role`, `kind` and a target, and the reader needs to know nothing about
+    // OPC UA to understand that this thing is observable and where.
+    t.is(speed.bindings?.[0].role, 'observe')
+    t.is((speed.bindings?.[0].target as { system: string }).system, 'opcua')
 })

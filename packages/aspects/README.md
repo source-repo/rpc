@@ -66,6 +66,22 @@ Falling back means the provider's default aspect — but only when that aspect c
 
 A link may also insist rather than accept any of that: `fallback: 'refuse'`.
 
+## Bindings: how a thing can be reached
+
+An aspect says *where does this appear when I look at the system this way*. A **binding** says *through what interface can I observe or act on it* — a different question, and the fourth thing an object has after identity, structure and origin.
+
+```ts
+bindings: [{ kind: 'opcua.node', role: 'observe', target: { type: 'external', system: 'opcua', id: 'nsu=urn:acme;s=Filler01', endpoint: 'opc.tcp://plc:4840' } }]
+```
+
+One pump, one identity, several aspects, and reachable over OPC UA *and* Sparkplug *and* as a Source RPC component at once. None of those is a structure, which is why none of them is an aspect.
+
+`role` is `RpcEffect` — the library's own `observe | operate | program | security-admin`, the words authorization is already written in. A parallel vocabulary here would put two sets of words on one question and leave a console showing `command` beside methods marked `operate` with nobody sure they meant the same thing.
+
+`target` has two cases and no more: something in this network, named the way this library names things, or something outside it named by the system that owns it. `system` says whose namespace `id` is in; a consumer that does not know that system does not act on it. It is not a URL scheme registry and is not trying to become one.
+
+**A binding describes; it does not grant.** That is the same rule aspects states about structure and it matters more here, because a binding names a way in. Saying a node is writable over OPC UA is a fact about that node and that server — it authorizes nobody, and `authorize()` decides exactly what it would have decided with the field absent.
+
 ## What it deliberately is not
 
 Not a store, not a parser, not a renderer. Not a query engine either: no expression language reaches a provider from the network — a caller names an aspect and a parent, and the provider's own code decides what that means.

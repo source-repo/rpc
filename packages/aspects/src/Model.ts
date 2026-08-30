@@ -1,4 +1,4 @@
-import type { RpcRef } from '@source-repo/rpc'
+import type { RpcEffect, RpcRef } from '@source-repo/rpc'
 // Type-only, and circular with `Link.ts` on purpose: an object carries its links and a link names
 // an object, which is one idea in two files rather than two ideas.
 import type { AspectLink } from './Link.js'
@@ -93,11 +93,59 @@ export interface ObjectSummary {
     readonly origin: AspectOrigin
 }
 
-/** The object as opened: its content and what it points at. */
+/** The object as opened: its content, what it points at, and how it can be reached. */
 export interface ObjectDetail extends ObjectSummary {
     readonly content?: readonly ContentBlock[]
     readonly links?: readonly AspectLink[]
+    readonly bindings?: readonly ObjectBinding[]
 }
+
+/**
+ * How an object can be reached, which is a different question from where it appears.
+ *
+ * The fourth thing an object has, after identity, structure and origin - and the one this package
+ * had no word for until a provider needed it. An aspect says *where does this appear when I look at
+ * the system this way*; a binding says *through what interface can I observe or act on it*. A pump
+ * has one identity, several aspects, and may be reachable over OPC UA, over Sparkplug and as a
+ * Source RPC component at the same time. None of those is a structure.
+ *
+ * ## A binding describes; it does not grant
+ *
+ * This is the same rule aspects already states about structure, and it matters more here because a
+ * binding names a way in. Saying that a node is writable over OPC UA is a fact about that node and
+ * that server; it authorizes nobody, and `authorize()` decides what may actually happen exactly as
+ * it would with this field absent. A viewer that treated a binding as permission would be reading
+ * a description as a capability.
+ *
+ * ## Why `role` is the library's own word
+ *
+ * `RpcEffect` already answers "what kind of thing is this" for every method this library exposes,
+ * and authorization is written in it. A parallel vocabulary here - `command`, `configure`,
+ * `publish` - would put two sets of words on one question, and a console would show `command` beside
+ * methods marked `operate` with nobody sure whether they meant the same thing. That is the mistake
+ * `DataWrites.ts` exists to prevent, one layer up.
+ */
+export interface ObjectBinding {
+    /** Namespaced by whoever owns the interface: `opcua.node`, `sparkplug.metric`. */
+    readonly kind: string
+    /** What reaching it this way amounts to, in the same words the library gates methods with. */
+    readonly role: RpcEffect
+    readonly target: BindingTarget
+    /** Whatever that interface needs said about it: an access level, a datatype, a topic. */
+    readonly fields?: Readonly<Record<string, unknown>>
+}
+
+/**
+ * What a binding points at.
+ *
+ * Two cases and no more. Something in this network, named the way this library names things; or
+ * something outside it, named by the system that owns it - which is not a URL scheme registry and
+ * is not trying to become one: `system` says whose namespace `id` is in, and a consumer that does
+ * not know that system does not act on it.
+ */
+export type BindingTarget =
+    | { readonly type: 'rpc'; readonly ref: RpcRef }
+    | { readonly type: 'external'; readonly system: string; readonly id: string; readonly endpoint?: string }
 
 /**
  * A bounded unit of content.

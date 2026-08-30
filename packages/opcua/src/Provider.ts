@@ -1,5 +1,5 @@
 import { rpc, rpcNamespace, type RpcRef } from '@source-repo/rpc'
-import { AspectProvider, type AspectDescriptor, type AspectRef, type Branch, type ObjectDetail, type Occurrence } from '@source-repo/aspects'
+import { AspectProvider, type AspectDescriptor, type AspectRef, type Branch, type ObjectBinding, type ObjectDetail, type Occurrence } from '@source-repo/aspects'
 import { AttributeIds, BrowseDirection, NodeClass, OPCUAClient, type ClientSession, type OPCUAClientOptions } from 'node-opcua-client'
 import { fromSessionNodeId, portableNodeIdFromText, portableNodeIdToText, toSessionNodeId } from './Identity.js'
 import { buildDerived, derivedRoot, type DerivedAspect, type DerivedIndex, type IndexedNode } from './Derived.js'
@@ -330,11 +330,15 @@ export class OpcUaAspectProvider extends AspectProvider<OpcUaProviderProps, OpcU
         const node = toSessionNodeId(portable, this.namespaces)
         if (!node) return undefined
 
-        const [displayName, browseName, nodeClass, description] = await session.read([
+        // Five attributes in one Read, because the round trip is the cost and the fifth is free:
+        // AccessLevel is what says whether this node can be written at all, which a binding has to
+        // report honestly rather than leaving a caller to find out by trying.
+        const [displayName, browseName, nodeClass, description, accessLevel] = await session.read([
             { nodeId: node, attributeId: AttributeIds.DisplayName },
             { nodeId: node, attributeId: AttributeIds.BrowseName },
             { nodeId: node, attributeId: AttributeIds.NodeClass },
-            { nodeId: node, attributeId: AttributeIds.Description }
+            { nodeId: node, attributeId: AttributeIds.Description },
+            { nodeId: node, attributeId: AttributeIds.AccessLevel }
         ])
         const title = String((displayName.value.value as { text?: string })?.text ?? (browseName.value.value as { name?: string })?.name ?? target.id)
         const kind = NodeClass[Number(nodeClass.value.value)] ?? 'Unspecified'
@@ -345,8 +349,37 @@ export class OpcUaAspectProvider extends AspectProvider<OpcUaProviderProps, OpcU
             title,
             ...(((description.value.value as { text?: string })?.text) ? { summary: String((description.value.value as { text?: string }).text) } : {}),
             fields: { nodeId: target.id, browseName: String((browseName.value.value as { name?: string })?.name ?? ''), nodeClass: String(kind) },
-            origin: { system: 'opcua', externalId: target.id, url: this.props.endpointUrl, retrievedAt: new Date().toISOString() }
+            origin: { system: 'opcua', externalId: target.id, url: this.props.endpointUrl, retrievedAt: new Date().toISOString() },
+            bindings: this.bindingsFor(target.id, String(kind), Number(accessLevel.value?.value ?? 0))
         }
+    }
+
+    /**
+     * How this node can be reached, which is a fact about the server rather than about this package.
+     *
+     * A Variable can be observed and a Method can be called; an Object is a place things hang off
+     * and there is nothing to reach on it directly, so it gets none. An empty list would say
+     * something different from no list, so nodes with nothing to offer simply carry no bindings.
+     *
+     * `write` is reported through `accessLevel` rather than as a second binding with a role of its
+     * own. Writing a UA variable is reaching the same interface with a different verb, and a
+     * separate binding would read as a separate way in - and this package does not write anyway,
+     * which is exactly why it must not imply that it does. A binding describes; it grants nothing.
+     */
+    private bindingsFor(id: string, nodeClass: string, accessLevel: number): ObjectBinding[] {
+        const target = { type: 'external' as const, system: 'opcua', id, endpoint: this.props.endpointUrl }
+        if (nodeClass === 'Variable')
+            return [
+                {
+                    kind: 'opcua.node',
+                    role: 'observe',
+                    target,
+                    // Bit 0 is CurrentRead and bit 1 is CurrentWrite in OPC UA's AccessLevel mask.
+                    fields: { nodeClass, readable: (accessLevel & 0b01) !== 0, writable: (accessLevel & 0b10) !== 0 }
+                }
+            ]
+        if (nodeClass === 'Method') return [{ kind: 'opcua.method', role: 'operate', target, fields: { nodeClass } }]
+        return []
     }
 
     /** One branch of a derived arrangement, straight out of the index. */
