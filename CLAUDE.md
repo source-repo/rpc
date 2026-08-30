@@ -30,6 +30,8 @@ git ls-files -z | xargs -0 grep -laP '\x00'
 
 `packages/queue` is deliberately **not** part of it and never was: it versions on its own, because it depends only on the library's public API — it is the first external consumer of the schema compatibility policy, and pinning it to the library's version would un-prove exactly what it exists to prove. It is also the only one of the four published, which is what makes that independence cost something real.
 
+`packages/aspects` and `packages/documentation` are outside the rule for the same reason, and were from their first commit: both depend on the library's public API rather than on its shape. `documentation` does pin `aspects` by version, which is a different relationship - one is a provider of the other's contract, and that agreement is worth stating precisely.
+
 **Markdown is one line per paragraph.** Do not hard-wrap prose at a column, and do not re-wrap what is here. A single newline inside a paragraph is a space to CommonMark, so wrapped and unwrapped source render identically — the difference is only what happens when the file is edited. Hard wrapping keeps diffs small, but it needs every editor to re-wrap after a change or the margin drifts, and the WYSIWYG editors used on this repo preserve existing breaks without adding new ones. Unwrapped is the convention that survives being edited by anything.
 
 Table rows, headings and fenced blocks are one line each already and are not prose. A deliberate line break inside a paragraph is `<br/>`, or two trailing spaces — a bare newline will not do it.

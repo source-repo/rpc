@@ -36,7 +36,10 @@ const library = () => {
         join(root, 'guide', 'start.md'),
         ['---', 'id: getting-started', 'title: Getting started', 'topics: onboarding, guide', '---', '', '# Getting started', '', 'Two sentences of prose. Enough to count.'].join('\n')
     )
-    writeFileSync(join(root, 'guide', 'deep', 'internals.md'), ['# Internals', '', 'How it actually works, at length.'].join('\n'))
+    writeFileSync(
+        join(root, 'guide', 'deep', 'internals.md'),
+        ['# Internals', '', 'How it actually works, at length.', '', 'See [the wire format](../../reference/wire.md) and [the web](https://example.com/page).'].join('\n')
+    )
     writeFileSync(join(root, 'reference', 'wire.md'), ['---', 'title: The wire format', 'topics: [reference, onboarding]', '---', '', 'Field by field.'].join('\n'))
     // Not Markdown, and still documentation: the point of the rename.
     writeFileSync(join(root, 'reference', 'changes.txt'), 'Release notes, written by somebody in a hurry.')
@@ -240,4 +243,33 @@ test('a console browses both arrangements, and follows a link, over the wire', a
     t.false(isRefusal(where))
     if (isRefusal(where)) return
     t.is(where.aspectId, 'by-topic', 'context survives the wire as well as the call')
+})
+
+test('a link written in a document becomes a link the system can follow', (t) => {
+    const { root, docs } = library()
+    t.teardown(() => rmSync(root, { recursive: true, force: true }))
+
+    const opened = docs.openObject(ref('guide/deep/internals.md'))
+
+    // The relative path names a document this library has, so it becomes a reference - which
+    // survives that document being refiled, where the path in the prose would not.
+    t.is(opened.links?.length, 1, 'and the external one stays ordinary text in the block')
+    t.is(opened.links?.[0].target.id, 'reference/wire.md')
+    t.is(opened.links?.[0].label, 'the wire format')
+    t.is(opened.links?.[0].relation, 'references')
+
+    // And it is followable, which is the point of making it a reference rather than a path.
+    const where = docs.follow(opened.links![0], { target: opened.ref, aspectId: 'by-folder', occurrenceId: 'folder:guide/deep/guide/deep/internals.md', inherited: false })
+    t.false(isRefusal(where))
+    if (isRefusal(where)) return
+    t.is(where.aspectId, 'by-folder')
+})
+
+test('a link that leaves the library is left as it was written', (t) => {
+    const { root, docs } = library()
+    t.teardown(() => rmSync(root, { recursive: true, force: true }))
+
+    const opened = docs.openObject(ref('guide/deep/internals.md'))
+    t.regex(String((opened.content?.[0] as { markdown: string }).markdown), /https:\/\/example\.com\/page/, 'still in the text, untouched')
+    t.false(opened.links?.some((link) => link.label?.includes('web')))
 })

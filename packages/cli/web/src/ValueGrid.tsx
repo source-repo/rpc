@@ -7,6 +7,7 @@ import { compileFilter } from './filter'
 import { pageControls } from './pager'
 import { useRpcData } from './data'
 import { ResourceTree, type BranchQuestion } from './ResourceTree'
+import { ObjectPanel, type ObjectAccess, type Ref, type Where } from './ObjectPanel'
 import { useDebounced, useWaitedSeconds } from './timing'
 import type { DescribedAction, DescribedComponent, TypeNode } from './types'
 
@@ -263,6 +264,7 @@ export const ValueGrid = ({
     cache,
     pageQuestion,
     branchQuestion,
+    objectAccess,
     period,
     actionsFor,
     onAction,
@@ -279,6 +281,8 @@ export const ValueGrid = ({
     pageQuestion: PageQuestion
     /** How to name one branch of a tree resource. Absent leaves such a resource undrawable. */
     branchQuestion?: BranchQuestion
+    /** How to open an object a row names, and follow its links. Absent leaves rows inert. */
+    objectAccess?: ObjectAccess
     period: number | undefined
     /** What may be done to a row of the resource at this path, if anything. */
     actionsFor: (path: string[]) => DescribedAction[] | undefined
@@ -290,6 +294,10 @@ export const ValueGrid = ({
     // question it asks names a parent. Sharing the grid's machinery would mean explaining, in both
     // directions, which half of it does not apply.
     const tree = treeResourceAt(component, scope)
+    // Where the reader is, which is what makes a link keep its aspect: `follow` is answered against
+    // the place they are following *from*, and without it every link would land in whichever
+    // structure the provider prefers.
+    const [where, setWhere] = useState<Where | undefined>()
 
     const [typed, setTyped] = useState('')
     // Settled rather than live, so eight keystrokes are one question and not eight.
@@ -327,7 +335,17 @@ export const ValueGrid = ({
         return (
             <div className="value-grid">
                 {branchQuestion ? (
-                    <ResourceTree resource={tree} cache={cache} branchQuestion={branchQuestion} period={period} />
+                    <div className="tree-and-object">
+                        <ResourceTree
+                            resource={tree}
+                            cache={cache}
+                            branchQuestion={branchQuestion}
+                            period={period}
+                            selected={where?.occurrenceId}
+                            onSelect={objectAccess ? (ref: Ref, occurrenceId: string) => setWhere({ target: ref, aspectId: tree.path[0], occurrenceId, inherited: false }) : undefined}
+                        />
+                        {objectAccess && where && <ObjectPanel target={where.target} access={objectAccess} where={where} onWhere={setWhere} />}
+                    </div>
                 ) : (
                     <p className="muted">this pane was given no way to ask for a branch, so the tree cannot be drawn</p>
                 )}

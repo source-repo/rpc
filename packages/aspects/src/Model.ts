@@ -137,6 +137,15 @@ export interface AspectDescriptor {
     readonly revision: string
     readonly default?: boolean
     readonly preferredPresentation?: 'tree' | 'list' | 'document'
+    /**
+     * Which fields of an occurrence to draw first, when this aspect has an opinion.
+     *
+     * The aspect is in a better position to say than the base class is: a documentation tree wants
+     * the words and the date, a functional one wants the tag, and a generic default that showed the
+     * kind put `document.markdown` on every row of a library where every row was one. Absent falls
+     * back to something plain.
+     */
+    readonly defaultColumns?: readonly string[]
 }
 
 /**

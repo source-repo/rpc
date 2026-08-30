@@ -1830,6 +1830,12 @@ textarea.control {
 }
 .tree-label {
     font-weight: 500;
+    /* One line each. A tree is read by scanning down it, and a title that wraps to six lines turns
+       ten rows into a page - the label is an identifier here, not the content. */
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 22rem;
 }
 .tree-detail {
     font-size: 0.85em;
@@ -1848,4 +1854,59 @@ textarea.control {
     color: inherit;
     text-decoration: underline;
     font: inherit;
+}
+
+/* The tree and the object it opened, side by side. A document is read beside the structure it was
+   found in, because the structure is why the reader is there - taking it away to show the text
+   would answer the question and lose the context that made it worth asking. */
+.tree-and-object {
+    display: flex;
+    gap: 1rem;
+    align-items: flex-start;
+}
+.tree-and-object > .collection {
+    flex: 1 1 40%;
+    min-width: 0;
+}
+.object-panel {
+    flex: 1 1 60%;
+    min-width: 0;
+    border-left: 1px solid rgba(127, 127, 127, 0.25);
+    padding-left: 1rem;
+}
+.object-head {
+    margin-bottom: 0.5rem;
+}
+.object-block-kind {
+    font-size: 0.8em;
+}
+.object-text {
+    white-space: pre-wrap;
+    word-break: break-word;
+    margin: 0.2rem 0 0.8rem;
+    font-size: 0.9em;
+}
+.object-note {
+    font-size: 0.9em;
+    opacity: 0.85;
+}
+.object-links {
+    margin-top: 0.5rem;
+}
+.object-link,
+.tree-openable {
+    background: none;
+    border: none;
+    padding: 0;
+    margin-right: 0.6rem;
+    cursor: pointer;
+    color: inherit;
+    font: inherit;
+    text-align: left;
+}
+.object-link {
+    text-decoration: underline;
+}
+.tree-selected {
+    text-decoration: underline;
 }

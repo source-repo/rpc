@@ -160,7 +160,7 @@ export abstract class AspectProvider<Props extends Record<string, unknown>, Stat
             label: aspect.label,
             shape: 'tree' as const,
             verbs: ['getChildren' as const],
-            presentation: { defaultColumns: ['title', 'kind'] },
+            presentation: { defaultColumns: aspect.defaultColumns ?? ['title', 'kind'] },
             row: {
                 kind: 'object' as const,
                 fields: {

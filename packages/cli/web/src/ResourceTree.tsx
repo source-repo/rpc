@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react'
 import type { RpcDataCache, RpcQuestion } from '@source-repo/query'
 import { useRpcData } from './data'
+import type { Ref } from './ObjectPanel'
 import type { DescribedResource } from './types'
 
 /**
@@ -35,6 +36,18 @@ interface Branch {
 
 const field = (row: unknown, name: string): unknown => (row && typeof row === 'object' ? (row as Record<string, unknown>)[name] : undefined)
 
+/**
+ * The object a row stands for, when it stands for one.
+ *
+ * A grouping node - a folder, a topic, a workflow state - carries no reference, and that absence is
+ * the signal rather than an omission: there is nothing to open, because the provider has no object
+ * by that name. Drawing it as openable would promise something nobody can deliver.
+ */
+const refOf = (row: unknown): Ref | undefined => {
+    const ref = field(row, 'ref') as Ref | undefined
+    return ref && typeof ref.id === 'string' && ref.provider ? ref : undefined
+}
+
 /** What to call a row: what the resource says to show first, then the obvious names, then its id. */
 const labelOf = (row: unknown, id: string, columns: readonly string[]): string => {
     for (const column of [...columns, 'title', 'name', 'label']) {
@@ -67,7 +80,9 @@ const Node = ({
     cache,
     branchQuestion,
     period,
-    pageSize
+    pageSize,
+    selected,
+    onSelect
 }: {
     id: string
     row: unknown
@@ -79,8 +94,11 @@ const Node = ({
     branchQuestion: BranchQuestion
     period: number | undefined
     pageSize: number
+    selected?: string
+    onSelect?: (ref: Ref, occurrenceId: string) => void
 }) => {
     const [open, setOpen] = useState(false)
+    const ref = refOf(row)
     const label = labelOf(row, id, columns)
     const details = detailsOf(row, columns, label)
 
@@ -94,9 +112,15 @@ const Node = ({
                 ) : (
                     <span className="tree-toggle tree-leaf" />
                 )}
-                <span className="tree-label" title={id}>
-                    {label}
-                </span>
+                {ref && onSelect ? (
+                    <button className={`tree-label tree-openable${selected === id ? ' tree-selected' : ''}`} onClick={() => onSelect(ref, id)} title={`open ${ref.id}`}>
+                        {label}
+                    </button>
+                ) : (
+                    <span className="tree-label" title={id}>
+                        {label}
+                    </span>
+                )}
                 {details.map(([column, value]) => (
                     <span className="tree-detail" key={column}>
                         <span className="muted">{column}</span> {value}
@@ -115,6 +139,8 @@ const Node = ({
                     branchQuestion={branchQuestion}
                     period={period}
                     pageSize={pageSize}
+                    selected={selected}
+                    onSelect={onSelect}
                 />
             )}
         </>
@@ -129,7 +155,9 @@ const BranchRows = ({
     cache,
     branchQuestion,
     period,
-    pageSize
+    pageSize,
+    selected,
+    onSelect
 }: {
     parentId: string | undefined
     depth: number
@@ -139,6 +167,8 @@ const BranchRows = ({
     branchQuestion: BranchQuestion
     period: number | undefined
     pageSize: number
+    selected?: string
+    onSelect?: (ref: Ref, occurrenceId: string) => void
 }) => {
     const [page, setPage] = useState(0)
     const question = useMemo(() => branchQuestion(resource, parentId, page, pageSize), [branchQuestion, resource, parentId, page, pageSize])
@@ -167,6 +197,8 @@ const BranchRows = ({
                     branchQuestion={branchQuestion}
                     period={period}
                     pageSize={pageSize}
+                    selected={selected}
+                    onSelect={onSelect}
                 />
             ))}
             {/* A branch is paged like anything else. A folder of four thousand files is exactly the
@@ -185,13 +217,19 @@ export const ResourceTree = ({
     cache,
     branchQuestion,
     period,
-    pageSize = 100
+    pageSize = 100,
+    selected,
+    onSelect
 }: {
     resource: DescribedResource
     cache: RpcDataCache
     branchQuestion: BranchQuestion
     period: number | undefined
     pageSize?: number
+    /** The occurrence currently open, so the row it came from can say so. */
+    selected?: string
+    /** Absent leaves every row inert, which is right for a tree with nothing behind its rows. */
+    onSelect?: (ref: Ref, occurrenceId: string) => void
 }) => {
     const columns = resource.presentation?.defaultColumns ?? []
     return (
@@ -200,7 +238,7 @@ export const ResourceTree = ({
                 <strong>{resource.label ?? resource.path.join('.')}</strong>
                 <span className="muted"> — a branch at a time</span>
             </div>
-            <BranchRows parentId={undefined} depth={0} resource={resource.path} columns={columns} cache={cache} branchQuestion={branchQuestion} period={period} pageSize={pageSize} />
+            <BranchRows parentId={undefined} depth={0} resource={resource.path} columns={columns} cache={cache} branchQuestion={branchQuestion} period={period} pageSize={pageSize} selected={selected} onSelect={onSelect} />
         </div>
     )
 }

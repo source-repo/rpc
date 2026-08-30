@@ -8,6 +8,7 @@ import { staticSource, storeSource, type EditAffordance } from './ValueTree'
 import { ScopeTree } from './ScopeTree'
 import { ValueGrid, type PageQuestion } from './ValueGrid'
 import type { BranchQuestion } from './ResourceTree'
+import type { ObjectAccess, Link, Ref, Where } from './ObjectPanel'
 import { actionsFor, leavesUnder, scopeTree } from './scope'
 import type { DescribedAction, DescribedComponent, DescribedMethod, TypeNode } from './types'
 
@@ -367,6 +368,28 @@ export const ComponentPanel = ({
      * An absent `parentId` is the roots, and it is left out of the params rather than sent as
      * empty - the two are different questions, and the cache keys on what is actually asked.
      */
+    /**
+     * Opening an object and following its links, as ordinary calls on the provider.
+     *
+     * `follow` is answered by the peer rather than worked out here, and that is not layering for its
+     * own sake: only the provider knows where an object appears, and a console that tried would have
+     * to fetch the whole structure to find out - the walk the tree verb exists to avoid.
+     */
+    const objectAccess: ObjectAccess = {
+        open: async (target: Ref) => {
+            const link = server.current
+            if (!link) throw new Error('no link to this peer')
+            const face = await link.proxy<{ openObject(target: Ref): Promise<never> }>(namespace, peer)
+            return face.openObject(target)
+        },
+        follow: async (following: Link, from: Where | undefined) => {
+            const link = server.current
+            if (!link) throw new Error('no link to this peer')
+            const face = await link.proxy<{ follow(link: Link, from?: Where): Promise<never> }>(namespace, peer)
+            return face.follow(following, from)
+        }
+    }
+
     const branchQuestion: BranchQuestion = (resource, parentId, page, pageSize) => ({
         target: peer,
         namespace,
@@ -478,7 +501,7 @@ export const ComponentPanel = ({
                             // channel of its own and can show nothing the grid could not.
                             <SourceView document={listing.document} bindings={listing.bindings} source={source} stale={stale} refusal={listing.refusal} />
                         ) : (
-                            <ValueGrid component={component} types={types} scope={scope} source={source} edit={edit} branchQuestion={branchQuestion} cache={data} pageQuestion={pageQuestion} period={period} actionsFor={(path) => actionsFor(component, path, methods)} onAction={(action, id, resource) => void runAction(action, id, resource)} />
+                            <ValueGrid component={component} types={types} scope={scope} source={source} edit={edit} branchQuestion={branchQuestion} objectAccess={objectAccess} cache={data} pageQuestion={pageQuestion} period={period} actionsFor={(path) => actionsFor(component, path, methods)} onAction={(action, id, resource) => void runAction(action, id, resource)} />
                         )}
                     </div>
                 </div>

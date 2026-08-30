@@ -1,7 +1,7 @@
 import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { basename, extname, join, relative, resolve, sep } from 'node:path'
 import { rpc, rpcNamespace } from '@source-repo/rpc'
-import { AspectProvider, type AspectDescriptor, type AspectRef, type ObjectDetail, type Occurrence } from '@source-repo/aspects'
+import { AspectProvider, type AspectDescriptor, type AspectLink, type AspectRef, type ContentBlock, type ObjectDetail, type Occurrence } from '@source-repo/aspects'
 import type { RpcRef } from '@source-repo/rpc'
 import { defaultReaders, frontMatter, readerFor, type DocumentReader } from './Reader.js'
 
@@ -120,8 +120,18 @@ export class DocumentLibrary extends AspectProvider<DocumentLibraryProps, Docume
     /** The two arrangements of the same documents. Neither is where a document lives. */
     aspects(): readonly AspectDescriptor[] {
         return [
-            { id: BY_FOLDER, label: 'By folder', description: 'Where the documents are filed', revision: String(this.state.documents), default: true, preferredPresentation: 'tree' },
-            { id: BY_TOPIC, label: 'By topic', description: 'What the documents are about', revision: String(this.topics.size), preferredPresentation: 'tree' }
+            {
+                id: BY_FOLDER,
+                label: 'By folder',
+                description: 'Where the documents are filed',
+                revision: String(this.state.documents),
+                default: true,
+                preferredPresentation: 'tree',
+                // Not the kind: in a library where every row is a document, saying so on every row
+                // is a column of one repeated value where a useful one could have been.
+                defaultColumns: ['title', 'words', 'modified']
+            },
+            { id: BY_TOPIC, label: 'By topic', description: 'What the documents are about', revision: String(this.topics.size), preferredPresentation: 'tree', defaultColumns: ['title', 'path'] }
         ]
     }
 
@@ -172,8 +182,50 @@ export class DocumentLibrary extends AspectProvider<DocumentLibraryProps, Docume
             fields: { path: document.path, topics: document.topics, words: document.words },
             origin: { system: 'documentation', externalId: document.path, updatedAt: document.modified, retrievedAt: this.state.scannedAt },
             content: read.blocks,
-            links: []
+            links: this.linksIn(read.blocks, document)
         }
+    }
+
+    /**
+     * The links a document writes, as links the system can follow.
+     *
+     * Only the ones that land inside this library. A Markdown link to `../reference/wire.md` names
+     * a document this provider has, so it becomes a typed link to that document's *reference* - and
+     * following it keeps whichever arrangement the reader is in. A link to somewhere else stays what
+     * it was: ordinary text in the block, which a viewer renders and this does not touch.
+     *
+     * The distinction matters more than it looks. A path in prose is a fact about where a file sits
+     * today; a reference survives the file being refiled. Turning one into the other where it can be
+     * done, and leaving it alone where it cannot, is the whole of what this does.
+     */
+    private linksIn(blocks: readonly ContentBlock[], from: DocumentRecord): AspectLink[] {
+        const folder = from.path.includes('/') ? from.path.slice(0, from.path.lastIndexOf('/')) : ''
+        const links: AspectLink[] = []
+        const seen = new Set<string>()
+        for (const block of blocks) {
+            if (block.kind !== 'markdown') continue
+            for (const [, label, href] of block.markdown.matchAll(/\[([^\]]*)\]\(([^)\s]+)\)/g)) {
+                if (/^[a-z][a-z0-9+.-]*:|^\/\//i.test(href) || href.startsWith('#')) continue
+                const target = this.documentAt(folder, href.split('#')[0])
+                if (!target || seen.has(target.id)) continue
+                seen.add(target.id)
+                links.push({ id: `link:${from.id}:${target.id}`, target: { provider: this.identity, resource: ['documents'], id: target.id }, label: label || target.title, relation: 'references' })
+            }
+        }
+        return links
+    }
+
+    /** The document a relative href names, if this library has one. Never leaves the root. */
+    private documentAt(folder: string, href: string): DocumentRecord | undefined {
+        const parts = [...folder.split('/').filter(Boolean)]
+        for (const segment of href.split('/')) {
+            if (segment === '.' || segment === '') continue
+            if (segment === '..') parts.pop()
+            else parts.push(segment)
+        }
+        const path = parts.join('/')
+        for (const document of this.documents.values()) if (document.path === path) return document
+        return undefined
     }
 
     /**

@@ -204,6 +204,39 @@ jobs:
                     npm publish --access public --provenance
                   fi
 
+            # Several structures over the same objects, and the documentation provider that was the
+            # first thing to need them. Both version on their own, like the queue and for the queue's
+            # reason: they depend on the library's public API rather than on its shape, so pinning
+            # them to its number would state an agreement they are not keeping.
+            #
+            # Ordered so `aspects` goes first. `documentation` depends on it by version, and
+            # publishing the dependent against a dependency that is not there yet gives anyone
+            # installing it in that window a broken tree - the same reason the library precedes the
+            # CLI at the top of this job.
+            - name: Publish the aspects package
+              working-directory: packages/aspects
+              env:
+                  NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+              run: |
+                  version=$(node -p "require('./package.json').version")
+                  if curl -fsSL -o /dev/null "https://registry.npmjs.org/@source-repo%2faspects/${version}"; then
+                    echo "@source-repo/aspects@${version} is already published"
+                  else
+                    npm publish --access public --provenance
+                  fi
+
+            - name: Publish the documentation package
+              working-directory: packages/documentation
+              env:
+                  NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+              run: |
+                  version=$(node -p "require('./package.json').version")
+                  if curl -fsSL -o /dev/null "https://registry.npmjs.org/@source-repo%2fdocumentation/${version}"; then
+                    echo "@source-repo/documentation@${version} is already published"
+                  else
+                    npm publish --access public --provenance
+                  fi
+
             # The TypeScript half of reaching a .NET peer. It versions with the library rather than
             # on its own, because it carries the flat frame to a C# hub and a client pinned to one
             # shape of that frame is easier to reason about than one that says nothing about which
