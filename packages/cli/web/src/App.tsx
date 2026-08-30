@@ -266,6 +266,20 @@ export const App = () => {
     const [peers, setPeers] = useState<string[]>([])
     const [offline, setOffline] = useState<Set<string>>(new Set())
     const [selected, setSelected] = useState<string | null>(null)
+    /**
+     * The observer this page was opened onto, when it was opened as one.
+     *
+     * `?observe=<peer>&ns=<namespace>` draws that component alone and full height - the scope tree
+     * and the value list, and none of the console around them. Read once from the address the
+     * document was loaded with, because this is a different page rather than a view the console
+     * switches between: nothing here pushes history, and there is no state to keep in step.
+     */
+    const observing = useMemo(() => {
+        const asked = new URLSearchParams(window.location.search)
+        const peer = asked.get('observe')
+        const namespace = asked.get('ns')
+        return peer && namespace ? { peer, namespace } : undefined
+    }, [])
     const [described, setDescribed] = useState<ServerDescription | { error: string; code?: string } | null>(null)
     const [watching, setWatching] = useState<Set<string>>(new Set())
     const [stream, setStream] = useState<StreamedEvent[]>([])
@@ -384,6 +398,19 @@ export const App = () => {
         await refreshPeers()
     }
 
+    /**
+     * Describe the peer this page was opened onto, once there is a console to ask.
+     *
+     * The same describe a click makes: a standalone observer still needs the contract to know what
+     * to draw. Guarded on `selected` rather than run once, so the reconnect that brings a new
+     * `service` does not re-describe what is already on screen and reset the panel under somebody
+     * watching it.
+     */
+    useEffect(() => {
+        if (!observing || !service || selected) return
+        void select(observing.peer)
+    }, [observing, service, selected])
+
     /** Every event in one namespace, in one click - the usual first move on an unfamiliar peer. */
     const watchAll = async (namespace: string, events: DescribedEvent[]) => {
         if (!service || !selected) return
@@ -420,6 +447,60 @@ export const App = () => {
      */
     const uncertainCount = useMemo(() => operations.select((all) => all.filter((one) => one.status === 'unknown-outcome').length), [operations])
     const uncertain = useSyncExternalStore(uncertainCount.subscribe, uncertainCount.getSnapshot)
+
+    /**
+     * The observer on its own.
+     *
+     * Returned ahead of the console's layout rather than hidden inside it, because these are not two
+     * states of one screen: this one has no peer list, no traffic column and no tabs, and the two
+     * panes get the whole window instead of the middle third of it. Everything else - the link, the
+     * describe, the store, the editors - is the same code, which is the point. It is the same
+     * observer, given the room.
+     */
+    if (observing) {
+        const shown = description?.namespaces.find((one) => one.name === observing.namespace)
+        return (
+            <div className="app observing">
+                <header className="observing-head">
+                    <h1>
+                        <span>{description ? peerDisplayName(description.name, structure[description.name]) : observing.peer}</span>
+                        <span className="entity-id mono">
+                            {observing.peer} · {observing.namespace}
+                        </span>
+                    </h1>
+                    <span className={`status ${status === 'connected' ? 'ok' : 'warn'}`}>{status}</span>
+                    <a className="full-page" href={window.location.pathname}>
+                        ← console
+                    </a>
+                </header>
+                <main className="observing-body">
+                    {failed && <p className="component-error">{failed.error}</p>}
+                    {!described && !failed && <p className="muted">Describing {observing.peer}…</p>}
+                    {description && !shown && (
+                        <p className="muted">
+                            {observing.peer} exposes no namespace called {observing.namespace}.
+                        </p>
+                    )}
+                    {description && shown && !shown.component && <p className="muted">{observing.namespace} is a service rather than an observable component.</p>}
+                    {description && shown?.component && (
+                        <ComponentPanel
+                            standalone
+                            peer={observing.peer}
+                            namespace={shown.name}
+                            component={shown.component}
+                            methods={shown.methods}
+                            types={description.types}
+                            server={peer}
+                            data={data}
+                            onSubscribed={() => {
+                                if (service) void service.describe(observing.peer).then(setDescribed).catch(() => undefined)
+                            }}
+                        />
+                    )}
+                </main>
+            </div>
+        )
+    }
 
     return (
         <div className="app">

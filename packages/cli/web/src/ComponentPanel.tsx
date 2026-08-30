@@ -1,4 +1,4 @@
-import { RefObject, useCallback, useEffect, useMemo, useState, useSyncExternalStore } from 'react'
+import { RefObject, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { rpcComponent, type RpcCallOptions, type RpcComponentData, type RpcComponentLike, type RpcComponentStore, type RpcMethodSemantics, type RpcServer } from '@source-repo/rpc'
 import type { RpcDataCache } from '@source-repo/query'
 import { Uncertain, useCommanding } from './command'
@@ -167,10 +167,19 @@ export const ComponentPanel = ({
     types,
     server,
     data,
-    onSubscribed
+    onSubscribed,
+    standalone
 }: {
     peer: string
     namespace: string
+    /**
+     * This panel is the whole page rather than one section of a peer's description.
+     *
+     * Two differences follow. It offers no link to itself, and it starts observing on its own -
+     * because a page whose entire purpose is this observer, opened onto a wall display, is wrong
+     * on that wall until somebody walks over and presses a button.
+     */
+    standalone?: boolean
     component: DescribedComponent
     /** This namespace's described methods, which is where the editors come from. */
     methods: DescribedMethod[]
@@ -277,6 +286,20 @@ export const ComponentPanel = ({
             setBusy(false)
         }
     }
+
+    /**
+     * Observe once, unprompted, when this panel is the page.
+     *
+     * Guarded by a ref rather than by the dependency list: `observe` is rebuilt on every render, so
+     * an effect that watched it would fire on every render, and one that did not would be a lie
+     * about what it reads. The ref says plainly that this happens once per mount.
+     */
+    const startedItself = useRef(false)
+    useEffect(() => {
+        if (!standalone || startedItself.current) return
+        startedItself.current = true
+        void observe()
+    }, [standalone, observe])
 
     const stop = () => {
         setStore(null)
@@ -444,6 +467,7 @@ export const ComponentPanel = ({
     }
 
     const stale = status === 'stale'
+    const fullPageHref = `${window.location.pathname}?observe=${encodeURIComponent(peer)}&ns=${encodeURIComponent(namespace)}`
     return (
         <div className={`component${stale ? ' stale' : ''}`}>
             <div className="component-head">
@@ -471,6 +495,16 @@ export const ComponentPanel = ({
                     <button className="toggle on" onClick={stop}>
                         stop
                     </button>
+                )}
+                {/* An anchor rather than a button, so it behaves like the address it is: middle-click
+                    opens it beside the console, ctrl-click in a new tab, right-click copies
+                    something somebody can put on a wall display or leave in a runbook. The current
+                    pathname is kept because a console mounted under a base path serves this page
+                    from the same place. */}
+                {!standalone && (
+                    <a className="full-page" href={fullPageHref} title={`observe ${namespace} on a page of its own`}>
+                        full page ↗
+                    </a>
                 )}
             </div>
             {error && <p className="component-error">{error}</p>}

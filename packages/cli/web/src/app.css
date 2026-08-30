@@ -1965,3 +1965,98 @@ textarea.control {
     padding: 0 0.4rem;
     font-size: 0.85em;
 }
+
+/* ── The observer on a page of its own ────────────────────────────────────────────────────────
+ *
+ * One column and two rows, so the panel gets the window rather than the middle third of it. The
+ * point of the full-page form is height: a scope tree of any depth and a list of any length, each
+ * scrolling on its own, which is what a screen somebody leaves running needs and what the console's
+ * three-column layout cannot give.
+ */
+.app.observing {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr);
+}
+
+.observing-head {
+    display: flex;
+    align-items: baseline;
+    gap: 12px;
+    padding: 10px 18px;
+    border-bottom: 1px solid var(--line);
+    background: var(--panel);
+}
+
+.observing-head h1 {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+}
+
+/* Pushed to the end so the way back is always in the same corner, wherever the name ends. */
+.observing-head .full-page {
+    margin-left: auto;
+}
+
+.observing-body {
+    min-height: 0;
+    overflow: hidden;
+    padding: 12px 18px;
+    display: flex;
+}
+
+.app.observing .component {
+    display: flex;
+    flex-direction: column;
+    flex: 1 1 auto;
+    min-height: 0;
+    margin-bottom: 0;
+}
+
+/* Side by side and each scrolling itself, rather than one long page: a tree that scrolled the
+   values out of sight would defeat the reason for the two panes. Below 760px there is not room for
+   both, and stacking beats two columns too narrow to read. */
+.app.observing .component-body {
+    flex: 1 1 auto;
+    min-height: 0;
+    flex-wrap: nowrap;
+}
+
+.app.observing .scope-pane {
+    max-width: 320px;
+    overflow-y: auto;
+}
+
+.app.observing .value-table {
+    min-height: 0;
+    overflow-y: auto;
+}
+
+@media (max-width: 760px) {
+    .app.observing .component-body {
+        flex-wrap: wrap;
+        overflow-y: auto;
+    }
+
+    .app.observing .scope-pane {
+        max-width: none;
+        overflow-y: visible;
+    }
+}
+
+/* The link to the full page, and the one back. Sized like the toggles it sits beside rather than
+   like body text, because it is a control in that row and not a sentence in it. */
+.full-page {
+    font-size: 11px;
+    color: var(--muted);
+    text-decoration: none;
+    border: 1px solid var(--line);
+    border-radius: 5px;
+    padding: 2px 7px;
+    white-space: nowrap;
+}
+
+.full-page:hover {
+    color: var(--text);
+    border-color: var(--muted);
+}

@@ -83,6 +83,14 @@ Which yields the property worth holding onto: **the scope tree is exactly the co
 
 The same line decides how the two halves of the grid are fed. **Typed leaves are subscribed to** — the contract bounds how many there are, so a [projection](../guide/components.md#asking-for-less-than-the-whole-state) naming them is cheap and stays current by itself. **Collection rows are asked for**, a page at a time, through [`$data`](../guide/components.md#asking-for-a-page-instead-of-watching-one). A panel that pulled fifty rows while its subscription pushed all three hundred would look exactly like the feature working, so it never takes the whole snapshot.
 
+### The observer on a page of its own
+
+Beside **observe** is a **full page ↗** link, and it is an ordinary link: middle-click opens it beside the console, ctrl-click puts it in a new tab, right-click copies an address that can go in a runbook or onto a wall display.
+
+What it opens is the same observer with the console taken away — no peer list, no traffic column, no tabs — so the scope tree and the value grid get the whole window instead of the middle third of it. The two panes scroll independently, which is what makes the form worth having: a deep tree on the left and a long list on the right, neither pushing the other off the screen.
+
+The address is `?observe=<peer>&ns=<namespace>` under wherever the console is served, so it survives a base path and can be written by hand. A page opened this way **starts observing on its own**, because a display that is wrong until somebody walks over and presses a button is a display nobody should trust.
+
 ### Filtering happens on the peer
 
 One box serves the pane, and both halves of the grid answer it. The subscribed fields are filtered where they are already held; the collections carry the same condition to the peer, so a search matching nothing there costs a sentence on the wire rather than a record.
