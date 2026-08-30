@@ -1,6 +1,6 @@
 {
     "name": "@source-repo/query",
-    "version": "0.1.0",
+    "version": "5.2.0",
     "description": "The pull half of a Source RPC network: a TanStack Query cache over $data, with freshness taken from the component channel rather than from a clock",
     "keywords": [
         "rpc",
@@ -44,7 +44,7 @@
         "prepack": "npm run clean && npm run build"
     },
     "dependencies": {
-        "@source-repo/rpc": "^5.1.0",
+        "@source-repo/rpc": "^5.2.0",
         "@tanstack/query-core": "^5.102.5"
     },
     "devDependencies": {

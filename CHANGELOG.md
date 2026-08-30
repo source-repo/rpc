@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 5.2.0
 
 ### A worker can be a peer, not only somebody's host
 

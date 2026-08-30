@@ -1,6 +1,6 @@
 {
     "name": "@source-repo/conformance",
-    "version": "5.1.0",
+    "version": "5.2.0",
     "private": true,
     "description": "The normative DataProvider fixture and questions, shared by every store-backed node's test suite",
     "type": "module",
@@ -30,7 +30,7 @@
         "test": "npm run clean && npm run build"
     },
     "dependencies": {
-        "@source-repo/rpc": "^5.1.0"
+        "@source-repo/rpc": "^5.2.0"
     },
     "devDependencies": {
         "@types/node": "^26.1.2",
