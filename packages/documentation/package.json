@@ -1,12 +1,12 @@
 {
-    "name": "@source-repo/markdown",
+    "name": "@source-repo/documentation",
     "version": "0.1.0",
-    "description": "Serve a directory of Markdown over Source RPC: several trees over the same documents, fetched a branch at a time",
+    "description": "The documentation aspect of a system: what describes a thing, in whatever format it was written",
     "keywords": [
-        "markdown",
         "documentation",
+        "aspects",
+        "markdown",
         "rpc",
-        "tree",
         "typescript"
     ],
     "type": "module",
@@ -15,7 +15,7 @@
     "repository": {
         "type": "git",
         "url": "git+https://github.com/source-repo/rpc.git",
-        "directory": "packages/markdown"
+        "directory": "packages/documentation"
     },
     "engines": {
         "node": ">=22"
@@ -42,7 +42,8 @@
         "prepack": "npm run clean && npm run build"
     },
     "dependencies": {
-        "@source-repo/rpc": "^5.2.0"
+        "@source-repo/rpc": "^5.2.0",
+        "@source-repo/aspects": "^0.1.0"
     },
     "devDependencies": {
         "@types/node": "^26.1.2",
@@ -57,7 +58,7 @@
         "workerThreads": false,
         "concurrency": 1
     },
-    "homepage": "https://github.com/source-repo/rpc/tree/main/packages/markdown#readme",
+    "homepage": "https://github.com/source-repo/rpc/tree/main/packages/documentation#readme",
     "bugs": {
         "url": "https://github.com/source-repo/rpc/issues"
     }
