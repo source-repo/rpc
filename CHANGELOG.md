@@ -1,5 +1,59 @@
 # Changelog
 
+## 5.3.0
+
+### A tree is fetched a branch at a time
+
+`shape: 'tree'` has been declarable since resources were added and its own comment said what was missing: *a tree is fetched a branch at a time and is not served yet*. It is served now. `getChildren` is `getList` for one parent's children - the same closed filter, the same sort, the same paging, applied among them - and an absent `parentId` asks for the roots, which is a different question from an empty one.
+
+The case it exists for is a node answering about a hierarchy it does not hold as rows: documentation filed in folders, a workspace on another service, a security zoning of things that are physically elsewhere. Nobody can say how many descendants a node has before somebody asks, so `getList` on such a resource is a question with no bounded answer.
+
+`hasChildren` rides beside the rows rather than in them, which is what `ids` already does and for the same reason - a row may be a primitive, and a row that happened to have that field would be quietly overwritten. It is there because a viewer must decide whether to draw an expander *before* anyone expands; the alternative is an arrow on every row, half of which open onto nothing.
+
+**`RpcDataMethod` gained a member**, which is worth stating plainly: an exhaustive `switch` over it in a consumer's own code will now want a `getChildren` arm. Nothing on the wire changed - a resource that does not declare the verb is never asked for it.
+
+### Columns to open on, and nothing else about how to draw them
+
+`RpcDataResource.presentation.defaultColumns` says which fields to show first. The *possible* columns already follow from `row` and are not restated; there are no widths, no colours and no component names, because those belong to whoever is looking. A path the row type does not have is ignored rather than refused - a node that would not start because somebody renamed a field in a hint is the worse failure - and said once at describe time with the column named.
+
+### Aspects: several structures over the same objects
+
+`@source-repo/aspects`, published for the first time. IEC 81346's idea and its word: an object is viewed in several aspects - functional, product, location - and an aspect is a way of looking rather than a place the object lives. Structure is an aspect; identity is not.
+
+`AspectProvider` is the half worth sharing. A provider says which aspects exist, what is under a node, where an object appears and how to open one; it gets every aspect published as a tree resource, branches served a page at a time, the `hasChildren` flags and link resolution without writing any of it.
+
+`resolveLink` is the only real algorithm in it, and it exists because a path is a fact about a tree at a moment. A link stores intent - *the aspect I am in, near where I am* - and is resolved against the structure as it is now. When the wanted aspect cannot place the target, the answer **says a fallback was used**: silently changing which structure somebody is reading is changing the subject without telling them. A link may also refuse rather than accept that.
+
+### Documentation, in whatever format it was written
+
+`@source-repo/documentation`, published for the first time. It serves a directory as the documentation aspect of a system, in two arrangements of the same documents - by folder, which is where they are, and by topic, which is what they are about. A document in both is one document, and a link saved against it resolves in whichever arrangement the reader is using.
+
+The aspect is documentation and the format is a kind. A `DocumentReader` turns one format into a title, topics and content blocks; Markdown and plain text ship, and HTML, RTF or a Source View artefact are each a reader and a line in a list rather than a change to the aspect, the trees, the links or the wire. Plain text arrives as a `code` block rather than a `markdown` one, because a text file full of asterisks would otherwise render as emphasis nobody wrote.
+
+A Markdown link landing inside the same library becomes a typed reference, which survives that document being refiled where the path in the prose would not. One that leaves the library stays ordinary text, untouched.
+
+### The console browses a tree, and opens what it finds
+
+A resource declaring `shape: 'tree'` now appears in the scope beside the ones answering `getList`, and opens as a tree fetched one branch per expansion. A row that names an object is openable and one that does not is not - a folder or a topic carries no reference, and that absence is the signal.
+
+Selecting one opens it beside the tree rather than instead of it, because the structure is why the reader is there. `follow` is answered by the peer: only the provider knows where an object appears, and a console that tried would have to fetch the whole structure to find out. Content is shown as written rather than rendered, which is a limit with a reason - rendering Markdown means turning another peer's text into markup in this page, and the renderer will be one the console installs and an object may request.
+
+### Compiling a handler is not the same budget as running one
+
+A Windows runner refused a correct two-line arrow function with `handler for plant.setSetpoint did not compile: Script execution timed out after 200ms`. `CALL_BUDGET_MS` says how long a handler may hold the process; the compile step was using it, and compiling is the first thing to enter a cold `node:vm` context. On a slow enough machine a correct script is refused at startup with a message that blames the script.
+
+It still needs a bound and keeps one - that line evaluates the source, so a script can loop at compile time - but it has 5000 ms of its own now, which is what `PYTHON_BUDGET_MS` already does and for the same reason.
+
+### Four flakes, which were one shape
+
+CI had been failing intermittently on different tests each run, including on commits that changed nothing but notes. All four were a fixed short deadline meeting a variable-speed machine.
+
+Five tests counted a 5 ms interval and demanded more than three ticks to prove a thread was not blocked; a parked thread ticks exactly zero times, so zero against any is the whole discriminator and everything above one was noise dressed as rigour. Two MQTT interop suites asked a cold or busy C# peer one question and read its deadline as an answer - the signed suite now warms the peer once in `test.before`, and the hostile-frames suite asks three times after deliberately making the peer work. And a queued-call test rode on a 40 ms sleep for a call to reach a handler and a 20 ms one for another to cross a socket; the first is waited for now, and the call it queues behind is held open rather than timed.
+
+### The site carries its own changelog, and its links are checked
+
+The documentation site publishes this file rather than a copy of it, so a release is visible from the site without a second thing to remember. VitePress's link checker is off here for a good reason - the design documents link to working material in `notes/` that is not published - and that silence had let eight dead links accumulate, three of which were dead on GitHub too. `tools/check-links.mjs` now runs in CI and before the site is uploaded.
+
 ## 5.2.0
 
 ### A worker can be a peer, not only somebody's host
