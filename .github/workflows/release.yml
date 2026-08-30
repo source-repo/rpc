@@ -1,6 +1,14 @@
 # Publish the npm packages, the four NuGet packages and the CLI image, on a version tag.
 #
-#   git tag v3.0.0 && git push origin v3.0.0
+# Two forms, because two things can be released:
+#
+#   git tag v3.0.0 && git push origin v3.0.0                  # the repository
+#   git tag aspects-v0.3.0 && git push origin aspects-v0.3.0  # one package, alone
+#
+# The first publishes everything versioned with the library, the NuGet packages and the image, and
+# the tag must match the library and the CLI exactly. The second publishes only that package - no
+# NuGet, no image, nothing else on npm - and is refused for a package inside the lockstep, whose
+# number is a statement about which library it agrees with.
 #
 # From CI rather than a laptop, for the ordinary reason: what gets published is then exactly what is
 # on the tag, built by a machine with no half-finished work in its tree, and the credentials live in
@@ -9,7 +17,10 @@ name: Release
 
 on:
     push:
-        tags: ['v*']
+        # `v5.3.1` releases the repository. `aspects-v0.3.0` releases one package that versions
+        # on its own - and the list is spelled out rather than globbed, because being outside the
+        # lockstep is a decision recorded in CLAUDE.md, not something a tag should be able to claim.
+        tags: ['v*', 'queue-v*', 'aspects-v*', 'documentation-v*']
     # So a failed publish can be retried without moving the tag.
     workflow_dispatch:
         inputs:
@@ -22,6 +33,9 @@ jobs:
     # a third of this suite needs one and skipping those tests here would defeat the point.
     verify:
         runs-on: ubuntu-latest
+        outputs:
+            whole: ${{ steps.plan.outputs.whole }}
+            package: ${{ steps.plan.outputs.package }}
         services:
             emqx:
                 image: emqx/emqx:5.9.3
@@ -66,14 +80,55 @@ jobs:
 
             # The tag and the package version have to agree, or the image built below installs a
             # version other than the one this tag was cut from.
-            - name: Check the tag matches the package version
+            # What this tag releases, and whether the tree agrees with it.
+            #
+            # Two forms. `v5.3.1` is the repository: the library, the CLI, everything versioned with
+            # them, the NuGet packages and the image, and the tag has to match the library and the
+            # CLI exactly. `aspects-v0.3.0` is one package that versions on its own, and publishes
+            # only itself - no NuGet, no image, and nothing else on npm.
+            #
+            # The second form exists because the first taxed it. 5.3.1 moved eleven npm packages and
+            # four NuGet ones to publish a change in one of them, since a tag is what publishes and a
+            # tag was spelled with the library's version. That is honest and it does not scale with a
+            # package that iterates.
+            - name: What this tag releases
+              id: plan
               run: |
                   tag="${{ github.event.inputs.ref || github.ref_name }}"
-                  version="v$(node -p "require('./packages/rpc/package.json').version")"
-                  cli="v$(node -p "require('./packages/cli/package.json').version")"
-                  if [ "$tag" != "$version" ] || [ "$tag" != "$cli" ]; then
-                    echo "tag $tag, library $version, cli $cli - they must all agree"
-                    exit 1
+                  if [ "${tag#v}" != "$tag" ]; then
+                    version="${tag#v}"
+                    library="$(node -p "require('./packages/rpc/package.json').version")"
+                    cli="$(node -p "require('./packages/cli/package.json').version")"
+                    if [ "$version" != "$library" ] || [ "$version" != "$cli" ]; then
+                      echo "tag $tag, library v$library, cli v$cli - they must all agree"
+                      exit 1
+                    fi
+                    echo "whole=true" >> "$GITHUB_OUTPUT"
+                    echo "package=" >> "$GITHUB_OUTPUT"
+                    echo "releasing the repository at $version"
+                  else
+                    package="${tag%-v*}"
+                    version="${tag##*-v}"
+                    directory="packages/${package}"
+                    if [ ! -f "${directory}/package.json" ]; then
+                      echo "tag $tag names ${directory}, which is not a package here"
+                      exit 1
+                    fi
+                    # Refused rather than published: a package inside the lockstep has a number that
+                    # says which library it agrees with, and publishing one alone would make that
+                    # number a claim nobody checked.
+                    case "$package" in
+                      queue|aspects|documentation) ;;
+                      *) echo "$package versions with the library - release it with a v$version tag, or take it out of the lockstep in CLAUDE.md first"; exit 1 ;;
+                    esac
+                    declared="$(node -p "require('./${directory}/package.json').version")"
+                    if [ "$version" != "$declared" ]; then
+                      echo "tag $tag, but ${directory} says $declared"
+                      exit 1
+                    fi
+                    echo "whole=false" >> "$GITHUB_OUTPUT"
+                    echo "package=${package}" >> "$GITHUB_OUTPUT"
+                    echo "releasing ${package} alone at $version"
                   fi
 
     npm:
@@ -106,6 +161,7 @@ jobs:
             # is published is published - npm will not take it back - so the useful behaviour is to
             # carry on to the image rather than stop the release because someone published by hand.
             - name: Publish the library
+              if: needs.verify.outputs.whole == 'true'
               working-directory: packages/rpc
               env:
                   NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
@@ -120,6 +176,7 @@ jobs:
                     npm publish --access public --provenance
                   fi
             - name: Publish the CLI
+              if: needs.verify.outputs.whole == 'true'
               working-directory: packages/cli
               env:
                   NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
@@ -135,6 +192,7 @@ jobs:
             # already-published guard makes that free: a tag cut without touching it publishes
             # nothing here.
             - name: Publish docker
+              if: needs.verify.outputs.whole == 'true'
               working-directory: packages/docker
               env:
                   NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
@@ -150,6 +208,7 @@ jobs:
             # it rides every release tag and the already-published guard is what makes that free:
             # a tag cut without touching the queue publishes nothing here.
             - name: Publish the queue
+              if: needs.verify.outputs.whole == 'true' || needs.verify.outputs.package == 'queue'
               working-directory: packages/queue
               env:
                   NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
@@ -167,6 +226,7 @@ jobs:
             # What a component keeps across activations. Its own line for the same reason, and it
             # will move faster than the library while the online-change phases land.
             - name: Publish the continuity package
+              if: needs.verify.outputs.whole == 'true'
               working-directory: packages/continuity
               env:
                   NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
@@ -181,6 +241,7 @@ jobs:
             # Live values beside the source that declares them. Its own line, like the rest of the
             # 0.x packages, and the same guard makes riding every tag free.
             - name: Publish the diagnostics package
+              if: needs.verify.outputs.whole == 'true'
               working-directory: packages/diagnostics
               env:
                   NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
@@ -193,6 +254,7 @@ jobs:
                   fi
 
             - name: Publish the query package
+              if: needs.verify.outputs.whole == 'true'
               working-directory: packages/query
               env:
                   NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
@@ -214,6 +276,7 @@ jobs:
             # installing it in that window a broken tree - the same reason the library precedes the
             # CLI at the top of this job.
             - name: Publish the aspects package
+              if: needs.verify.outputs.whole == 'true' || needs.verify.outputs.package == 'aspects'
               working-directory: packages/aspects
               env:
                   NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
@@ -226,6 +289,7 @@ jobs:
                   fi
 
             - name: Publish the documentation package
+              if: needs.verify.outputs.whole == 'true' || needs.verify.outputs.package == 'documentation'
               working-directory: packages/documentation
               env:
                   NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
@@ -246,6 +310,7 @@ jobs:
             # every other package moved to 5.1.0 on a tag and this one stayed at 5.0.0, published by
             # hand and then not.
             - name: Publish the SignalR client
+              if: needs.verify.outputs.whole == 'true'
               working-directory: packages/signalr
               env:
                   NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
@@ -267,6 +332,9 @@ jobs:
     # same bargain the queue and docker packages make above.
     nuget:
         needs: verify
+        # The .NET packages carry the library's number, so they move when it does and never
+        # because one npm package that versions on its own was released.
+        if: needs.verify.outputs.whole == 'true'
         runs-on: ubuntu-latest
         permissions:
             contents: read
@@ -340,7 +408,10 @@ jobs:
 
     # After npm, because the image installs the published CLI rather than building the repository.
     container:
-        needs: npm
+        needs: [verify, npm]
+        # The image is the CLI, which is in the lockstep. A package released alone changes
+        # nothing in it, and rebuilding it would republish `latest` for no reason.
+        if: needs.verify.outputs.whole == 'true'
         runs-on: ubuntu-latest
         permissions:
             contents: read

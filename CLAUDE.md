@@ -32,6 +32,8 @@ git ls-files -z | xargs -0 grep -laP '\x00'
 
 `packages/aspects` and `packages/documentation` are outside the rule for the same reason, and were from their first commit: both depend on the library's public API rather than on its shape. `documentation` does pin `aspects` by version, which is a different relationship - one is a provider of the other's contract, and that agreement is worth stating precisely.
 
+A package outside the rule is released on a tag of its own - `aspects-v0.3.0` - which publishes that package and nothing else: no NuGet, no image, no eleven other packages moved to carry one change. The whole-repository form is still `v5.3.1`, and a tag naming a package that versions *with* the library is refused rather than obeyed. 5.3.1 is why the second form exists: it moved eleven npm packages and four NuGet ones to publish a change in one of them, because a tag is what publishes and a tag was spelled with the library's version.
+
 **Markdown is one line per paragraph.** Do not hard-wrap prose at a column, and do not re-wrap what is here. A single newline inside a paragraph is a space to CommonMark, so wrapped and unwrapped source render identically — the difference is only what happens when the file is edited. Hard wrapping keeps diffs small, but it needs every editor to re-wrap after a change or the margin drifts, and the WYSIWYG editors used on this repo preserve existing breaks without adding new ones. Unwrapped is the convention that survives being edited by anything.
 
 Table rows, headings and fenced blocks are one line each already and are not prose. A deliberate line break inside a paragraph is `<br/>`, or two trailing spaces — a bare newline will not do it.
