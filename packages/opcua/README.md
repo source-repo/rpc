@@ -37,12 +37,33 @@ A viewer needs to know whether to draw an expander *before* anyone expands, and 
 
 Both are measured rather than asserted: the suite counts Browse requests and pins the numbers, so a change that quietly makes the tree chattier fails.
 
+## Functional and location, which the server does not publish
+
+A generic UA server has a browse tree somebody built and nothing that says what a node *does* or where it *stands*. So those arrangements come from a rule the deployment supplies, as code:
+
+```ts
+const byLocation: DerivedAspect = {
+    id: 'location',
+    label: 'By location',
+    semantics: IEC81346.location,
+    groups: (node) => (node.path.length ? [['Hall 2', node.path[0]]] : undefined)
+}
+```
+
+A rule that returns nothing leaves that node out of the arrangement, and **that is the point rather than a gap**: an operations aspect holds the four hundred nodes an operator cares about, not the eighteen thousand the server has. A rule may also return several paths, because a thing genuinely can be in two places in one arrangement.
+
+The rule is code and never travels: `@source-repo/aspects` refuses to evaluate structure rules arriving from the network, precisely so a provider cannot be turned into a query engine by a caller. What crosses the wire is the tree it produced.
+
+**These need an index and the address space does not.** A browse answers *what is under this node* directly; knowing what belongs under "Hall 2" means having asked the rule about every node, which is a walk of the server. So `index()` is explicit, bounded by `maxIndexNodes` and `maxIndexDepth`, and leaves a count and a timestamp in the component's state. An arrangement nobody has indexed refuses rather than answering empty — nobody having looked is a different statement from the rule having found nothing.
+
+Worth keeping straight: **selection as meaning** — "these are the objects that matter operationally" — is an aspect. Selection as configuration — "these are the nodes currently published to MQTT" — is a read model of somebody's settings, and belongs in an aspect only if a person would browse it as one. Without that line, aspects become a tagging mechanism.
+
 ## What is deliberately not here
 
 No subscriptions, no writes, no methods, and no component per node. Two hundred thousand UA nodes are two hundred thousand *occurrences* behind one provider; promoting the operationally interesting few to real Source RPC components is a separate decision worth making on its own terms. An occurrence carries what a browse returned — a UA subscription is a different thing with a different lifetime, and pushing change notification into a read model would drag it somewhere it does not belong.
 
 **Aspects browse; bindings will reach; components live.**
 
-Only the address space is served so far. Selecting and rearranging nodes into functional or location aspects is the next step, and the reasoning behind it is in [the design note](https://github.com/source-repo/rpc/blob/main/notes/opc-ua/opc-ua-as-aspect.md).
+The reasoning behind all of it is in [the design note](https://github.com/source-repo/rpc/blob/main/notes/opc-ua/opc-ua-as-aspect.md).
 
 MIT.

@@ -1,6 +1,7 @@
 import test from 'ava'
 import { DataType, OPCUAServer, Variant } from 'node-opcua'
-import { OpcUaAspectProvider, portableNodeIdFromText, portableNodeIdToText, toSessionNodeId, type PortableNodeId } from './index.js'
+import { IEC81346, isRefusal, type AspectLocation } from '@source-repo/aspects'
+import { OpcUaAspectProvider, portableNodeIdFromText, portableNodeIdToText, toSessionNodeId, type DerivedAspect, type PortableNodeId } from './index.js'
 import type { AspectRef, RpcGetChildrenResult } from './testing.js'
 
 /**
@@ -201,4 +202,132 @@ test('the portable form round-trips, including the base namespace', (t) => {
         { namespaceUri: 'urn:x', identifierType: 's', identifier: 'a=b;c=d' }
     ]
     for (const original of cases) t.deepEqual(portableNodeIdFromText(portableNodeIdToText(original)), original)
+})
+
+/**
+ * Functional and location arrangements, derived by rules this deployment supplies.
+ *
+ * The server publishes neither, which is the ordinary case: a generic UA server has a browse tree
+ * somebody built and nothing that says what a node *does* or where it *stands*. So the rules read
+ * what is there - the browse path and the names - and the arrangements are what they produce.
+ */
+
+const byFunction: DerivedAspect = {
+    id: 'functional',
+    label: 'By function',
+    semantics: IEC81346.function,
+    // Everything under a line is functional equipment; a variable is not a function, it is a
+    // reading of one, so it is left out. That omission is the aspect saying what it is about.
+    groups: (node) => (node.nodeClass === 'Object' && node.path.length > 0 ? [['Filling', node.path[node.path.length - 1]]] : undefined)
+}
+
+const byLocation: DerivedAspect = {
+    id: 'location',
+    label: 'By location',
+    semantics: IEC81346.location,
+    // A naming convention, which is what a plant usually has instead of a location model: the line
+    // a node sits under is its hall. A node in two lines would appear under both.
+    groups: (node) => (node.path.length > 0 ? [['Hall 2', node.path[0]]] : undefined)
+}
+
+const arranged = async (t: { teardown: (fn: () => Promise<void>) => void }) => {
+    const opcua = new OpcUaAspectProvider({ endpointUrl, identity: provider, derived: [byFunction, byLocation] })
+    await opcua.connect()
+    t.teardown(async () => {
+        await opcua.disconnect()
+    })
+    return opcua
+}
+
+test.serial('the arrangements are offered before anything has been indexed', async (t) => {
+    const opcua = await arranged(t)
+
+    t.deepEqual(opcua.aspects().map((aspect) => aspect.id), ['address-space', 'functional', 'location'])
+    t.deepEqual(opcua.aspects()[1].semantics, IEC81346.function)
+    t.deepEqual(opcua.aspects()[2].semantics, IEC81346.location)
+
+    // Offered, and honest about not being built: an empty tree would say the rule found nothing,
+    // which is a different statement from nobody having looked.
+    const refused = await t.throwsAsync(opcua.dataRequest('getChildren', ['functional'], {}))
+    t.regex(String(refused?.message), /has not been built - call index\(\)/)
+})
+
+test.serial('indexing walks once and builds every arrangement from it', async (t) => {
+    const opcua = await arranged(t)
+
+    const seen = await opcua.index()
+    t.true(seen >= 5, `Line1, Line2, Filler01 and its two variables at least: ${seen}`)
+    t.is(opcua.state.indexed, seen)
+    t.truthy(opcua.state.indexedAt)
+    t.falsy(opcua.state.indexTruncated)
+
+    const functional = (await opcua.dataRequest('getChildren', ['functional'], {})) as RpcGetChildrenResult
+    t.deepEqual(rows(functional).map((row) => row.title), ['Filling'])
+
+    const location = (await opcua.dataRequest('getChildren', ['location'], {})) as RpcGetChildrenResult
+    t.deepEqual(rows(location).map((row) => row.title), ['Hall 2'])
+})
+
+test.serial('one node, three arrangements, one identity', async (t) => {
+    const opcua = await arranged(t)
+    await opcua.index()
+
+    const inAddressSpace = rows(await branch(opcua, rows(await branch(opcua)).find((row) => row.title === 'Line1')!.occurrenceId))[0]
+
+    const filling = rows((await opcua.dataRequest('getChildren', ['functional'], {})) as RpcGetChildrenResult)[0]
+    const functionLines = rows((await opcua.dataRequest('getChildren', ['functional'], { parentId: filling.occurrenceId })) as RpcGetChildrenResult)
+    const inFunction = rows((await opcua.dataRequest('getChildren', ['functional'], { parentId: functionLines.find((row) => row.title === 'Line1')!.occurrenceId })) as RpcGetChildrenResult)
+    const line1Group = rows((await opcua.dataRequest('getChildren', ['location'], {})) as RpcGetChildrenResult)[0]
+    const halls = rows((await opcua.dataRequest('getChildren', ['location'], { parentId: line1Group.occurrenceId })) as RpcGetChildrenResult)
+    const inLocation = rows((await opcua.dataRequest('getChildren', ['location'], { parentId: halls.find((row) => row.title === 'Line1')!.occurrenceId })) as RpcGetChildrenResult)
+
+    const filler = inFunction.find((row) => row.title === 'Filler01')!
+    const same = inLocation.find((row) => row.title === 'Filler01')!
+
+    // The claim the whole model rests on, now across a machine hierarchy rather than a folder of
+    // documents: three ways of looking, three placements, one object.
+    t.is(inAddressSpace.id, filler.id)
+    t.is(filler.id, same.id)
+    t.not(filler.occurrenceId, same.occurrenceId)
+    t.not(inAddressSpace.occurrenceId, filler.occurrenceId)
+})
+
+test.serial('an arrangement that leaves a node out says so, rather than pretending', async (t) => {
+    const opcua = await arranged(t)
+    await opcua.index()
+
+    const speed = { provider, resource: ['nodes'], id: portableNodeIdToText({ namespaceUri: NAMESPACE_URI, identifierType: 's', identifier: 'Filler01.Speed' }) } as AspectRef
+
+    // A variable is a reading of a function rather than a function, so the functional arrangement
+    // does not place it - and that emptiness is the aspect's answer, not a failure to look.
+    t.deepEqual(await opcua.placements(speed, 'functional'), [])
+    t.true((await opcua.placements(speed, 'location')).length > 0, 'while it is somewhere, because everything is somewhere')
+})
+
+test.serial('following a link keeps the arrangement the reader is in', async (t) => {
+    const opcua = await arranged(t)
+    await opcua.index()
+
+    const filler = { provider, resource: ['nodes'], id: portableNodeIdToText({ namespaceUri: NAMESPACE_URI, identifierType: 's', identifier: 'Filler01' }) } as AspectRef
+    const speed = { provider, resource: ['nodes'], id: portableNodeIdToText({ namespaceUri: NAMESPACE_URI, identifierType: 's', identifier: 'Filler01.Speed' }) } as AspectRef
+    const line2 = { provider, resource: ['nodes'], id: portableNodeIdToText({ namespaceUri: NAMESPACE_URI, identifierType: 's', identifier: 'Line2' }) } as AspectRef
+    const reading: AspectLocation = { target: filler, aspectId: 'location', occurrenceId: (await opcua.placements(filler, 'location'))[0], inherited: false }
+
+    // Reading the plant by location and following a link to something that is also placed there:
+    // stay by location, which is why the reader was there.
+    const stayed = await opcua.follow({ id: 'l1', target: speed }, reading)
+    t.false(isRefusal(stayed))
+    if (isRefusal(stayed)) return
+    t.is(stayed.aspectId, 'location')
+    t.true(stayed.inherited)
+
+    // And where selection bites: `Line2` sits directly under Objects, so the location rule never
+    // placed it. Following that link cannot keep the arrangement, and the answer says so rather
+    // than dropping the reader somewhere without comment.
+    const moved = await opcua.follow({ id: 'l2', target: line2 }, reading)
+    t.false(isRefusal(moved))
+    if (isRefusal(moved)) return
+    t.not(moved.aspectId, 'location')
+    t.false(moved.inherited)
+    t.truthy(moved.fallbackUsed)
 })

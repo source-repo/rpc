@@ -1,7 +1,8 @@
 import { rpc, rpcNamespace, type RpcRef } from '@source-repo/rpc'
-import { AspectProvider, type AspectDescriptor, type AspectRef, type Branch, type ObjectDetail } from '@source-repo/aspects'
+import { AspectProvider, type AspectDescriptor, type AspectRef, type Branch, type ObjectDetail, type Occurrence } from '@source-repo/aspects'
 import { AttributeIds, BrowseDirection, NodeClass, OPCUAClient, type ClientSession, type OPCUAClientOptions } from 'node-opcua-client'
 import { fromSessionNodeId, portableNodeIdFromText, portableNodeIdToText, toSessionNodeId } from './Identity.js'
+import { buildDerived, derivedRoot, type DerivedAspect, type DerivedIndex, type IndexedNode } from './Derived.js'
 
 /**
  * An OPC UA server's address space, served as an aspect.
@@ -41,6 +42,11 @@ export interface OpcUaProviderProps extends Record<string, unknown> {
 export interface OpcUaProviderState extends Record<string, unknown> {
     readonly status: 'disconnected' | 'connecting' | 'connected' | 'failed'
     readonly namespaces: number
+    /** Nodes the last index walk saw, and when. Zero until somebody asks for one. */
+    readonly indexed: number
+    readonly indexedAt?: string
+    /** True when the walk stopped on a bound rather than because it had finished. */
+    readonly indexTruncated?: boolean
     readonly problem?: string
 }
 
@@ -68,6 +74,17 @@ export interface OpcUaProviderOptions {
     /** Who this provider is in the references it hands out; a component cannot know its own name. */
     readonly identity?: RpcRef
     readonly childrenProbe?: ChildrenProbe
+    /**
+     * Arrangements this server does not publish: functional, location, operations.
+     *
+     * Supplied as code by whoever deploys this, because a grouping rule is exactly the kind of
+     * structure rule `@source-repo/aspects` refuses to accept from the network. What crosses the
+     * wire is the tree it produces.
+     */
+    readonly derived?: readonly DerivedAspect[]
+    /** How far an index walk goes before it stops. A server is not obliged to be small. */
+    readonly maxIndexNodes?: number
+    readonly maxIndexDepth?: number
     readonly maxPageSize?: number
     readonly client?: OPCUAClientOptions
 }
@@ -96,11 +113,13 @@ export class OpcUaAspectProvider extends AspectProvider<OpcUaProviderProps, OpcU
     private namespaces: readonly string[] = []
     /** How many Browse requests this provider has sent, so the probe's cost can be measured. */
     private browses = 0
+    /** One built arrangement per derived aspect, empty until `index()` has been asked for. */
+    private readonly indexes = new Map<string, DerivedIndex>()
 
     constructor(options: OpcUaProviderOptions) {
         super(
             { label: options.label ?? options.endpointUrl, endpointUrl: options.endpointUrl },
-            { status: 'disconnected', namespaces: 0 }
+            { status: 'disconnected', namespaces: 0, indexed: 0 }
         )
         this.options = options
         this.identity = options.identity ?? { peer: '', instance: 'opcua' }
@@ -123,9 +142,77 @@ export class OpcUaAspectProvider extends AspectProvider<OpcUaProviderProps, OpcU
                 revision: String(this.namespaces.length),
                 default: true,
                 preferredPresentation: 'tree',
-                defaultColumns: ['title', 'nodeClass', 'dataType']
-            }
+                defaultColumns: ['title', 'nodeClass']
+            },
+            // The arrangements the deployment supplied. They are offered whether or not an index
+            // has been built - a viewer should be able to see that a functional aspect exists and
+            // ask for it, and be told it needs indexing, rather than have it appear once somebody
+            // happens to have run a walk.
+            ...(this.options.derived ?? []).map((aspect) => ({
+                id: aspect.id,
+                label: aspect.label,
+                ...(aspect.description ? { description: aspect.description } : {}),
+                ...(aspect.semantics ? { semantics: aspect.semantics } : {}),
+                revision: String(this.indexes.get(aspect.id)?.nodes ?? 0),
+                preferredPresentation: 'tree' as const,
+                defaultColumns: aspect.defaultColumns ?? ['title', 'nodeClass']
+            }))
         ]
+    }
+
+    /**
+     * Walk the server once and build every derived arrangement from what it finds.
+     *
+     * Explicit, bounded, and reported. The address space is served a branch at a time and never
+     * walked; an arrangement somebody derived cannot be, because knowing what belongs under
+     * "Hall 2" means having asked the rule about every node. That is a real cost and it belongs in
+     * a method a person calls, with a number in the state afterwards, rather than behind a click
+     * that looked like any other.
+     */
+    @rpc({ semantics: 'idempotent-command', effect: 'operate' })
+    async index(): Promise<number> {
+        const derived = this.options.derived ?? []
+        if (!derived.length) return 0
+        this.connected()
+
+        const maxNodes = this.options.maxIndexNodes ?? 20_000
+        const maxDepth = this.options.maxIndexDepth ?? 12
+        const found: IndexedNode[] = []
+        let truncated = false
+
+        const walk = async (node: string, path: readonly string[], depth: number): Promise<void> => {
+            if (depth > maxDepth || found.length >= maxNodes) {
+                truncated = truncated || found.length >= maxNodes || depth > maxDepth
+                return
+            }
+            for (const child of await this.browse(node)) {
+                if (found.length >= maxNodes) {
+                    truncated = true
+                    return
+                }
+                found.push({ id: child.portable, session: child.session, title: child.title, nodeClass: child.nodeClass, path })
+                await walk(child.session, [...path, child.title], depth + 1)
+            }
+        }
+        await walk(OBJECTS_FOLDER, [], 0)
+
+        this.indexes.clear()
+        for (const aspect of derived) this.indexes.set(aspect.id, buildDerived(aspect, found, (node) => this.occurrenceOf(node)))
+        this.structureChanged()
+        this.setState({ indexed: found.length, indexedAt: new Date().toISOString(), ...(truncated ? { indexTruncated: true } : { indexTruncated: undefined }) })
+        return found.length
+    }
+
+    /** One row for a node, the same shape whichever arrangement it is appearing in. */
+    private occurrenceOf(node: IndexedNode): Occurrence {
+        return {
+            occurrenceId: node.id,
+            ref: { provider: this.identity, resource: ['nodes'], id: node.id },
+            title: node.title,
+            kind: `opcua.${node.nodeClass.toLowerCase()}`,
+            hasChildren: false,
+            fields: { nodeClass: node.nodeClass, nodeId: node.id, addressSpacePath: node.path.join(' / ') }
+        }
     }
 
     /** Connect, and read the namespace array that every identity in this package depends on. */
@@ -145,7 +232,7 @@ export class OpcUaAspectProvider extends AspectProvider<OpcUaProviderProps, OpcU
             this.setState({ status: 'connected', namespaces: namespaces.length, problem: undefined })
             return namespaces.length
         } catch (error) {
-            this.setState({ status: 'failed', namespaces: 0, problem: error instanceof Error ? error.message : String(error) })
+            this.setState({ status: 'failed', namespaces: 0, indexed: 0, problem: error instanceof Error ? error.message : String(error) })
             throw error
         }
     }
@@ -157,7 +244,8 @@ export class OpcUaAspectProvider extends AspectProvider<OpcUaProviderProps, OpcU
         this.session = undefined
         this.client = undefined
         this.namespaces = []
-        this.setState({ status: 'disconnected', namespaces: 0 })
+        this.indexes.clear()
+        this.setState({ status: 'disconnected', namespaces: 0, indexed: 0, indexedAt: undefined })
     }
 
     /** How many Browse requests have been sent. Published so the probe's cost is a number. */
@@ -167,7 +255,7 @@ export class OpcUaAspectProvider extends AspectProvider<OpcUaProviderProps, OpcU
     }
 
     async children(aspectId: string, parentOccurrenceId: string | undefined, page: { from: number; size: number }): Promise<Branch> {
-        if (aspectId !== ADDRESS_SPACE) throw new Error(`no aspect ${aspectId}`)
+        if (aspectId !== ADDRESS_SPACE) return this.derivedChildren(aspectId, parentOccurrenceId, page)
         this.connected()
         // An occurrence in this aspect is the browse path that reached the node, so the node to
         // browse is its last segment - and the path is what makes one node appearing under two
@@ -203,7 +291,9 @@ export class OpcUaAspectProvider extends AspectProvider<OpcUaProviderProps, OpcU
      * The single answer is honest for the common case and is where a second arrangement will start.
      */
     async placements(target: AspectRef, aspectId: string): Promise<readonly string[]> {
-        if (aspectId !== ADDRESS_SPACE) return []
+        // A derived arrangement knows every placement it made, so this is a lookup rather than a
+        // walk - and it answers with all of them, which is the case the address space cannot manage.
+        if (aspectId !== ADDRESS_SPACE) return this.indexOf(aspectId).placements.get(target.id) ?? []
         const session = this.connected()
         const portable = portableNodeIdFromText(target.id)
         if (!portable) return []
@@ -257,6 +347,26 @@ export class OpcUaAspectProvider extends AspectProvider<OpcUaProviderProps, OpcU
             fields: { nodeId: target.id, browseName: String((browseName.value.value as { name?: string })?.name ?? ''), nodeClass: String(kind) },
             origin: { system: 'opcua', externalId: target.id, url: this.props.endpointUrl, retrievedAt: new Date().toISOString() }
         }
+    }
+
+    /** One branch of a derived arrangement, straight out of the index. */
+    private derivedChildren(aspectId: string, parentOccurrenceId: string | undefined, page: { from: number; size: number }): Branch {
+        const built = this.indexOf(aspectId)
+        const all = built.children.get(parentOccurrenceId ?? derivedRoot) ?? []
+        return { total: all.length, occurrences: all.slice(page.from, page.from + page.size) }
+    }
+
+    /**
+     * The built arrangement, or a refusal that says what to do about it.
+     *
+     * An arrangement that has not been indexed is not empty - nobody has looked yet - and answering
+     * with an empty tree would say the rule found nothing, which is a different and wrong statement.
+     */
+    private indexOf(aspectId: string): DerivedIndex {
+        if (!(this.options.derived ?? []).some((aspect) => aspect.id === aspectId)) throw new Error(`no aspect ${aspectId}`)
+        const built = this.indexes.get(aspectId)
+        if (!built) throw new Error(`the ${aspectId} arrangement has not been built - call index(), which walks the server once`)
+        return built
     }
 
     private connected(): ClientSession {
