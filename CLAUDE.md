@@ -30,7 +30,7 @@ git ls-files -z | xargs -0 grep -laP '\x00'
 
 `packages/queue` is deliberately **not** part of it and never was: it versions on its own, because it depends only on the library's public API — it is the first external consumer of the schema compatibility policy, and pinning it to the library's version would un-prove exactly what it exists to prove. It is also the only one of the four published, which is what makes that independence cost something real.
 
-`packages/aspects` and `packages/documentation` are outside the rule for the same reason, and were from their first commit: both depend on the library's public API rather than on its shape. `documentation` does pin `aspects` by version, which is a different relationship - one is a provider of the other's contract, and that agreement is worth stating precisely.
+`packages/aspects`, `packages/documentation` and `packages/opcua` are outside the rule for the same reason, and were from their first commit: each depends on the library's public API rather than on its shape. `documentation` does pin `aspects` by version, which is a different relationship - one is a provider of the other's contract, and that agreement is worth stating precisely.
 
 A package outside the rule is released on a tag of its own - `aspects-v0.3.0` - which publishes that package and nothing else: no NuGet, no image, no eleven other packages moved to carry one change. The whole-repository form is still `v5.3.1`, and a tag naming a package that versions *with* the library is refused rather than obeyed. 5.3.1 is why the second form exists: it moved eleven npm packages and four NuGet ones to publish a change in one of them, because a tag is what publishes and a tag was spelled with the library's version.
 

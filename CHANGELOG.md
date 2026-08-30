@@ -1,5 +1,41 @@
 # Changelog
 
+## opcua 0.1.0
+
+`@source-repo/opcua`, published for the first time: an OPC UA address space served as aspects.
+
+**OPC UA is not an aspect.** It is a source and a protocol, the way Markdown is a format - and the address space, the server's own hierarchy, is one *arrangement* of the objects it holds. Functional and location arrangements over the same nodes come from rules the deployment supplies as code, never over the wire, because a grouping rule is exactly the kind of structure rule `@source-repo/aspects` refuses to accept from a caller. What crosses the wire is the tree the rule produced.
+
+**Identity is the namespace URI, never the index.** `ns=4;s=Filler01` is a fact about one session's namespace array; add a namespace and yesterday's 4 points at somebody else's nodes. This package hands out `nsu=...;s=Filler01`, OPC UA's own portable form, with the index resolved per session and never stored - which makes a browse path exactly what aspects already says a structural path is. The test that matters resolves one portable id against three different namespace arrays: `ns=2`, `ns=3`, and nothing at all when the server has dropped the namespace.
+
+**`hasChildren` has a measured answer.** A viewer needs the flag before anybody expands and OPC UA can only answer by browsing. `browse` costs one extra batched request per expansion and is exact; `node-class` is free and calls every container expandable. The suite counts Browse requests and pins both numbers, so a change that quietly makes the tree chattier fails.
+
+Selection is part of an arrangement: a rule that returns nothing leaves a node out, so an operations aspect is four hundred nodes rather than eighteen thousand. Derived arrangements need an explicit, bounded `index()` - a browse answers *what is under this node* directly, but knowing what belongs under "Hall 2" means having asked the rule about every node. An un-indexed arrangement refuses rather than answering empty, because nobody having looked is a different statement from the rule having found nothing.
+
+No subscriptions, no writes, no methods, no component per node. Aspects browse; bindings reach; components live.
+
+The tests run a real OPC UA server in-process, so they need nothing external.
+
+## aspects 0.3.0
+
+### A source may have to ask
+
+`AspectSource` was synchronous. The first provider read an index it held in memory; the second browses a server, where every question is a round trip and holding the answers would mean holding two hundred thousand nodes to avoid asking about eight. Everything that consults the source may return a promise now, and `resolveLink` is async with it.
+
+`aspects()` stays synchronous, because the library decides that rather than this package: a component's resources are read at describe time and `describe()` does not wait. The split turns out to be right anyway - a provider knows which structures it offers without asking anybody, and only what is inside them costs a round trip.
+
+### Bindings: how a thing can be reached
+
+The fourth thing an object has, after identity, structure and origin. An aspect says where something appears when you look at the system a particular way; a binding says through what interface you can observe or act on it. One pump, one identity, several aspects, reachable over OPC UA and Sparkplug and as a Source RPC component at once - none of which is a structure.
+
+`role` is `RpcEffect`, the library's own `observe | operate | program | security-admin`, rather than a parallel vocabulary. Authorization is already written in those words, and a console showing `command` beside methods marked `operate` would leave nobody sure they meant the same thing.
+
+**A binding describes; it does not grant.** Reporting that a node is writable over OPC UA is a fact about that node and that server; `authorize()` decides exactly what it would have decided without the field.
+
+## documentation 0.3.0
+
+A republish: its dependency range moves to `^0.3.0`, since a caret on a 0.x package cannot see the next minor and it would otherwise have kept the old aspects. Its own behaviour is unchanged.
+
 ## aspects 0.2.1
 
 The first release on a tag of its own - `aspects-v0.2.1` - which publishes that package and nothing else. No NuGet, no image, and no eleven other packages moved to carry one fix.

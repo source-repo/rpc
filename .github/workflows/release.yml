@@ -20,7 +20,7 @@ on:
         # `v5.3.1` releases the repository. `aspects-v0.3.0` releases one package that versions
         # on its own - and the list is spelled out rather than globbed, because being outside the
         # lockstep is a decision recorded in CLAUDE.md, not something a tag should be able to claim.
-        tags: ['v*', 'queue-v*', 'aspects-v*', 'documentation-v*']
+        tags: ['v*', 'queue-v*', 'aspects-v*', 'documentation-v*', 'opcua-v*']
     # So a failed publish can be retried without moving the tag.
     workflow_dispatch:
         inputs:
@@ -118,7 +118,7 @@ jobs:
                     # says which library it agrees with, and publishing one alone would make that
                     # number a claim nobody checked.
                     case "$package" in
-                      queue|aspects|documentation) ;;
+                      queue|aspects|documentation|opcua) ;;
                       *) echo "$package versions with the library - release it with a v$version tag, or take it out of the lockstep in CLAUDE.md first"; exit 1 ;;
                     esac
                     declared="$(node -p "require('./${directory}/package.json').version")"
@@ -309,6 +309,23 @@ jobs:
             # Left out of this job until now, which is exactly the drift the rule exists to prevent:
             # every other package moved to 5.1.0 on a tag and this one stayed at 5.0.0, published by
             # hand and then not.
+            # An OPC UA address space as aspects. Its own version line for the same reason as the
+            # two above, and a heavier dependency than anything else here - `node-opcua-client` is
+            # a megabyte and a half - which is another argument for it standing on its own rather
+            # than riding a tag that moves the library.
+            - name: Publish the opcua package
+              if: needs.verify.outputs.whole == 'true' || needs.verify.outputs.package == 'opcua'
+              working-directory: packages/opcua
+              env:
+                  NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+              run: |
+                  version=$(node -p "require('./package.json').version")
+                  if curl -fsSL -o /dev/null "https://registry.npmjs.org/@source-repo%2fopcua/${version}"; then
+                    echo "@source-repo/opcua@${version} is already published"
+                  else
+                    npm publish --access public --provenance
+                  fi
+
             - name: Publish the SignalR client
               if: needs.verify.outputs.whole == 'true'
               working-directory: packages/signalr
