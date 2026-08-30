@@ -8,7 +8,9 @@ name: Docs
 on:
     push:
         branches: [main]
-        paths: ['docs/**', 'package.json', 'package-lock.json', '.github/workflows/docs.yml']
+        # CHANGELOG.md is here because docs/releases.md includes it: editing the changelog
+        # changes the site, and without this the site would keep serving the previous one.
+        paths: ['docs/**', 'CHANGELOG.md', 'tools/check-links.mjs', 'package.json', 'package-lock.json', '.github/workflows/docs.yml']
     workflow_dispatch:
 
 permissions:
@@ -44,6 +46,11 @@ jobs:
             - run: npm ci
 
             - run: npm run docs:build
+
+            # Before the upload, so a dead link fails the release of the site rather than being
+            # published on it. VitePress's own checker is off by design - see the script.
+            - name: Check the built site's internal links
+              run: node tools/check-links.mjs
 
             - uses: actions/upload-pages-artifact@v3
               with:

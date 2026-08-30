@@ -167,6 +167,14 @@ jobs:
             - name: Check the committed contracts
               run: npm run check:contract --workspace=@source-repo/rpc-cli
 
+            # Here as well as in docs.yml, which gates the deploy: that workflow runs on main and
+            # only when a path it watches changed, so this is the one that fails a pull request
+            # before the link reaches the site. The build is a few seconds; the site is small.
+            - name: Build the docs site and check its links
+              run: |
+                  npm run docs:build
+                  node tools/check-links.mjs
+
             # Started here rather than as a service container: it is built from this repository, so
             # it cannot exist until the checkout has happened. Backgrounded and then waited for, the
             # same shape as the broker wait above and for the same reason - a hub that has not
