@@ -120,12 +120,27 @@ test('a link may ask for the object with no structure at all', (t) => {
     t.is(where.fallbackUsed, 'canonical')
 })
 
-test('an object no aspect places still resolves, without pretending to a location', (t) => {
+test('an object no aspect places resolves to no aspect, rather than to an empty one', (t) => {
     const where = resolveLink(link(orphan), at('functional', 'fn:loop-12/V-204'), structure())
 
     t.false(isRefusal(where))
     if (isRefusal(where)) return
     t.is(where.occurrenceId, undefined, 'there is nowhere to point at, and inventing one would be a lie')
+    // And no aspect either. An earlier version named the default aspect here with no occurrence in
+    // it, which reads to a viewer as *show this in that tree* - and there is nothing in that tree to
+    // show. Saying the object stands on its own is the true answer and the one a viewer can draw.
+    t.is(where.aspectId, undefined)
+    t.is(where.fallbackUsed, 'canonical')
+})
+
+test('the default aspect is still used when it can actually place the target', (t) => {
+    // The other half of the same rule: falling back is right whenever there is somewhere to fall to.
+    const where = resolveLink(link(pump), at('documentation', 'doc:manuals/valves/V-204'), structure())
+
+    t.false(isRefusal(where))
+    if (isRefusal(where)) return
+    t.is(where.aspectId, 'functional')
+    t.truthy(where.occurrenceId)
     t.is(where.fallbackUsed, 'target-default')
 })
 

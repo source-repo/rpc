@@ -1,5 +1,15 @@
 # Changelog
 
+## aspects 0.2.1
+
+The first release on a tag of its own - `aspects-v0.2.1` - which publishes that package and nothing else. No NuGet, no image, and no eleven other packages moved to carry one fix.
+
+### A fallback names an aspect only when that aspect can place the target
+
+`resolveLink` fell back to the provider's default aspect whenever the wanted one could not place a target. When the default could not place it either, it still answered with that aspect's id and no occurrence in it - which reads to a viewer as *show this in that tree*, and there is nothing in that tree to show. It would draw an empty structure, or highlight nothing in a full one, and either way say the object is somewhere it is not.
+
+It now answers the canonical form in that case: the object on its own, with no aspect, which is what is actually true. Falling back to the default aspect is unchanged whenever there is somewhere to fall to.
+
 ## 5.3.1
 
 **The library and the CLI are unchanged in this release.** Their version moves because a tag is spelled with the library's version and a tag is what publishes anything - so a release that carries only an `@source-repo/aspects` change still has to move the number. Said here rather than left for somebody to diff: there is nothing to read in `@source-repo/rpc` between 5.3.0 and 5.3.1.

@@ -151,12 +151,16 @@ export const resolveLink = (link: AspectLink, from: AspectLocation | undefined, 
     if (fallback === 'canonical') return { target: link.target, ...(focus ? { focus } : {}), inherited: false, fallbackUsed: 'canonical' }
 
     const preferred = structure.defaultAspectFor(link.target)
-    if (!preferred) return { target: link.target, ...(focus ? { focus } : {}), inherited: false, fallbackUsed: 'canonical' }
-    const placements = structure.placements(link.target, preferred)
+    const fallbackPlacements = preferred ? structure.placements(link.target, preferred) : []
+    // The default aspect could not place it either, so there is no structure to answer with. Naming
+    // one anyway - an aspect with no occurrence in it - reads to a viewer as *show this in that
+    // tree*, and there is nothing in that tree to show: it would draw an empty structure, or
+    // highlight nothing in a full one, and either way say the object is somewhere it is not.
+    if (!preferred || !fallbackPlacements.length) return { target: link.target, ...(focus ? { focus } : {}), inherited: false, fallbackUsed: 'canonical' }
     return {
         target: link.target,
         aspectId: preferred,
-        ...(placements.length ? { occurrenceId: chooseOccurrence(placements, preferred, undefined, link.navigation?.near, structure) } : {}),
+        occurrenceId: chooseOccurrence(fallbackPlacements, preferred, undefined, link.navigation?.near, structure),
         ...(focus ? { focus } : {}),
         inherited: false,
         fallbackUsed: 'target-default'
