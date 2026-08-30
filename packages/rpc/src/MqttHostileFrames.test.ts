@@ -104,7 +104,24 @@ const stillAlive = async (t: { is: (a: unknown, b: unknown, m?: string) => void 
     await client.ready()
     try {
         const meter = await client.proxy<{ read(tag: string): Promise<string> }>('meter')
-        t.is(await meter.read('flow'), 'flow=42', 'the peer stopped answering - it did not survive the frames above')
+        // Asked more than once, because this is called after the peer has deliberately been made
+        // to work: three thousand frames it had to hash a nonce for, and on a loaded runner it can
+        // still be draining that queue when the first probe's deadline expires. A single call
+        // turned "busy" into "dead", which is the wrong answer for the right shape.
+        //
+        // It does not weaken the claim. The bound being tested is on the nonce table, and a peer
+        // that had grown one without limit would still be slow on the third attempt, not just the
+        // first - thirty seconds of not answering is dead by any reading.
+        let answer: string | undefined
+        for (let attempt = 1; ; attempt++) {
+            try {
+                answer = await meter.read('flow')
+                break
+            } catch (error) {
+                if (attempt === 3) throw error
+            }
+        }
+        t.is(answer, 'flow=42', 'the peer stopped answering - it did not survive the frames above')
     } finally {
         await client.close()
     }

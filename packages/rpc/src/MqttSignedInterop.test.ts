@@ -57,6 +57,33 @@ test.before(async (t) => {
             'SOURCE_RPC_REQUIRE_CSHARP_MQTT is set, but there is no broker or no SOURCE_RPC_TEST_CSHARP_MQTT_SIGNED peer named - these tests must not be skipped here'
         )
     t.context = { skipped }
+    if (skipped) return
+
+    // Connected is not the same as answering, and this suite was failing on the difference. The
+    // workflow waits for the peer to log RPC-MQTT-READY before starting, so it is on the broker -
+    // but the first call into a cold .NET peer pays its JIT, its subscription settling and
+    // whatever else is sharing the runner, and a 10 s deadline that is roomy on a laptop is not
+    // always roomy there. The first test in this file is what paid that, and it read as "the
+    // signed call did not cross" when what happened was that the peer had not woken up yet.
+    //
+    // So the waiting is here, once, where it can say what it is waiting for. A peer that is
+    // genuinely absent still fails - four attempts is forty seconds - and fails with a sentence
+    // about the peer rather than a timeout inside an assertion about signatures.
+    const warmup = signingClient('warmup')
+    try {
+        await warmup.ready()
+        const meter = await warmup.proxy<{ read(tag: string): Promise<string> }>('meter')
+        for (let attempt = 1; ; attempt++) {
+            try {
+                await meter.read('flow')
+                break
+            } catch (error) {
+                if (attempt === 4) throw new Error(`the signing C# peer '${CSHARP_PEER}' is on the broker but never answered a call`, { cause: error })
+            }
+        }
+    } finally {
+        await warmup.close()
+    }
 })
 
 const skipWithoutPeer = (t: { context: Context; pass: (m?: string) => void }) => {
