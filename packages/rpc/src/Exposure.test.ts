@@ -125,10 +125,21 @@ test('a withdrawn name stops answering, tells its watchers, and comes back as a 
 test('a call queued against a retired instance is told it certainly did not run', async (t) => {
     const server = new RpcServer({ name: peer('drain3941'), transports: [{ port: 3941, host: '127.0.0.1' }] })
 
+    // The first call is held open by the test rather than by a timer, and that is the whole
+    // difference between this passing and this passing *usually*. With a 300 ms timer, a runner
+    // that stalled for 300 ms anywhere in the setup below let the first call finish early - and
+    // then the second call was not queued behind anything, it was running, which is a different
+    // test with a different right answer.
+    let started = 0
+    let release: () => void = () => undefined
+    const held = new Promise<void>((resolve) => (release = resolve))
+
     class Slow extends EventEmitter {
         @rpc({ semantics: 'idempotent-command' })
         async work(ms: number) {
-            await new Promise((resolve) => setTimeout(resolve, ms))
+            started += 1
+            if (started === 1) await held
+            else await new Promise((resolve) => setTimeout(resolve, ms))
             return 'ran'
         }
     }
@@ -142,16 +153,31 @@ test('a call queued against a retired instance is told it certainly did not run'
     const slow = await client.proxy<Slow>('slow')
 
     const first = slow.work(300)
-    await new Promise((resolve) => setTimeout(resolve, 40))
+    // Waited for rather than slept past: the second call only queues if the first is already in the
+    // handler, and 40 ms was a guess about how long that takes.
+    for (let waited = 0; waited < 2_000 && started === 0; waited += 5) await new Promise((resolve) => setTimeout(resolve, 5))
+    t.is(started, 1, 'the first call is in the handler, so the next one queues behind it')
+
     const queued = slow.work(1)
+    // The handler is attached here, not after the awaits below. This promise is refused during
+    // `withdraw`, and a rejection nothing is listening to yet is an unhandled rejection - which ava
+    // fails the whole file over, reporting it against a test that had asserted nothing wrong. That
+    // is what this was actually failing on.
+    const refusal = t.throwsAsync(queued)
+
+    // Long enough for that call to cross a local socket and take its place in the queue. The
+    // previous 20 ms was not always, and losing that race meant the exposure was already retired
+    // when it arrived: the server answered ClassNotFound, which is true, and is a statement about
+    // a call that never queued rather than the one this test is about.
+    await new Promise((resolve) => setTimeout(resolve, 300))
 
     // Phase one stops new calls; phase two is this. The queued call holds a bound handler and would
     // otherwise run happily into an instance nobody can reach any more.
-    await new Promise((resolve) => setTimeout(resolve, 20))
     await handle.withdraw()
+    release()
 
     t.is(await first, 'ran', 'the call already running is left alone')
-    const refused = await t.throwsAsync(queued)
+    const refused = await refusal
     // A posture rather than a timeout: OwnershipChanged already means *certainly did not run*,
     // which is exactly true here and is the one thing the caller needs to decide what to do next.
     t.is((refused as { code?: string })?.code, 'OwnershipChanged')
