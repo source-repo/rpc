@@ -157,6 +157,17 @@ const useConsole = () => {
                 undoOnline?.()
                 undoOnline = live ? rpcOnlineFrom(live) : undefined
 
+                // `ready()` is this page's own links being up. It says nothing about the console
+                // having announced itself over them, and presence arrives a moment later - a moment
+                // that is nothing across loopback and a whole round trip from another machine.
+                //
+                // So this never looked like a race. The gap is the same length on every attempt, so
+                // every attempt lost it the same way: a console opened from anywhere but the host it
+                // runs on said `no route to '<its own name>'`, said it again through each retry, and
+                // was faultless on localhost. Which is the worst shape a fault can have in the page
+                // somebody opens to find out what is wrong.
+                setStatus('waiting for the console to announce itself')
+                if (!(await server.awaitPeer(consoleName, 10000))) throw new Error(`nobody on this link is answering to '${consoleName}'`)
                 const proxy = await server.proxy<ConsoleService & { on: (e: string, h: (...a: unknown[]) => void) => Promise<unknown> }>('console', consoleName)
                 await proxy.on('event', (event: unknown) => events.current?.(event as StreamedEvent))
                 await proxy.on('peer', (change: unknown) => {
