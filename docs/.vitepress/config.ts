@@ -73,6 +73,8 @@ export default defineConfig({
                     { text: '@source-repo/query', link: '/packages/query' },
                     { text: '@source-repo/continuity', link: '/packages/continuity' },
                     { text: '@source-repo/diagnostics', link: '/packages/diagnostics' },
+                    { text: '@source-repo/aspects', link: '/packages/aspects' },
+                    { text: '@source-repo/documentation', link: '/packages/documentation' },
                     { text: '@source-repo/queue', link: '/packages/queue' },
                     { text: '@source-repo/relational', link: '/packages/relational' },
                     { text: '@source-repo/document', link: '/packages/document' },

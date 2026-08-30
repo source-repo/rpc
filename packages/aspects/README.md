@@ -8,7 +8,18 @@ npm install @source-repo/aspects
 
 ## The idea, and whose it is
 
-IEC 81346 says a plant object is viewed in several **aspects** — functional (what it does), product (what it is), location (where it stands) — and that an aspect is a way of looking rather than a place the object lives. A pump appears under the loop it serves, under the room it stands in, and under the manual that describes it. It is one pump.
+IEC 81346 says an object is viewed in several **aspects**, and that an aspect is a way of looking rather than a place the object lives:
+
+| Aspect | Prefix | The question it answers |
+|---|---|---|
+| Function | `=` | what it does — the loop it serves |
+| Product | `-` | what it is part of — the assembly it belongs to |
+| Location | `+` | where it stands — the room, the cabinet |
+| Type | `%` | what kind of thing it is — the model it is an instance of |
+
+The **type** aspect arrived with the 2022 edition, and it is the one worth pausing on, because it is not a structure over individuals at all: it places an object under the *class* it belongs to. This pump, and every other pump of that model, sit under one type — so what is said once about the type is true of all of them, and what is said about the pump is true of that pump. A system that has no type aspect ends up saying the model's things about each instance, and then disagreeing with itself.
+
+A pump therefore appears under the loop it serves, the assembly it is part of, the room it stands in, and the model it is an instance of. It is one pump.
 
 This package is that idea over Source RPC, generalised past the three: a security aspect, a documentation aspect, a work-breakdown aspect are all the same shape. **Structure is an aspect, identity is not.**
 

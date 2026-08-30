@@ -6,9 +6,15 @@ import type { AspectLink } from './Link.js'
 /**
  * What a provider serves, and the words it serves it in.
  *
- * IEC 81346's idea, and its word: one object is viewed in several **aspects** - functional, product,
- * location - and the aspect is a way of looking rather than a place the object lives. A plant has
- * had this problem for as long as it has had drawings, and the answer it reached is the answer here.
+ * IEC 81346's idea, and its word: one object is viewed in several **aspects** - function (`=`),
+ * product (`-`), location (`+`), and since the 2022 edition type (`%`) - and an aspect is a way of
+ * looking rather than a place the object lives. A plant has had this problem for as long as it has
+ * had drawings, and the answer it reached is the answer here.
+ *
+ * The type aspect is the odd one and the useful one: it is not a structure over individuals but a
+ * placement of an object under the *class* it belongs to. This pump and every other of that model
+ * sit under one type, so what is said once about the type is true of all of them. A system without
+ * that aspect says the model's things about each instance, and eventually disagrees with itself.
  *
  * So the whole layer rests on one distinction, and everything exists to keep it: **structure is an
  * aspect, identity is not.** A document filed under a folder and the same document listed under

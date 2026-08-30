@@ -123,6 +123,10 @@ The two package READMEs are the complete reference for their package — every o
 | --- | --- |
 | [`@source-repo/rpc`](https://github.com/source-repo/rpc/tree/main/packages/rpc#readme) | the library: connecting, commands, contracts, auth, MQTT, options |
 | [`@source-repo/rpc-cli`](https://github.com/source-repo/rpc/tree/main/packages/cli#readme) | the command: console, tap, verbs, extract/check, serve, record, mcp |
+| [`@source-repo/aspects`](https://github.com/source-repo/rpc/tree/main/packages/aspects#readme) | several structures over the same objects, and links that keep their context |
+| [`@source-repo/documentation`](https://github.com/source-repo/rpc/tree/main/packages/documentation#readme) | the documentation aspect: what describes a thing, in whatever format it was written |
+
+**Several structures over the same things.** A plant object is viewed in more than one way — IEC 81346's function (`=`), product (`-`), location (`+`) and, since 2022, type (`%`) — and none of them is where the object lives. [`@source-repo/aspects`](https://github.com/source-repo/rpc/tree/main/packages/aspects#readme) is that idea over this library: a provider says what is under a node and where an object appears, and gets each structure published as a lazy tree plus links that re-resolve against the structure as it is now rather than pointing at a path that has moved. [`@source-repo/documentation`](https://github.com/source-repo/rpc/tree/main/packages/documentation#readme) is the first one, serving a directory as the documentation aspect: by folder and by topic, one document either way.
 
 ## Run a whole network
 
