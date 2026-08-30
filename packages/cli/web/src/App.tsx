@@ -137,15 +137,29 @@ const useConsole = () => {
                 // No name here: @rpcNamespace('chat') carries it. That matters in a bundle, where
                 // the class name is minified to something like `Mv` and would be the fallback.
                 server.exposeClassInstance(new ChatService((from, text) => said.current?.(from, text)))
+                /**
+                 * Connected means *reachable*, not merely dialled.
+                 *
+                 * A reconnect repeats the first connection exactly: the transport announces itself
+                 * when the socket opens and the peers list comes back a round trip later, so for
+                 * that round trip there is no route to the console. Saying "connected" at the socket
+                 * event puts a green word on screen over a link that answers `no route` to the next
+                 * button pressed - and after a console restart or a laptop waking, pressing a button
+                 * is precisely what happens next.
+                 */
+                const reachable = async () => {
+                    if (!(await server?.awaitPeer(consoleName, 10000))) return setStatus(`nobody on this link is answering to '${consoleName}'`)
+                    setStatus('connected')
+                }
                 const link = server.transports[0]
                 link?.on(TransportEvent.disconnected, () => setStatus('reconnecting'))
-                link?.on(TransportEvent.connected, () => setStatus('connected'))
+                link?.on(TransportEvent.connected, () => void reachable())
                 await server.ready()
                 // Attached after ready(): transports are built asynchronously, so before it there
                 // is nothing to listen to.
                 for (const transport of server.transports) {
                     transport.on(TransportEvent.disconnected, () => setStatus('reconnecting'))
-                    transport.on(TransportEvent.connected, () => setStatus('connected'))
+                    transport.on(TransportEvent.connected, () => void reachable())
                 }
                 peer.current = server
                 // So that "offline" means this link rather than `navigator.onLine`, which is true
