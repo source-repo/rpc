@@ -21,6 +21,22 @@ The **type** aspect arrived with the 2022 edition, and it is the one worth pausi
 
 A pump therefore appears under the loop it serves, the assembly it is part of, the room it stands in, and the model it is an instance of. It is one pump.
 
+## Saying which aspect you mean
+
+An aspect's `id` is a local name. Two providers written by different people may each offer a `functional` aspect and mean the same thing, or not, and nothing in the name says which — fine for a console drawing a tree, useless for anything that has to line two providers up: an OPC UA bridge, an import, an assessment, an MCP client reasoning across peers.
+
+So a descriptor may *also* say what it is in somebody else's vocabulary:
+
+```ts
+{ id: 'functional', label: 'By loop', revision: '3', semantics: IEC81346.function }
+```
+
+`semantics` is `{ scheme, term }` — two fields rather than one URI, so a consumer switches on the scheme without a parser and without a convention nobody enforces. `IEC81346.function`, `.product`, `.location` and `.type` ship as constants because typos are the failure mode, not because an aspect has to be one of them. **No scheme is privileged and nothing is required.**
+
+Absent is the ordinary case and says something true: this is a structure this provider offers, and no claim is made that it is anybody else's. `@source-repo/documentation` claims nothing for either of its arrangements, because filing by folder is not IEC's function aspect and borrowing the nearest word would make a consumer believe two providers agreed when one of them had only reused a string. `sameAspectSemantics` treats unclaimed as equal to nothing, including to another unclaimed one — saying nothing is not a claim to agree.
+
+One claim per aspect, not a list: a descriptor asserting three conventional identities is stating a mapping between vocabularies, and a mapping belongs where mappings are curated and versioned rather than scattered across every provider with an opinion.
+
 This package is that idea over Source RPC, generalised past the three: a security aspect, a documentation aspect, a work-breakdown aspect are all the same shape. **Structure is an aspect, identity is not.**
 
 Source RPC already has two structures with runtime meaning — physical `parent` and logical `owner` — and those participate in fencing and inherited context. Aspects are deliberately *not* those. An aspect is a read model: appearing under an authorised-looking branch grants nothing, and a security aspect describes zones rather than deciding them.

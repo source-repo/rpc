@@ -1,7 +1,7 @@
 import test from 'ava'
 import { randomUUID } from 'node:crypto'
 import { RpcClient, RpcServer, rpcNamespace, type RpcGetChildrenResult } from '@source-repo/rpc'
-import { AspectProvider, isRefusal, type AspectDescriptor, type AspectLink, type AspectLocation, type AspectRef, type LinkRefusal, type ObjectDetail, type Occurrence } from './index.js'
+import { AspectProvider, IEC81346, isRefusal, sameAspectSemantics, type AspectDescriptor, type AspectSemantics, type AspectLink, type AspectLocation, type AspectRef, type LinkRefusal, type ObjectDetail, type Occurrence } from './index.js'
 
 /**
  * A provider written the way a provider author would write one: three structures over the same
@@ -27,8 +27,8 @@ class Plant extends AspectProvider<{ label: string }, { items: number }> {
 
     aspects(): readonly AspectDescriptor[] {
         return [
-            { id: 'functional', label: 'By loop', revision: '1', default: true },
-            { id: 'location', label: 'By room', revision: '1' }
+            { id: 'functional', label: 'By loop', revision: '1', default: true, semantics: IEC81346.function },
+            { id: 'location', label: 'By room', revision: '1', semantics: IEC81346.location }
         ]
     }
 
@@ -172,4 +172,30 @@ test('an object this provider does not have is refused by name', async (t) => {
 
     const refused = await t.throwsAsync(face.openObject(ref('nothing-like-this')))
     t.regex(String(refused?.message), /no object nothing-like-this in equipment/)
+})
+
+test('an aspect may say what it is in somebody else’s vocabulary', (t) => {
+    const plant = new Plant()
+    const [functional, location] = plant.aspects()
+
+    // The id is a local name a developer typed; the semantics are a claim about a definition
+    // somebody else owns. Keeping them apart is what lets a consumer line two providers up.
+    t.is(functional.id, 'functional')
+    t.deepEqual(functional.semantics, { scheme: 'IEC81346', term: 'function' })
+    t.deepEqual(location.semantics, IEC81346.location)
+    t.true(sameAspectSemantics(functional.semantics, IEC81346.function))
+    t.false(sameAspectSemantics(functional.semantics, IEC81346.product))
+})
+
+test('two providers using the same word are not thereby talking about the same aspect', (t) => {
+    // The whole reason the field is separate from the id. One of these means IEC's function aspect;
+    // the other is a structure somebody happened to call the same thing.
+    const conventional = { id: 'functional', label: 'By loop', revision: '1', semantics: IEC81346.function }
+    const homegrown = { id: 'functional', label: 'How we group things', revision: '1' }
+
+    t.is(conventional.id, homegrown.id)
+    t.false(sameAspectSemantics(conventional.semantics, (homegrown as { semantics?: AspectSemantics }).semantics))
+    // Unclaimed is never equal to anything, including another unclaimed one: saying nothing is not
+    // a claim to agree, and treating it as one would defeat the point of asking.
+    t.false(sameAspectSemantics(undefined, undefined))
 })

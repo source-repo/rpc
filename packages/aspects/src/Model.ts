@@ -131,6 +131,57 @@ export interface Relationship {
 }
 
 /**
+ * What conventional thing an aspect *is*, when it is one.
+ *
+ * An `id` is a local name. Two providers written by different people may each offer a "functional"
+ * aspect and mean the same thing, or not, and nothing in the name says which - which is fine for a
+ * console drawing a tree and useless for anything that has to line two providers up: an OPC UA
+ * bridge, an import, an assessment, an MCP client reasoning across peers.
+ *
+ * So a provider may say what its aspect is in somebody else's vocabulary, and that is deliberately
+ * *not* the same field as its own name. IEC 81346's function aspect is a thing with a definition;
+ * `functional` is a string a developer typed. Keeping them apart is what lets a provider adopt the
+ * convention without renaming its own ids, and lets one decline the convention entirely - which is
+ * the more common case and must stay the cheap one.
+ *
+ * **Nothing here is required, and no scheme is privileged.** This package ships the IEC terms as a
+ * convenience because typos are the failure mode, not because an aspect must be one of them.
+ *
+ * One, not a list. A descriptor claiming three conventional identities is asserting a mapping
+ * between vocabularies, and a mapping belongs where mappings are curated and versioned rather than
+ * scattered across every provider that happens to have an opinion.
+ */
+export interface AspectSemantics {
+    /** Whose vocabulary: `IEC81346`. Stable, and owned by whoever defines the terms. */
+    readonly scheme: string
+    /** The term within it: `function`, `product`, `location`, `type`. */
+    readonly term: string
+}
+
+/**
+ * IEC 81346's aspects, spelled once so nobody spells them twice.
+ *
+ * A convenience and not a constraint: `semantics` takes any scheme, and a provider whose structures
+ * are not IEC aspects should say nothing rather than reach for the nearest term. The 2022 edition
+ * added `type`, which is the one that is not a structure over individuals - it places an object
+ * under the class it belongs to.
+ */
+export const IEC81346 = {
+    scheme: 'IEC81346',
+    /** `=` - what it does. */
+    function: { scheme: 'IEC81346', term: 'function' },
+    /** `-` - what it is part of. */
+    product: { scheme: 'IEC81346', term: 'product' },
+    /** `+` - where it stands. */
+    location: { scheme: 'IEC81346', term: 'location' },
+    /** `%` - what kind of thing it is, since the 2022 edition. */
+    type: { scheme: 'IEC81346', term: 'type' }
+} as const satisfies { scheme: string } & Record<'function' | 'product' | 'location' | 'type', AspectSemantics>
+
+/** Whether two aspects claim the same conventional identity. Unclaimed is never equal to anything. */
+export const sameAspectSemantics = (a: AspectSemantics | undefined, b: AspectSemantics | undefined): boolean => !!a && !!b && a.scheme === b.scheme && a.term === b.term
+
+/**
  * A named structure over the objects a provider serves.
  *
  * `revision` changes when the structure does, so a saved location can tell that the tree it was
@@ -143,6 +194,15 @@ export interface AspectDescriptor {
     readonly revision: string
     readonly default?: boolean
     readonly preferredPresentation?: 'tree' | 'list' | 'document'
+    /**
+     * What this aspect is in a shared vocabulary, when it is anything in one.
+     *
+     * Absent is the ordinary case and says something true: this is a structure this provider offers,
+     * and no claim is made that it is anybody else's. Claiming a term the aspect does not really
+     * mean would be worse than claiming nothing, because the field exists precisely so that two
+     * providers agreeing can be told from two providers using the same word.
+     */
+    readonly semantics?: AspectSemantics
     /**
      * Which fields of an occurrence to draw first, when this aspect has an opinion.
      *

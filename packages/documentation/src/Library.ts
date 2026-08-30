@@ -117,7 +117,15 @@ export class DocumentLibrary extends AspectProvider<DocumentLibraryProps, Docume
         this.rescan()
     }
 
-    /** The two arrangements of the same documents. Neither is where a document lives. */
+    /**
+     * The two arrangements of the same documents. Neither is where a document lives.
+     *
+     * Neither claims an `AspectSemantics` either, and that is the honest answer rather than an
+     * omission: filing by folder and grouping by topic are arrangements this library offers, not
+     * IEC 81346's function, product, location or type. Reaching for the nearest term would make a
+     * consumer believe two providers agreed when one of them had only borrowed a word - which is
+     * the exact confusion that field exists to prevent.
+     */
     aspects(): readonly AspectDescriptor[] {
         return [
             {
