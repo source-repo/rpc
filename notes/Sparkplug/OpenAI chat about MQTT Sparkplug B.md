@@ -57,7 +57,7 @@ The Source RPC component model has already moved in a compatible direction:
 - stable component identities;
 - clear lifecycle state.
 
-That separation was introduced precisely because raw remote properties have no command intent, metadata or asynchronous failure boundary. `Extending Soure RPC.pdf`
+That separation was introduced precisely because raw remote properties have no command intent, metadata or asynchronous failure boundary.
 
 A natural mapping is:
 
