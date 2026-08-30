@@ -42,6 +42,13 @@ export interface Link {
     relation?: string
 }
 
+export interface Binding {
+    kind: string
+    role: string
+    target: { type: 'rpc'; ref: { peer: string; instance: string } } | { type: 'external'; system: string; id: string; endpoint?: string }
+    fields?: Record<string, unknown>
+}
+
 export interface Opened {
     ref: Ref
     kind: string
@@ -51,6 +58,7 @@ export interface Opened {
     origin?: { system?: string; updatedAt?: string; retrievedAt?: string }
     content?: Block[]
     links?: Link[]
+    bindings?: Binding[]
 }
 
 export interface Where {
@@ -68,6 +76,20 @@ export interface ObjectAccess {
 }
 
 const isRefused = (answer: Where | { refused: string }): answer is { refused: string } => 'refused' in answer
+
+/** A value in a row of fields. Objects and arrays are flattened rather than dropped. */
+const shown = (value: unknown): string => (Array.isArray(value) ? value.join(', ') : value !== null && typeof value === 'object' ? JSON.stringify(value) : String(value))
+
+/**
+ * Where a binding points, in one line.
+ *
+ * The system's own name for the thing, because that is what somebody would paste into the tool that
+ * understands it. This console does not follow a binding and does not offer to: a binding says how
+ * an object *can* be reached, not that this page may reach it, and drawing a button would turn a
+ * description into an invitation.
+ */
+const bindingTarget = (target: Binding['target']): string =>
+    target.type === 'rpc' ? `${target.ref.peer} / ${target.ref.instance}` : `${target.system} ${target.id}${target.endpoint ? ` at ${target.endpoint}` : ''}`
 
 const Content = ({ block }: { block: Block }) => {
     if (block.kind === 'attachment')
@@ -132,9 +154,43 @@ export const ObjectPanel = ({ target, access, where, onWhere }: { target: Ref; a
                 {opened.origin?.updatedAt && <span className="muted"> · changed {opened.origin.updatedAt.slice(0, 10)}</span>}
             </div>
             {note && <p className="object-note">{note}</p>}
+            {/* Fields before content, because an object that has no content is usually one whose
+                fields *are* the content: a UA variable has a node id, a class and an access level
+                and no prose at all, and a panel built only for documents showed it as a heading and
+                nothing else. */}
+            {opened.fields && Object.keys(opened.fields).length > 0 && (
+                <dl className="object-fields">
+                    {Object.entries(opened.fields).map(([name, value]) => (
+                        <div className="object-field" key={name}>
+                            <dt className="muted">{name}</dt>
+                            <dd>{shown(value)}</dd>
+                        </div>
+                    ))}
+                </dl>
+            )}
             {(opened.content ?? []).map((block) => (
                 <Content key={block.id} block={block} />
             ))}
+            {!!opened.bindings?.length && (
+                <div className="object-bindings">
+                    <div className="muted">reachable through</div>
+                    {opened.bindings.map((binding, at) => (
+                        <div className="object-binding" key={`${binding.kind}-${at}`}>
+                            <span className="object-binding-kind">{binding.kind}</span>
+                            <span className="object-binding-role">{binding.role}</span>
+                            <span className="muted">{bindingTarget(binding.target)}</span>
+                            {binding.fields &&
+                                Object.entries(binding.fields)
+                                    .filter(([name]) => name !== 'nodeClass')
+                                    .map(([name, value]) => (
+                                        <span className="tree-detail" key={name}>
+                                            <span className="muted">{name}</span> {shown(value)}
+                                        </span>
+                                    ))}
+                        </div>
+                    ))}
+                </div>
+            )}
             {!!opened.links?.length && (
                 <div className="object-links">
                     <div className="muted">links</div>
