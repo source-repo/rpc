@@ -1,5 +1,5 @@
 import { componentSnapshot, projectionKeyOrder, type RpcComponentData } from './Component.js'
-import type { TypeNode } from './Schema.js'
+import type { RpcSchema, TypeNode } from './Schema.js'
 
 /**
  * Paging and filtering a collection by *asking*, rather than by subscribing to it.
@@ -32,9 +32,9 @@ import type { TypeNode } from './Schema.js'
  */
 
 /** What a caller may ask for. The unserved ones are named so a refusal can say what is. */
-export type RpcDataMethod = 'getList' | 'getOne' | 'getMany' | 'getManyReference'
+export type RpcDataMethod = 'getList' | 'getOne' | 'getMany' | 'getManyReference' | 'getChildren'
 
-const served: readonly RpcDataMethod[] = ['getList', 'getMany', 'getManyReference']
+const served: readonly RpcDataMethod[] = ['getList', 'getMany', 'getManyReference', 'getChildren']
 
 /**
  * Rows by id, which is how a foreign key becomes a value.
@@ -53,6 +53,40 @@ export interface RpcGetManyParams {
  * is the shape it is for; ten thousand ids in one frame is a caller that meant to page instead.
  */
 const MAX_GET_MANY_IDS = 1000
+
+/**
+ * One branch of a tree, which is the verb `shape: 'tree'` has been naming since it was added.
+ *
+ * A tree is asked for a branch at a time and never as a whole, and that is the entire point rather
+ * than an optimisation: a resource that answers a hierarchy is usually answering something it does
+ * not hold - an external workspace, a filesystem, a table joined to itself - and the number of
+ * descendants under a node is not knowable before somebody asks. `getList` on such a resource is a
+ * question with no bounded answer.
+ *
+ * So this is `getList` for one parent's children: the same filter, sort and pagination, applied
+ * among the children of one node. An absent `parentId` asks for the roots, which is a different
+ * question from `parentId: ''` and is why it is optional rather than empty-by-default.
+ */
+export interface RpcGetChildrenParams extends RpcGetListParams {
+    /** Absent means the roots. A branch is identified by the id of the row that is its parent. */
+    readonly parentId?: string
+}
+
+export interface RpcGetChildrenResult extends RpcGetListResult {
+    /**
+     * Whether each row has children of its own, positionally against `ids` and `data`.
+     *
+     * Carried beside the rows rather than merged into them, for the reason `ids` already is: a row
+     * may be a primitive, and a row that happened to have a `hasChildren` field would otherwise be
+     * quietly overwritten. Two arrays read together is the smaller cost.
+     *
+     * It is here at all because a viewer has to decide whether to draw an expander *before* anybody
+     * asks to expand. Without it the choice is a disclosure arrow on every row, half of which
+     * expand to nothing, or a request per row to find out - which is the fan-out this verb exists
+     * to avoid.
+     */
+    readonly hasChildren: readonly boolean[]
+}
 
 export interface RpcGetManyResult extends RpcDataTiming {
     /** The ids that were found, in the order they were asked for. */
@@ -292,6 +326,19 @@ export interface RpcDataAction {
     readonly confirm?: boolean
 }
 
+export interface RpcDataPresentationHint {
+    /**
+     * Dot paths into the declared row type, in the order they should first appear.
+     *
+     * A path the row type does not have is ignored rather than refused, and said so at describe
+     * time: this is advice about presentation, and a node that will not start because somebody
+     * renamed a field in a hint is a worse failure than a table that opens on a sensible default.
+     * Every schema-derived column stays selectable whatever is named here - this decides what is
+     * shown first, never what may be shown.
+     */
+    readonly defaultColumns?: readonly string[]
+}
+
 export interface RpcDataResource {
     /** How `$data` names it. A single segment for a resource of its own, never `props` or `state`. */
     readonly path: RpcResource
@@ -300,13 +347,30 @@ export interface RpcDataResource {
     /** Which verbs it answers. A viewer offers what is here and nothing else. */
     readonly verbs: readonly RpcDataMethod[]
     /**
-     * Whether rows are a flat list or a hierarchy. A tree is fetched a branch at a time and is not
-     * served yet; it is named here so a resource that is one can say so rather than be mistaken for
-     * a list that happens to be long.
+     * Whether rows are a flat list or a hierarchy.
+     *
+     * A tree is fetched a branch at a time, with `getChildren`, and a resource that declares this
+     * shape is saying it will answer that verb rather than that it happens to be long. It was named
+     * here before it was served, so that a resource which is one could say so; it is served now,
+     * and the declaration is what a viewer reads to decide whether to draw a tree at all.
      */
     readonly shape?: 'list' | 'tree'
     /** What to call it on a screen, where the path is not what a person would read. */
     readonly label?: string
+    /**
+     * Which columns to draw first, and nothing else about how to draw them.
+     *
+     * The *possible* columns already follow from `row`, and a second declaration of them would be a
+     * second thing to keep in step with the schema - so this does not restate them. What the schema
+     * cannot say is which four of a table's forty a person wants to see before they have chosen
+     * anything, and that is a judgement the resource is in a position to make and a viewer is not.
+     *
+     * Deliberately not a UI. No widths, no colours, no component names, no order beyond this one:
+     * those are preferences and belong to whoever is looking, not to the node. A hint that grew
+     * those fields would be a layout engine delivered over the wire, which is the thing this whole
+     * surface is arranged to avoid.
+     */
+    readonly presentation?: RpcDataPresentationHint
     /**
      * What can be done to a row, as methods this component already declares.
      *
@@ -342,7 +406,7 @@ export interface RpcDataResources {
     dataRequest(
         method: RpcDataMethod,
         resource: RpcResource,
-        params: RpcGetListParams | RpcGetManyParams | RpcGetManyReferenceParams
+        params: RpcGetListParams | RpcGetManyParams | RpcGetManyReferenceParams | RpcGetChildrenParams
     ): unknown | Promise<unknown>
 }
 
@@ -387,6 +451,14 @@ export const readDataRequest = (method: unknown, resource: unknown, params: unkn
         if (given.ids.length > MAX_GET_MANY_IDS) return new Error(`$data: getMany is bounded at ${MAX_GET_MANY_IDS} ids; ask for a page instead`)
         return { method: method as RpcDataMethod, resource: resource as RpcResource, params: given }
     }
+    if (method === 'getChildren') {
+        const branch = given as unknown as RpcGetChildrenParams
+        // Checked rather than coerced, as everything else here is: a parentId that arrived as a
+        // number is a caller that built the request wrongly, and answering the roots instead would
+        // look exactly like a node that genuinely has no children.
+        if (branch.parentId !== undefined && (typeof branch.parentId !== 'string' || !branch.parentId))
+            return new Error('$data: getChildren takes a non-empty string parentId, or none at all for the roots')
+    }
     if (method === 'getManyReference') {
         const reference = given as unknown as RpcGetManyReferenceParams
         if (typeof reference.target !== 'string' || !reference.target) return new Error('$data: getManyReference needs a target field to match on')
@@ -415,6 +487,62 @@ export const readDataRequest = (method: unknown, resource: unknown, params: unkn
         if (sort.order !== undefined && sort.order !== 'ASC' && sort.order !== 'DESC') return new Error(`$data: sort.order is ASC or DESC, not ${String(sort.order)}`)
     }
     return { method: method as RpcDataMethod, resource: resource as RpcResource, params: given }
+}
+
+/**
+ * Whether a dot path names something the row type actually has.
+ *
+ * Follows `ref` into the named types, looks through `union` - a field present in any branch counts,
+ * since a row of one shape or another still has it - and gives up in favour of the caller on `any`
+ * and on `record`, whose keys are not known in advance and where a path can only be checked against
+ * a value nobody has yet.
+ */
+const pathInType = (path: readonly string[], type: TypeNode | undefined, types: RpcSchema['types'] | undefined, depth = 0): boolean => {
+    if (!type || depth > 12) return true
+    if (!path.length) return true
+    if (type.kind === 'any' || type.kind === 'record') return true
+    if (type.kind === 'ref') return pathInType(path, types?.[type.name], types, depth + 1)
+    if (type.kind === 'union') return type.options.some((option) => pathInType(path, option, types, depth + 1))
+    if (type.kind === 'array') return pathInType(path, type.items, types, depth + 1)
+    if (type.kind !== 'object') return false
+    const field = type.fields[path[0]]
+    return field ? pathInType(path.slice(1), field.type, types, depth + 1) : false
+}
+
+/** Said once per resource and path, since describe() reads resources fresh every time it is asked. */
+const warnedColumns = new Set<string>()
+
+/**
+ * Say when `defaultColumns` names a field the row type does not have.
+ *
+ * Ignored rather than refused, for the reason the hint's own comment gives - a node that will not
+ * start because somebody renamed a field in a preference is a worse failure than a table opening on
+ * a default. But not silently: a column that quietly stopped appearing after a rename is exactly the
+ * kind of thing nobody notices, and the alternative to a line on stderr is somebody reading this
+ * file to find out why their column went away.
+ *
+ * A resource with no declared `row` is left alone. There is nothing to check the path against, and
+ * warning about every column of an undescribed row would train people to ignore this.
+ */
+export const describedResources = (instance: unknown, owner: string, types?: RpcSchema['types']): readonly RpcDataResource[] => {
+    const resources = (instance as RpcDataResources).dataResources()
+    for (const resource of resources) checkPresentation(owner, resource, types)
+    return resources
+}
+
+const checkPresentation = (owner: string, resource: RpcDataResource, types?: RpcSchema['types']): void => {
+    const columns = resource.presentation?.defaultColumns
+    if (!columns?.length || !resource.row) return
+    for (const column of columns) {
+        if (pathInType(column.split('.'), resource.row, types)) continue
+        const key = `${owner}\u0000${resource.path.join('.')}\u0000${column}`
+        if (warnedColumns.has(key)) continue
+        warnedColumns.add(key)
+        console.warn(
+            `source-rpc: ${owner}.${resource.path.join('.')} names '${column}' in presentation.defaultColumns, ` +
+                'which its declared row type does not have. The column is ignored; every other field of the row is still selectable.'
+        )
+    }
 }
 
 /**

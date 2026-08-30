@@ -1,6 +1,6 @@
 import EventEmitter from 'events'
 import { componentSnapshotEvent, RpcComponent } from './Component.js'
-import { servesDataResources, type RpcDataResource } from './DataProvider.js'
+import { describedResources, servesDataResources, type RpcDataResource } from './DataProvider.js'
 import { currentElevations, declaresElevation, type RpcElevation } from './Elevation.js'
 import { rpc, rpcNamespace, type RpcEffect } from './Expose.js'
 import type { RpcServerHandler } from './RpcServerHandler.js'
@@ -366,7 +366,7 @@ export class Introspection {
                           // Structure, like everything else here: what collections exist and the
                           // shape of a row, never a row. A store that gained a table since the last
                           // describe says so now, which is why this is read rather than remembered.
-                          ...(servesDataResources(instance) ? { resources: instance.dataResources() } : {})
+                          ...(servesDataResources(instance) ? { resources: describedResources(instance, name, this.handler.schema?.types) } : {})
                       }
                     : undefined
             return {

@@ -54,7 +54,7 @@ import {
     type RpcProjectionEntry,
     type RpcProjectionSlice
 } from './Component.js'
-import { declaredResource, getList, getMany, getManyReference, readDataRequest, servesDataResources, SLOW_DATA_REQUEST_MS, type RpcDataResource, type RpcDataResources, type RpcDataTiming, type RpcGetListParams, type RpcGetManyParams, type RpcGetManyReferenceParams } from './DataProvider.js'
+import { declaredResource, getList, getMany, getManyReference, readDataRequest, servesDataResources, SLOW_DATA_REQUEST_MS, type RpcDataMethod, type RpcDataResource, type RpcDataResources, type RpcDataTiming, type RpcGetListParams, type RpcGetManyParams, type RpcGetManyReferenceParams } from './DataProvider.js'
 import { RpcSchema, validateParams, validateValue, type ComponentSchema } from './Schema.js'
 import { describeProblems, namespaceProblems } from './Compatibility.js'
 
@@ -936,6 +936,20 @@ export class RpcServerHandler extends MessageModule<Message<RpcMessage>, RpcMess
                         await this.sendError(payload.id, source, 'InvalidParams', `$data: ${request.resource.join('.')} answers ${declared.verbs.join(', ')}, not ${request.method}`)
                         return
                     }
+                    // A tree is a hierarchy the resource knows about and the library does not. The
+                    // contract-served path reads a record out of props or state, which is flat by
+                    // construction, so there is no parent to ask about - and answering the whole
+                    // record to a caller that asked for one branch would look like a node with a
+                    // great many children rather than like the mistake it is.
+                    if (!declared && request.method === 'getChildren') {
+                        await this.sendError(
+                            payload.id,
+                            source,
+                            'InvalidParams',
+                            `$data: getChildren is answered by a resource that declares shape 'tree'; ${request.resource.join('.')} is served from this component's own record, which is a list`
+                        )
+                        return
+                    }
                     // A name that is not a resource and does not reach into props or state, on a
                     // component that serves resources at all, is a caller that mistyped a resource -
                     // and it is refused rather than answered.
@@ -986,7 +1000,7 @@ export class RpcServerHandler extends MessageModule<Message<RpcMessage>, RpcMess
                     // Before the answer goes out, and before it is timed: a row that its own
                     // declared type forbids is this peer's fault, and saying so where it happened
                     // is worth more than a console drawing the wrong columns in silence.
-                    const wrongRows = this.checkRows(declared, answer)
+                    const wrongRows = this.checkRows(declared, answer) ?? this.checkBranch(request.method, answer)
                     if (wrongRows) {
                         await this.sendError(payload.id, source, 'InvalidParams', wrongRows)
                         return
@@ -1597,6 +1611,29 @@ export class RpcServerHandler extends MessageModule<Message<RpcMessage>, RpcMess
             const failure = validateValue(row, declared.row, this.schema?.types, 'row')
             if (failure) return `${declared.path.join('.')} served a row its own declared type forbids (row ${index}): ${failure}`
         }
+        return undefined
+    }
+
+    /**
+     * A branch whose `hasChildren` does not line up with its rows.
+     *
+     * Checked rather than trusted, because the failure is silent and lands somewhere else: a viewer
+     * reads the flag at the same index as the row, so a short array leaves the last rows with no
+     * expander and a long one puts an expander on rows that are not there. Neither reads as a fault
+     * in the peer that produced it, which is the kind of thing this file checks at the door.
+     *
+     * Not gated on `validateResults`, unlike the row check beside it. That one is about a row
+     * disagreeing with a type the resource declared, which is a contract question; this is about
+     * the verb's own answer being self-consistent, and there is no configuration in which serving
+     * a mismatched pair is correct.
+     */
+    private checkBranch(method: RpcDataMethod, answer: unknown): string | undefined {
+        if (method !== 'getChildren') return undefined
+        const branch = answer as { ids?: unknown; hasChildren?: unknown } | undefined
+        if (!Array.isArray(branch?.hasChildren)) return '$data: getChildren must answer hasChildren, one flag per row'
+        if (!branch.hasChildren.every((flag) => typeof flag === 'boolean')) return '$data: getChildren answered a hasChildren that is not all booleans'
+        if (Array.isArray(branch.ids) && branch.hasChildren.length !== branch.ids.length)
+            return `$data: getChildren answered ${branch.ids.length} rows and ${branch.hasChildren.length} hasChildren flags - they are read positionally and must be the same length`
         return undefined
     }
 
