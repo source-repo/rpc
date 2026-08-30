@@ -611,7 +611,7 @@ commanded value: 180
 command state: awaiting acknowledgement
 ```
 
-However, optimistic behavior should not be prohibited across all Source Assess and Source Edge UI data. It remains reasonable for:
+However, optimistic behavior should not be prohibited across all product UI data. It remains reasonable for:
 
 * draft names;
 * local layouts;
@@ -665,7 +665,7 @@ The document says it is a precise research comparison, but it primarily compares
 
 TanStack has mature support for server rendering, prefetching, and hydration. ([TanStack][6])
 
-Source Assess may care about those more than a local Source Edge console does.
+A cloud assessment product may care about those more than a local plant console does.
 
 I would not expand this document to analyse every feature. Instead add a short scope statement:
 

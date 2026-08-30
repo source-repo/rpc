@@ -32,7 +32,7 @@ The export's chrome has been taken out: the suggestion Gemini offered at the end
 22. [JSON flows as server-driven logic](#22-json-flows-as-server-driven-logic)
 23. [Where TypeScript is still needed: TsFlowRunner](#23-where-typescript-is-still-needed-tsflowrunner)
 24. [A business model around an open-source core](#24-a-business-model-around-an-open-source-core)
-25. [How it relates to Daritas](#25-how-it-relates-to-daritas)
+25. [How it relates to the platform](#25-how-it-relates-to-the-platform)
 26. [Standardisation, local nodes and PLC speeds](#26-standardisation-local-nodes-and-plc-speeds)
 27. [AssemblyScript, and leaving ADS behind](#27-assemblyscript-and-leaving-ads-behind)
 28. [Real-time worst case: still behind TwinCAT](#28-real-time-worst-case-still-behind-twincat)
@@ -1957,32 +1957,32 @@ By keeping the CLI and the node contracts open source, you solve the cold-start 
 
 Once they are hooked on the DX, the enterprise buys the SaaS platform because they need the AI-driven auditing, live simulation, and multi-tenant security to take it to production.
 
-## 25. How it relates to Daritas
+## 25. How it relates to the platform
 
 **Prompt**
 
-> It sounds a little like https://daritas.com that I'm also developing, but for general control systems. Those are off course much harder to assess but the need to do it as well as possible exist, is my rationale
+> It sounds a little like a SaaS product I'm also developing, but for general control systems. Those are off course much harder to assess but the need to do it as well as possible exist, is my rationale
 
 **Reply**
 
-This architecture is actually the perfect evolutionary complement to Daritas.
+This architecture is actually the perfect evolutionary complement to that platform.
 
 When you are building a multi-tenant B2B SaaS focused on AI-driven automated configuration audits and live simulations for Industrial Control Systems, the single biggest hurdle is data normalization. Your rationale is spot on: general control systems are notoriously difficult to assess because the operational logic is usually locked away in proprietary, vendor-specific PLCs or opaque, compiled C code.
 
-By pushing this open-source, capability-based routing mesh to the edge, you are essentially building the ultimate ingestion engine for the Daritas platform. You take the "black box" of distributed hardware and turn it into a transparent, mathematically verifiable graph.
+By pushing this open-source, capability-based routing mesh to the edge, you are essentially building the ultimate ingestion engine for the platform. You take the "black box" of distributed hardware and turn it into a transparent, mathematically verifiable graph.
 
-Here is how this new architecture perfectly feeds the Daritas mission:
+Here is how this new architecture perfectly feeds the platform's mission:
 
 1. Solving the "Cold Start" for ICS Audits
-For Daritas to run a live simulation or an automated audit, it needs a pristine source of truth about the network's state and capabilities. If the edge nodes are exposing AST-extracted schema.json contracts and dynamic EventSubscriptions, Daritas doesn't have to guess how the factory floor is wired. The CLI's MCP server simply hands Daritas the exact topology of the network on a silver platter.
+For the platform to run a live simulation or an automated audit, it needs a pristine source of truth about the network's state and capabilities. If the edge nodes are exposing AST-extracted schema.json contracts and dynamic EventSubscriptions, the platform doesn't have to guess how the factory floor is wired. The CLI's MCP server simply hands the platform the exact topology of the network on a silver platter.
 
 2. The Multi-Tenant Security Model
-This is where the architecture we just designed hands the baton to your backend. The CLI and the broker handle the local execution and capability discovery, but Daritas handles the enterprise governance. Utilizing Supabase PostgreSQL with strict Row-Level Security (RLS), Daritas can securely store the JSON flows and topology maps, ensuring that Organization A can run AI audits on their TsFlowRunner scripts without ever crossing streams with Organization B's control systems.
+This is where the architecture we just designed hands the baton to your backend. The CLI and the broker handle the local execution and capability discovery, but the platform handles the enterprise governance. Utilizing Supabase PostgreSQL with strict Row-Level Security (RLS), the platform can securely store the JSON flows and topology maps, ensuring that Organization A can run AI audits on their TsFlowRunner scripts without ever crossing streams with Organization B's control systems.
 
 3. Supercharging the AI Agents
-Because this network relies on Server-Driven UI and standardized JSON payloads, the Anthropic Agent SDKs you are utilizing within Daritas don't have to scrape legacy interfaces or guess at untyped parameters.
+Because this network relies on Server-Driven UI and standardized JSON payloads, the Anthropic Agent SDKs you are utilizing within the platform don't have to scrape legacy interfaces or guess at untyped parameters.
 
-When a Daritas agent runs an audit to see if a critical cooling system is properly configured, it is communicating via MCP directly with the EventProvider interfaces. It becomes a closed-loop system: Daritas acts as the "cloud brain" that maps organizational automation knowledge, while the decoupled edge nodes execute the physical commands.
+When a platform agent runs an audit to see if a critical cooling system is properly configured, it is communicating via MCP directly with the EventProvider interfaces. It becomes a closed-loop system: the platform acts as the "cloud brain" that maps organizational automation knowledge, while the decoupled edge nodes execute the physical commands.
 
 You are completely right that assessing general systems is a massive undertaking, but the approach of forcing the edge to self-describe via strict schemas is arguably the only way to make it scalable.
 
@@ -2006,7 +2006,7 @@ Instead of routing payloads through a local MQTT broker, the Orchestrator spins 
 
 Zero-Copy Execution: By utilizing SharedArrayBuffer, the nodes can pass telemetry data back and forth by simply writing to shared memory.
 
-The Interface: The nodes still expose the exact same describe() AST schemas and EventProvider contracts. To the CLI and Daritas, the topology looks identical to a distributed network, but under the hood, it's a blisteringly fast in-process mesh.
+The Interface: The nodes still expose the exact same describe() AST schemas and EventProvider contracts. To the CLI and the platform, the topology looks identical to a distributed network, but under the hood, it's a blisteringly fast in-process mesh.
 
 2. WebAssembly & Program Synthesis (The Real Banger)
 If you want to achieve true microsecond deterministic execution while maintaining maximum security, WebAssembly (Wasm) is the answer. This is where your architecture can leapfrog traditional PLCs.
@@ -2048,7 +2048,7 @@ Here is why AssemblyScript fits so perfectly into your architecture, and where i
 
 The Strategic Advantages of AssemblyScript
 1. The TypeScript Continuum
-Your entire orchestration layer, AST extraction, and CLI are built around TypeScript. AssemblyScript uses a strict variant of TS syntax. This means the Anthropic agents in your Daritas platform don't have to learn a completely new paradigm (like Rust's borrow checker) to synthesize edge logic. The AI can generate standard JSON flows, and a lightweight compiler can map those flows directly into AS syntax using the exact same mental models and interfaces your network already relies on.
+Your entire orchestration layer, AST extraction, and CLI are built around TypeScript. AssemblyScript uses a strict variant of TS syntax. This means the Anthropic agents in your platform don't have to learn a completely new paradigm (like Rust's borrow checker) to synthesize edge logic. The AI can generate standard JSON flows, and a lightweight compiler can map those flows directly into AS syntax using the exact same mental models and interfaces your network already relies on.
 
 2. Just-In-Time Edge Compilation
 The Rust toolchain is incredibly powerful, but it is heavy. You cannot easily embed cargo and rustc inside a lightweight edge node to compile logic on the fly.
@@ -2071,7 +2071,7 @@ Tier 1 (JSON Flows): Orchestration, simple state machines, network-wide event wi
 
 Tier 1.5 (AssemblyScript/Wasm): Synthesized directly from JSON or AI prompts. Handles the sub-millisecond deterministic control loops and high-speed sensor ingestion. Extremely fast to compile and deploy.
 
-Tier 2 (Rust/C++ Wasm): For when you grow out of pure logic. Heavy algorithmic processing, machine vision edge processing, or complex data compression before sending it back up to the Daritas SaaS layer.
+Tier 2 (Rust/C++ Wasm): For when you grow out of pure logic. Heavy algorithmic processing, machine vision edge processing, or complex data compression before sending it back up to the SaaS layer.
 
 By supporting a generic Wasm execution sandbox, you don't actually have to choose. The orchestrator just loads a .wasm file. It doesn't care if it was compiled from AssemblyScript in 10 milliseconds by the local CLI, or cross-compiled from Rust by a cloud CI/CD pipeline.
 
@@ -2092,7 +2092,7 @@ TwinCAT cheats the system (in the best way possible) by essentially hijacking a 
 To keep this architecture viable without having to engineer a custom hypervisor, you have to draw a hard line on where this mesh operates, or change the hardware it runs on. Here are the two realistic paths forward:
 
 1. The Domain Boundary (Soft Real-Time vs. Hard Real-Time)
-The most economically reasonable approach for Daritas and the open-source mesh is to admit you are not building a motion controller.
+The most economically reasonable approach for the platform and the open-source mesh is to admit you are not building a motion controller.
 
 Hard Real-Time (The PLC's Job): Servo drives, high-speed CNC synchronization, and sub-millisecond safety loops remain the domain of TwinCAT, Siemens, or dedicated microcontrollers.
 
@@ -2184,7 +2184,7 @@ A fraction of a millisecond later, the EtherCAT master flushes that memory block
 The Beauty of the Abstraction
 To the physical hardware, it looks like a traditional, ultra-fast, hard-coded C application.
 
-But to Daritas and your CLI Orchestrator, this Linux PLC is just another node exposing a schema.json. It listens to your MQTT broker for orchestration commands (e.g., "Load this new cooling logic binary") and telemetry routing, but the actual microsecond control loops happen synchronously inside the PLC’s memory space.
+But to the platform and your CLI Orchestrator, this Linux PLC is just another node exposing a schema.json. It listens to your MQTT broker for orchestration commands (e.g., "Load this new cooling logic binary") and telemetry routing, but the actual microsecond control loops happen synchronously inside the PLC’s memory space.
 
 You get the deterministic I/O access of a $5,000 industrial controller, driven by AI-auditable, version-controlled AssemblyScript logic deployed over an open-source mesh.
 
@@ -2256,7 +2256,7 @@ wasm_runtime_register_natives("env", native_symbols, sizeof(native_symbols) / si
 The End Result
 Once this C daemon/TcCOM object is running on the CX8190, it acts as a permanent host.
 
-Your CLI orchestrator or Daritas agent can send a brand new compiled AssemblyScript .wasm binary over MQTT to this daemon. The daemon dynamically loads the new binary into the WAMR sandbox, where it immediately begins executing in the 1ms cyclic loop, directly manipulating the EtherCAT process image via the write_io_bit import.
+Your CLI orchestrator or platform agent can send a brand new compiled AssemblyScript .wasm binary over MQTT to this daemon. The daemon dynamically loads the new binary into the WAMR sandbox, where it immediately begins executing in the 1ms cyclic loop, directly manipulating the EtherCAT process image via the write_io_bit import.
 
 You achieve $500 bare-metal industrial control, but the logic is dynamically managed by your modern, typescript-friendly mesh.
 
@@ -2359,7 +2359,7 @@ By splitting the architecture this way, the lack of hard real-time in WAMR becom
 
 The Legacy PLC (Hard Real-Time): Continues to run safety-critical logic, high-speed motion control, and immediate I/O protections (like emergency stops). It operates in the 1ms domain.
 
-The WAMR Node (Firm Real-Time): Handles the Daritas orchestration, dynamic capability routing, external API aggregation, and complex algorithmic logic. It operates in the 5ms to 10ms domain.
+The WAMR Node (Firm Real-Time): Handles the platform orchestration, dynamic capability routing, external API aggregation, and complex algorithmic logic. It operates in the 5ms to 10ms domain.
 
 If someone deploys a flawed .wasm script that contains an infinite loop, the WAMR thread hangs. But because it is isolated in user-space, the TwinCAT kernel continues ticking, the EtherCAT bus stays alive, and the legacy PLC safely drops into a fallback state. You get the modern RPC/WASM mesh without compromising the deterministic safety of the legacy iron.
 
@@ -2389,7 +2389,7 @@ The Logic: The user-space WAMR daemon must toggle a specific boolean in the shar
 The PLC Gatekeeper: A timer block (TON) in the PLC monitors that bit. If the timer exceeds 50ms without a toggle (meaning the WASM engine hung, the AI generated an infinite loop, or the user-space OS preempted it too long), the PLC unconditionally drops the machine into a safe stop state.
 
 2. The AI Veto (The Fast Stop)
-If Daritas or the edge AI detects an anomaly that the legacy PLC isn't smart enough to see (e.g., an audio signature from a mic indicating the cutting tool is chattering and about to snap), the WASM logic fires a stop command.
+If the platform or the edge AI detects an anomaly that the legacy PLC isn't smart enough to see (e.g., an audio signature from a mic indicating the cutting tool is chattering and about to snap), the WASM logic fires a stop command.
 
 The PLC Gatekeeper: The PLC logic is hardcoded to OR the WASM's stop request with its own physical sensors. IF (Physical_EStop OR WASM_EStop_Request) THEN Blade_Run := FALSE; The AI can always stop the machine, even if the PLC thinks everything is fine.
 
@@ -2401,4 +2401,4 @@ The PLC Gatekeeper: The PLC evaluates the request against its hardcoded, immutab
 Why This is the Perfect Hybrid
 By writing a few dozen lines of "crude" Structured Text in the legacy PLC, you have completely de-risked the deployment of AI-synthesized code.
 
-You can use Daritas to dynamically synthesize and deploy brilliant, complex optimization algorithms written in AssemblyScript down to the WAMR edge node a hundred times a day. If a prompt hallucinated or a bug slipped through, the worst-case scenario is that the PLC gatekeeper rejects the command or the heartbeat fails and the machine halts. The blade never swings when it shouldn't.
+You can use the platform to dynamically synthesize and deploy brilliant, complex optimization algorithms written in AssemblyScript down to the WAMR edge node a hundred times a day. If a prompt hallucinated or a bug slipped through, the worst-case scenario is that the PLC gatekeeper rejects the command or the heartbeat fails and the machine halts. The blade never swings when it shouldn't.

@@ -153,7 +153,7 @@ The projection makes Source RPC components visible to the plant. An Edge applica
 
 **Never launder provenance.** An ingested value republished through this host's own projection would appear to the plant as *this* Edge Node's data, which it is not. Ingested Devices are not re-projected under our identity; where a bridge is genuinely wanted, it is a stated configuration that keeps the original Group and Edge Node identity visible, and the two Sparkplug sessions of §6 stay separate so a loop is structurally impossible rather than merely unlikely.
 
-**Where this leaves Source Assess**, since the question prompted this section: not here. Assess continues to consume plant data as a committed JSON specification a customer can produce themselves, without trusting our tooling, without a live path out of the plant and without the data-governance conversation a continuous feed into an AI advisor would require (companion, §10.5). Ingestion serves Edge applications *inside* the plant, which is a different boundary and a different trust question.
+**Where this leaves the assessment product**, since the question prompted this section: not here. It continues to consume plant data as a committed JSON specification a customer can produce themselves, without trusting our tooling, without a live path out of the plant and without the data-governance conversation a continuous feed into an AI advisor would require (companion, §10.5). Ingestion serves Edge applications *inside* the plant, which is a different boundary and a different trust question.
 
 ## 8. What already exists and is reused
 

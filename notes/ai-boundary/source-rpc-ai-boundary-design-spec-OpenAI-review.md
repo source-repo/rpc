@@ -634,7 +634,7 @@ That preserves the commercial knife without making an absolute security guarante
 
 ### “No AI modelling with dangerous machines”
 
-This appears to be either a wording error or an overreach. It directly conflicts with Source Assess, whose purpose includes modelling critical industrial systems. 
+This appears to be either a wording error or an overreach. It directly conflicts with an assessment product whose purpose includes modelling critical industrial systems. 
 
 Replace it with:
 

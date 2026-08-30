@@ -129,7 +129,7 @@ An application can opt into a domain `TopologyAuthority` when it requires:
 * globally serialised structural mutations;
 * stronger administrative-domain validation.
 
-Daritas may reasonably choose this profile for a managed plant model because topology changes are rare control-plane operations. Source RPC itself should not make it compulsory for a browser, a small device, or a self-contained industrial host.
+A managed-plant product may reasonably choose this profile for a managed plant model because topology changes are rare control-plane operations. Source RPC itself should not make it compulsory for a browser, a small device, or a self-contained industrial host.
 
 ## Cycles must be “detected invalid topology,” not normal tolerated topology
 
@@ -566,7 +566,7 @@ For the **generic Source RPC framework**:
 
 > Use a host-authoritative topology core with mandatory cycle detection and explicit invalid status. Make coordinated strict topology an optional profile or adapter.
 
-For a **Daritas deployment where the graph is centrally administered or ownership affects control authority**:
+For a **managed deployment where the graph is centrally administered or ownership affects control authority**:
 
 > Use the coordinated profile, because strict acyclicity, complete reverse indexes, and no-orphan deletion are worth the rare control-plane mutation dependency.
 

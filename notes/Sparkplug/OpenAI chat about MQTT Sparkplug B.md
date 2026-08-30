@@ -14,8 +14,8 @@ A Source RPC message can technically be encapsulated inside Sparkplug B. Sparkpl
 
 But there are two very different products hiding behind the word “encapsulate”:
 
-1. **Opaque tunnelling:** Sparkplug carries a private Source RPC byte frame that only Daritas understands.
-2. **Native projection:** Source Edge components appear to ordinary Sparkplug hosts as Edge Nodes, Devices, metrics, state and commands.
+1. **Opaque tunnelling:** Sparkplug carries a private Source RPC byte frame that only our own peers understand.
+2. **Native projection:** Source RPC components appear to ordinary Sparkplug hosts as Edge Nodes, Devices, metrics, state and commands.
 
 The second is considerably more valuable commercially.
 
@@ -33,7 +33,7 @@ SCADA / MES / historian / standard MQTT tools
                     │
                  Source RPC
                     │
-     Source Edge components, MCP, queues,
+     Source RPC components, MCP, queues,
      browser peers, PLC and runtime adapters
 ```
 
@@ -61,9 +61,9 @@ That separation was introduced precisely because raw remote properties have no c
 
 A natural mapping is:
 
-| Source Edge / Source RPC | Sparkplug B representation |
+| Source RPC | Sparkplug B representation |
 |---|---|
-| One Source Edge runtime or gateway | Sparkplug Edge Node |
+| One Source RPC runtime or gateway | Sparkplug Edge Node |
 | Selected externally meaningful component | Sparkplug Device |
 | Component class or profile | Sparkplug Template, where useful |
 | Stable, read-only `props` | DBIRTH/NBIRTH metadata, properties or read-only metrics |
@@ -95,7 +95,7 @@ Instead:
 - retain a stable Sparkplug Device ID;
 - expose physical parent, logical owner and owner epoch as metadata when useful;
 - never change a Device ID merely because its logical owner changed;
-- leave the complete graph in Source Assess and Source RPC.
+- leave the complete graph in the assessment product and Source RPC.
 
 This is also a good security boundary. An internal helper component, queue worker or MCP service should not automatically become visible to the plant SCADA system.
 
@@ -129,7 +129,7 @@ A proposed adapter API might look like:
 ```ts
 const projection = new SparkplugProjection({
   groupId: 'plant-a',
-  edgeNodeId: 'source-edge-01',
+  edgeNodeId: 'plant-edge-01',
   rpc,
 });
 
@@ -182,7 +182,7 @@ The `write` mapping must be an explicit allowlist. It must never be generated au
 
 Source RPC explicitly distinguishes queries, idempotent commands and non-repeatable commands, and distinguishes a definite transport failure from losing the answer after a command may have executed. Sparkplug has no standard equivalent for those RPC result semantics. ([GitHub](https://github.com/source-repo/rpc))
 
-For native Sparkplug commands, successful completion should normally be confirmed by the resulting state update. A Daritas-specific profile could additionally publish:
+For native Sparkplug commands, successful completion should normally be confirmed by the resulting state update. A vendor-specific profile could additionally publish:
 
 ```text
 Command/Last/RequestId
@@ -191,7 +191,7 @@ Command/Last/Error
 Command/Last/CompletedAt
 ```
 
-but these would be Daritas conventions, not generic Sparkplug RPC.
+but these would be vendor conventions, not generic Sparkplug RPC.
 
 # Why a complete transparent tunnel is imperfect
 
@@ -278,12 +278,12 @@ An MQTT connection carries one Will topic and payload, so one connection cannot 
 The clean initial implementation is therefore two logical MQTT sessions, even when both use the same broker:
 
 ```text
-MQTT client: source-edge-01-sparkplug
+MQTT client: plant-edge-01-sparkplug
   topics: spBv1.0/...
   will:   NDEATH
   role:   standard plant interoperability
 
-MQTT client: source-edge-01-rpc
+MQTT client: plant-edge-01-rpc
   topics: msgrpc/v2/...
   will:   retained Source RPC offline presence
   role:   rich Source RPC network
@@ -343,7 +343,7 @@ This should be documented as:
 
 not as native Sparkplug RPC.
 
-A normal Sparkplug host would discover the three byte metrics but would not understand their contents. Only Daritas-aware peers would participate.
+A normal Sparkplug host would discover the three byte metrics but would not understand their contents. Only peers that know the private frame would participate.
 
 # Security boundary
 
@@ -381,7 +381,7 @@ The adapter should therefore:
 
 This is a much stronger marketing claim than merely putting proprietary bytes in a standard payload:
 
-> **Source Edge exposes an intentionally limited, standards-based industrial interface while its AI and engineering services remain behind a controlled policy boundary.**
+> **The product exposes an intentionally limited, standards-based industrial interface while its AI and engineering services remain behind a controlled policy boundary.**
 
 # Recommended implementation order
 
@@ -398,11 +398,11 @@ Build this first:
 - timestamps, aliases and bounded metric names;
 - no plant commands.
 
-This already demonstrates useful integration with SCADA, MES, historians and Source Assess.
+This already demonstrates useful integration with SCADA, MES, historians and an assessment product.
 
-## 2. Source Assess integration
+## 2. Assessment integration
 
-Let Source Assess consume the Sparkplug projection and connect:
+Let an assessment product consume the Sparkplug projection and connect:
 
 ```text
 assessed behaviour
@@ -445,7 +445,7 @@ Build the byte tunnel only when a paid deployment has a concrete need that the n
 
 # Recommended product statement
 
-> **Source Edge uses Sparkplug B as its standard plant-facing interoperability layer. Selected Source Edge components appear as discoverable Sparkplug Edge Nodes and Devices, with current state and carefully controlled commands. Source RPC remains the richer internal fabric for typed orchestration, browser peers, engineering tools and MCP.**
+> **The product uses Sparkplug B as its standard plant-facing interoperability layer. Selected components appear as discoverable Sparkplug Edge Nodes and Devices, with current state and carefully controlled commands. Source RPC remains the richer internal fabric for typed orchestration, browser peers, engineering tools and MCP.**
 
 That is both technically honest and commercially stronger than saying Source RPC has merely been wrapped inside Sparkplug.
 
@@ -472,7 +472,7 @@ The peer to peer limitation is drastic. It lobotomizes matt back to an old style
 
 # Do not cancel peer-to-peer-cancel only the idea that Sparkplug must carry the whole mesh
 
-Source RPC’s peer model is too central to Source Edge to discard. Its defining value is that named peers can both call and serve, regardless of whether they sit on MQTT, WebSocket, behind NAT, or in a browser. The existing Source RPC bus already demonstrates that a relay can preserve this logical peer model where direct routing is unavailable. ([GitHub](https://github.com/source-repo/rpc))
+Source RPC’s peer model is too central to the product to discard. Its defining value is that named peers can both call and serve, regardless of whether they sit on MQTT, WebSocket, behind NAT, or in a browser. The existing Source RPC bus already demonstrates that a relay can preserve this logical peer model where direct routing is unavailable. ([GitHub](https://github.com/source-repo/rpc))
 
 What I would abandon as a **default architecture** is:
 
@@ -515,9 +515,9 @@ More importantly, Sparkplug is still publish/subscribe for data. Multiple Host A
 
 # Recommended deployment profiles
 
-## 1. Managed Source Edge network: retain direct logical peer-to-peer
+## 1. Managed network: retain direct logical peer-to-peer
 
-This should be the normal Source Edge architecture:
+This should be the normal architecture:
 
 ```text
                          MQTT broker
@@ -545,14 +545,14 @@ The security argument does not require sacrificing peer-to-peer. Sparkplug itsel
 
 Source RPC already supplements this with authenticated peer names, per-frame signing and replay protection. ([GitHub](https://github.com/source-repo/rpc))
 
-Therefore, in an environment Daritas controls, the security policy can be:
+Therefore, in an environment the vendor controls, the security policy can be:
 
 ```text
 SCADA host:
   read spBv1.0/#
   write approved NCMD/DCMD topics
 
-Source Edge peer A:
+Source RPC peer A:
   write its own Sparkplug data topics
   read its approved Sparkplug command topics
 
@@ -578,7 +578,7 @@ Some customers will insist that:
 In that profile, accept the Sparkplug topology honestly:
 
 ```text
-Source Edge components inside Edge Node A
+Source RPC components inside Edge Node A
                   │
                   │ local calls
                   ▼
@@ -586,7 +586,7 @@ Source Edge components inside Edge Node A
                   │
              Sparkplug
                   │
-        Source Edge Command Host
+        Source RPC Command Host
                   │
              Sparkplug
                   ▼
@@ -594,7 +594,7 @@ Source Edge components inside Edge Node A
                   │
                   │ local calls
                   ▼
-Source Edge components inside Edge Node B
+Source RPC components inside Edge Node B
 ```
 
 This does **not** require the host to control every calculation or every I/O operation. Each Edge Node can remain autonomous:
@@ -692,7 +692,7 @@ A private relay would therefore need to reconstruct:
 
 At that point it is no longer “simple Sparkplug encapsulation.” It is a **Source RPC relay protocol carried by Sparkplug metrics**.
 
-That is legitimate, but it should be labelled as a Daritas extension rather than native Sparkplug RPC.
+That is legitimate, but it should be labelled as a vendor extension rather than native Sparkplug RPC.
 
 # What the relay must not do
 
@@ -757,7 +757,7 @@ It should not silently say:
 
 # A dual-role peer is possible, but is probably the wrong answer
 
-Technically, every Source Edge runtime could act as both:
+Technically, every Source RPC runtime could act as both:
 
 - a Sparkplug Edge Node publishing its own state;
 - a Sparkplug Host Application sending commands to other Edge Nodes.
@@ -780,7 +780,7 @@ It amounts to recreating Source RPC badly inside Sparkplug. A separate tightly c
 
 ## Keep
 
-- Source RPC peer-to-peer as the native Source Edge model.
+- Source RPC peer-to-peer as the native model.
 - Sparkplug B projection for standard state, discovery, lifecycle and selected commands.
 - A strict Host-mediated deployment profile for customers who demand it.
 - Local autonomy and local direct calls inside each Edge Node or cell.
@@ -830,7 +830,7 @@ Cell A ── Sparkplug ── Command Host ── Sparkplug ── Cell B
 
 The concise decision is:
 
-> **Do not reduce Source Edge to a master/slave system globally. Accept Host-mediated control as one constrained deployment profile. Keep a relay design available, but implement it only when a real Sparkplug-only customer needs cross-node RPC.**
+> **Do not reduce the product to a master/slave system globally. Accept Host-mediated control as one constrained deployment profile. Keep a relay design available, but implement it only when a real Sparkplug-only customer needs cross-node RPC.**
 
 That preserves the valuable architecture without forcing its full complexity into every industrial installation.
 

@@ -148,7 +148,7 @@ Example:
 
 ```ts
 const issueRef: KnowledgeRef = {
-  provider: { peer: 'work', instance: 'linear-daritas' },
+  provider: { peer: 'work', instance: 'linear-main' },
   resource: ['issues'],
   id: linearIssue.id
 }
