@@ -896,13 +896,13 @@ The .NET world does not run socket.io servers; it runs SignalR. So a C# process 
 
 **This is the payoff from the flat frame rather than a new protocol.** A frame carries its own `src` and `tgt`, so a transport needs only "put this frame somewhere, get that one back" — and SignalR's hub methods are exactly that. The mapping is a page long, `toWireFrame`/`fromWireFrame` are reused unchanged, and a hub implements the *same specification* a socket.io peer implements rather than a SignalR-shaped variant of one. That the second binding cost so little is the argument for having done the earlier steps at all.
 
-`SocketIoFrame.ts` became `FlatFrame.ts` accordingly, since the frame was never socket.io's, and `docs/socketio-frame-spec.md` became [`docs/flat-frame-spec.md`](docs/flat-frame-spec.md) with a binding section for each. The neutral frame and its flat form are now **exported** from `@source-repo/rpc`, because a transport can live outside the package and this is what one needs.
+`SocketIoFrame.ts` became `FlatFrame.ts` accordingly, since the frame was never socket.io's, and `docs/socketio-frame-spec.md` became [`docs/flat-frame-spec.md`](https://github.com/source-repo/rpc/blob/main/docs/flat-frame-spec.md) with a binding section for each. The neutral frame and its flat form are now **exported** from `@source-repo/rpc`, because a transport can live outside the package and this is what one needs.
 
 **Client only, and there will not be a server.** A SignalR server *is* ASP.NET Core; there is nothing to host one with from Node. The direction is fixed — the .NET process is the hub and this dials in — which is the direction the problem has anyway.
 
 **The frame travels as an object rather than as bytes**, the one place this binding differs in substance. SignalR has a serialization layer and typed hub methods; handing it a blob we encoded ourselves would mean the hub receives `byte[]` and decodes it by hand, throwing away the one thing SignalR does for a C# author. `codec` therefore selects the hub protocol instead of doing the encoding.
 
-A reference hub is in [`packages/signalr/csharp/`](packages/signalr/csharp/) — frame records, routing, the `IRpcResponder` a process implements, and `RpcEvents` for what it pushes. **It compiles and it runs**: `csharp/testhost` hosts it, and `Interop.test.ts` drives a real `RpcClient` against it over a real SignalR connection — a call, a thrown exception, a subscription, an unsubscribe, and the event cursor. Those tests skip without a .NET SDK, with `SOURCE_RPC_REQUIRE_SIGNALR` to turn the skip into a failure the way the broker suites do.
+A reference hub is in [`packages/signalr/csharp/`](https://github.com/source-repo/rpc/tree/main/packages/signalr/csharp) — frame records, routing, the `IRpcResponder` a process implements, and `RpcEvents` for what it pushes. **It compiles and it runs**: `csharp/testhost` hosts it, and `Interop.test.ts` drives a real `RpcClient` against it over a real SignalR connection — a call, a thrown exception, a subscription, an unsubscribe, and the event cursor. Those tests skip without a .NET SDK, with `SOURCE_RPC_REQUIRE_SIGNALR` to turn the skip into a failure the way the broker suites do.
 
 Events are the part worth reading twice, because the hub is where a peer's *observability* comes from and the semantics are easy to get subtly wrong. The count runs whether or not anyone is subscribed — a subscriber that joins late wants to know how many went past while it was away, and a counter that stood still cannot tell it. A repeated subscribe is one subscription, answered `ok - already exists`, because a client replaying after a reconnect must not end up served twice. And a subscription is keyed by peer name rather than connection id, so a reconnecting peer keeps receiving without re-subscribing.
 
@@ -910,7 +910,7 @@ Separate package because `@microsoft/signalr` brings 161 packages with it, and e
 
 ### socket.io speaks the same protocol, in one flat frame
 
-The last of the three steps in `docs/wire-format-parity.md`, and the one the whole exercise was for: a peer written outside TypeScript now implements msgrpc **once**. The new layout is written down in [`docs/flat-frame-spec.md`](docs/flat-frame-spec.md).
+The last of the three steps in `docs/wire-format-parity.md`, and the one the whole exercise was for: a peer written outside TypeScript now implements msgrpc **once**. The new layout is written down in [`docs/flat-frame-spec.md`](https://github.com/source-repo/rpc/blob/main/docs/flat-frame-spec.md).
 
 The old frame was `JSON header` + `'$'` + `msgpack(Message)`, and its real cost was never the nesting — it was **two encodings in one frame**, which means a boundary that has to be found before either can be read. Because the header is JSON, a peer name containing a `$` puts one inside a quoted string where it is data rather than punctuation, so finding it means walking the bytes with JSON's own quoting rules: brace depth, string state, backslash escapes, and a 1024-byte limit past which frames are dropped. That is `findHeaderEnd`, and `Framing.test.ts` and `Resilience.test.ts` exist because this library got it wrong first. Asking a third-party implementer to reproduce it byte-exactly, on pain of silently losing frames, was the actual barrier.
 
@@ -1485,7 +1485,7 @@ A fake built from a contract answers the same value every time, which is enough 
 
 ### Documentation
 
-- Three task-shaped guides that cross both packages: [deploying a network](docs/deploying-a-network.md), [writing a simulator](docs/writing-a-simulator.md), and [the security model](docs/security-model.md). The package READMEs stay the complete reference, since they are also the npm pages.
+- Three task-shaped guides that cross both packages: [deploying a network](https://github.com/source-repo/rpc/blob/main/docs/deploying-a-network.md), [writing a simulator](https://github.com/source-repo/rpc/blob/main/docs/writing-a-simulator.md), and [the security model](https://github.com/source-repo/rpc/blob/main/docs/security-model.md). The package READMEs stay the complete reference, since they are also the npm pages.
 - The front page now says what this is for and, early, who should use [tRPC](https://trpc.io) instead. Both package READMEs were reordered — the browser console was the last section of the CLI README and a 42-row flag table was the third screen.
 
 ### Corrections to the documentation
