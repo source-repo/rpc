@@ -100,7 +100,7 @@ test.serial('mqtt: DCMD reaches Source RPC as the gateway principal and is confi
     }
 
     const serverName = name('pump-controller')
-    const runtimeId = name('source-edge')
+    const runtimeId = name('plant-edge')
     const groupId = name('plant')
     const edgeNodeId = name('source-gateway')
     const deviceId = 'pump-7'

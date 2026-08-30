@@ -2,9 +2,9 @@ import test from 'ava'
 import { sourceSparkGatewayClientIds } from './Gateway.js'
 
 test('dual-session client IDs are deterministic and distinct', (t) => {
-    t.deepEqual(sourceSparkGatewayClientIds('source-edge-01'), {
-        rpc: 'source-edge-01-rpc',
-        sparkplug: 'source-edge-01-sparkplug'
+    t.deepEqual(sourceSparkGatewayClientIds('plant-edge-01'), {
+        rpc: 'plant-edge-01-rpc',
+        sparkplug: 'plant-edge-01-sparkplug'
     })
 })
 

@@ -47,17 +47,17 @@ Sparkplug and Source RPC cannot safely share one MQTT connection: an MQTT sessio
 ```ts
 const gateway = await SourceSparkGateway.connect({
     url: 'mqtts://broker.example',
-    runtimeId: 'source-edge-01',
+    runtimeId: 'plant-edge-01',
     groupId: 'plant-a',
     edgeNodeId: 'source-rpc-gateway',
-    rpc: { mqtt: { username: 'source-edge-01-rpc', password: rpcPassword } },
-    sparkplug: { mqtt: { username: 'source-edge-01-sparkplug', password: sparkplugPassword } }
+    rpc: { mqtt: { username: 'plant-edge-01-rpc', password: rpcPassword } },
+    sparkplug: { mqtt: { username: 'plant-edge-01-sparkplug', password: sparkplugPassword } }
 })
 
 // gateway.rpc is the Source RPC principal; gateway.sparkplug.session is the Edge Node session.
 ```
 
-This opens `source-edge-01-rpc` for `msgrpc/v2/...` and `source-edge-01-sparkplug` for `spBv1.0/...`. Production deployments should issue separate credentials or client certificates for the two identities. The runtime refuses a conflicting client ID, a non-clean Sparkplug session, or an MQTT option that replaces NDEATH.
+This opens `plant-edge-01-rpc` for `msgrpc/v2/...` and `plant-edge-01-sparkplug` for `spBv1.0/...`. Production deployments should issue separate credentials or client certificates for the two identities. The runtime refuses a conflicting client ID, a non-clean Sparkplug session, or an MQTT option that replaces NDEATH.
 
 [`docs/emqx-acl.conf`](./docs/emqx-acl.conf) is a fail-closed EMQX 5.x policy example for the Edge peer, SCADA Primary Host and an MCP gateway. MQTT ACLs can constrain the MCP gateway to Source RPC topics and target peers, but method-level capability checks still belong at the Source RPC server.
 

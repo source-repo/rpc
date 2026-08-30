@@ -127,7 +127,7 @@ const command = (metrics: MqttSparkplugDeviceCommand['payload']['metrics']): Mqt
         deviceId: 'pump-7',
         payload,
         payloadBytes: encodeSparkplugPayload(payload),
-        gatewayClientId: 'source-edge-01-sparkplug',
+        gatewayClientId: 'plant-edge-01-sparkplug',
         receivedAt: Date.now()
     }
 }

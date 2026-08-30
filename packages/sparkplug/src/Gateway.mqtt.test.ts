@@ -47,7 +47,7 @@ test.serial('mqtt: gateway owns distinct Sparkplug and Source RPC sessions with 
         return
     }
 
-    const runtimeId = name('source-edge')
+    const runtimeId = name('plant-edge')
     const groupId = name('source-spark')
     const edgeNodeId = name('edge')
     const seen: { topic: string; payload: string }[] = []
