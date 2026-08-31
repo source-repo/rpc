@@ -7,6 +7,7 @@ npm install @source-repo/documentation
 ```
 
 - **The aspect is documentation; the format is a kind** — documents carry `document.markdown` or `document.text`, and a `DocumentReader` turns one format into a title, topics and content blocks. Nothing about the aspect, the trees, the links or the wire knows which reader answered.
+- **`published` says where these documents also are** — a base address, absent by default. A document in a folder and the same document on a website are one thing reachable two ways, which is a binding rather than a third arrangement, so each document carries an `http.page` one when it is set and none when it is not. Inventing an address for a library that is only a folder would publish a fact that is not true.
 - **Two arrangements of the same documents** — by folder, which is where they are, and by topic, which is what they are about. A document in both is one document.
 - **A link survives a reorganisation** — a document declaring `id:` in its front matter keeps that id wherever it is filed. One that does not is identified by its path, and moving it breaks links to it: a property of the file, said rather than papered over with a content hash.
 - **Prose becomes references** — a Markdown link landing inside the same library becomes a typed link to that document; one that leaves it stays ordinary text, untouched.

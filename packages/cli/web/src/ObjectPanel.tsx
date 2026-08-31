@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { navigable } from './navigable'
 
 /**
  * One object of an aspect provider, opened.
@@ -80,26 +81,36 @@ const isRefused = (answer: Where | { refused: string }): answer is { refused: st
 /** A value in a row of fields. Objects and arrays are flattened rather than dropped. */
 const shown = (value: unknown): string => (Array.isArray(value) ? value.join(', ') : value !== null && typeof value === 'object' ? JSON.stringify(value) : String(value))
 
+
 /**
  * Where a binding points, in one line.
  *
  * The system's own name for the thing, because that is what somebody would paste into the tool that
- * understands it. This console does not follow a binding and does not offer to: a binding says how
- * an object *can* be reached, not that this page may reach it, and drawing a button would turn a
- * description into an invitation.
+ * understands it.
  */
 const bindingTarget = (target: Binding['target']): string =>
-    target.type === 'rpc' ? `${target.ref.peer} / ${target.ref.instance}` : `${target.system} ${target.id}${target.endpoint ? ` at ${target.endpoint}` : ''}`
+    target.type === 'rpc' ? `${target.ref.peer} / ${target.ref.instance}` : `${target.system} ${target.id}`
 
 const Content = ({ block }: { block: Block }) => {
-    if (block.kind === 'attachment')
+    if (block.kind === 'attachment') {
+        const address = navigable(block.href)
         return (
             <p className="object-block">
-                <a href={block.href} target="_blank" rel="noreferrer noopener">
-                    {block.label ?? block.href}
-                </a>
+                {/* A link only where the address is one the browser may be handed. Anything else is
+                    shown as the text it is: a reader can still see what the peer published, and
+                    nothing in this page will act on it. */}
+                {address ? (
+                    <a href={address} target="_blank" rel="noreferrer noopener">
+                        {block.label ?? address}
+                    </a>
+                ) : (
+                    <span className="muted" title="not an http(s) address, so it is not offered as a link">
+                        {block.label ?? block.href}
+                    </span>
+                )}
             </p>
         )
+    }
     const text = block.kind === 'markdown' ? block.markdown : block.code
     return (
         <div className="object-block">
@@ -173,12 +184,36 @@ export const ObjectPanel = ({ target, access, where, onWhere }: { target: Ref; a
             ))}
             {!!opened.bindings?.length && (
                 <div className="object-bindings">
+                    {/* ## Named, navigable, and no further
+                     *
+                     * A binding still says how an object *can* be reached rather than that this page
+                     * may reach it. The console does not fetch one, embed one, or send anything to
+                     * one, and none of that changes here.
+                     *
+                     * What is new is that an `http(s)` address is drawn as a link. That is a
+                     * different act from the ones above, and the difference is the whole reason it
+                     * is allowed: clicking it is the *browser* making a request as itself, in a tab
+                     * of its own, against an origin that is not this one. This page hands over an
+                     * address and takes no part in what follows - no credential of the console's
+                     * goes with it, and nothing comes back into this origin.
+                     *
+                     * Everything else stays text, including an `opc.tcp://` endpoint, which is the
+                     * common case and is exactly right: a binding a browser cannot open is a fact
+                     * somebody pastes into the tool that can. */}
                     <div className="muted">reachable through</div>
                     {opened.bindings.map((binding, at) => (
                         <div className="object-binding" key={`${binding.kind}-${at}`}>
                             <span className="object-binding-kind">{binding.kind}</span>
                             <span className="object-binding-role">{binding.role}</span>
                             <span className="muted">{bindingTarget(binding.target)}</span>
+                            {binding.target.type === 'external' &&
+                                (navigable(binding.target.endpoint) ? (
+                                    <a className="binding-open" href={navigable(binding.target.endpoint)} target="_blank" rel="noreferrer noopener" title={binding.target.endpoint}>
+                                        {binding.target.endpoint} ↗
+                                    </a>
+                                ) : (
+                                    binding.target.endpoint && <span className="muted">at {binding.target.endpoint}</span>
+                                ))}
                             {binding.fields &&
                                 Object.entries(binding.fields)
                                     .filter(([name]) => name !== 'nodeClass')

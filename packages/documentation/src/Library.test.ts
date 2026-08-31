@@ -329,3 +329,32 @@ test('a topic never opens on a README, because a topic has no folder to speak fo
     t.true(answer.ids.length > 0, 'the topic has documents')
     t.is(answer.defaultChild, undefined, 'a document gathered by subject is not a folder saying what it is')
 })
+
+test('a published library says where a document also is, as a binding and not an aspect', async (t) => {
+    const root = mkdtempSync(join(tmpdir(), 'documentation-published-'))
+    t.teardown(() => rmSync(root, { recursive: true, force: true }))
+    mkdirSync(join(root, 'guide'))
+    writeFileSync(join(root, 'guide', 'components.md'), '# Components\n\nWhat a component is.')
+
+    const docs = new DocumentLibrary(root, { identity: provider, published: 'https://example.com/rpc' })
+    const opened = await docs.openObject(ref('guide/components.md'))
+
+    t.is(opened.bindings?.length, 1)
+    const [binding] = opened.bindings!
+    t.is(binding.kind, 'http.page')
+    // The library's own word for what reaching it that way amounts to: a page is read, not commanded.
+    t.is(binding.role, 'observe')
+    t.is(binding.target.type, 'external')
+    // The extension goes, because a published site serves `guide/components.md` at `guide/components`.
+    t.is(binding.target.type === 'external' ? binding.target.endpoint : undefined, 'https://example.com/rpc/guide/components')
+    // It is a binding rather than a third arrangement: the aspects on offer did not change.
+    t.deepEqual((await docs.aspectList()).map((aspect) => aspect.id).sort(), ['by-folder', 'by-topic'])
+})
+
+test('a library that is only a folder publishes no address, rather than inventing one', async (t) => {
+    const { root, docs } = library()
+    t.teardown(() => rmSync(root, { recursive: true, force: true }))
+
+    const opened = await docs.openObject(ref('guide/deep/internals.md'))
+    t.is(opened.bindings, undefined, 'absent, not an empty list - there is nothing to say')
+})

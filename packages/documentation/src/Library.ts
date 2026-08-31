@@ -1,7 +1,7 @@
 import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { basename, extname, join, relative, resolve, sep } from 'node:path'
 import { rpc, rpcNamespace } from '@source-repo/rpc'
-import { AspectProvider, type AspectDescriptor, type AspectLink, type AspectRef, type ContentBlock, type ObjectDetail, type Occurrence } from '@source-repo/aspects'
+import { AspectProvider, type AspectDescriptor, type AspectLink, type AspectRef, type ContentBlock, type ObjectBinding, type ObjectDetail, type Occurrence } from '@source-repo/aspects'
 import type { RpcRef } from '@source-repo/rpc'
 import { defaultReaders, frontMatter, readerFor, type DocumentReader } from './Reader.js'
 
@@ -72,6 +72,18 @@ export interface DocumentLibraryOptions {
     /** Formats this library understands. Adding one is a reader, not a change to anything here. */
     readonly readers?: readonly DocumentReader[]
     /**
+     * Where these documents are also published, if they are, as a base address.
+     *
+     * A document in a folder and the same document on a website are one thing reachable two ways,
+     * which is what a **binding** says and not what an aspect says - the published copy is not a
+     * third arrangement of the library, it is another interface onto a document that already has
+     * an identity here. So each document carries one when this is set, and none when it is not.
+     *
+     * Absent by default and deliberately so: most libraries are a folder on a disk and nothing
+     * else, and inventing an address for them would publish a fact that is not true.
+     */
+    readonly published?: string
+    /**
      * Who this library is, in the references it hands out.
      *
      * Supplied rather than discovered, because a component genuinely does not know: a peer name and
@@ -124,7 +136,9 @@ export class DocumentLibrary extends AspectProvider<DocumentLibraryProps, Docume
     private readonly root: string
     private readonly readers: readonly DocumentReader[]
     private readonly identity: RpcRef
-    private readonly options: Required<Omit<DocumentLibraryOptions, 'label' | 'readers' | 'identity'>>
+    private readonly options: Required<Omit<DocumentLibraryOptions, 'label' | 'readers' | 'identity' | 'published'>>
+    /** Absent when these documents are only a folder, which is the ordinary case. */
+    private readonly published?: string
     private documents = new Map<string, DocumentRecord>()
     /** Folder path -> what is directly inside it, which is what one branch of the folder tree is. */
     private folders = new Map<string, { readonly folders: string[]; readonly documents: string[] }>()
@@ -136,6 +150,7 @@ export class DocumentLibrary extends AspectProvider<DocumentLibraryProps, Docume
         this.root = resolved
         this.readers = options.readers ?? defaultReaders
         this.identity = options.identity ?? { peer: '', instance: basename(resolved) }
+        this.published = options.published
         this.options = {
             maxDepth: options.maxDepth ?? DEFAULT_MAX_DEPTH,
             maxBytes: options.maxBytes ?? DEFAULT_MAX_BYTES,
@@ -218,7 +233,30 @@ export class DocumentLibrary extends AspectProvider<DocumentLibraryProps, Docume
             fields: { path: document.path, topics: document.topics, words: document.words },
             origin: { system: 'documentation', externalId: document.path, updatedAt: document.modified, retrievedAt: this.state.scannedAt },
             content: read.blocks,
-            links: this.linksIn(read.blocks, document)
+            links: this.linksIn(read.blocks, document),
+            ...(this.publishedAt(document.path) ? { bindings: [this.publishedAt(document.path)!] } : {})
+        }
+    }
+
+    /**
+     * The same document, on the web, when this library knows it is there.
+     *
+     * `observe`, in the library's own word for what reaching it that way amounts to: a published
+     * page is something to read and nothing to command. It describes and does not grant, like every
+     * binding - a reader with no route to that site simply cannot follow it, and nothing here says
+     * they may.
+     *
+     * The extension is dropped because a published site serves `guide/components.md` at
+     * `guide/components`, which is the one thing this has to know about the other side.
+     */
+    private publishedAt(path: string): ObjectBinding | undefined {
+        if (!this.published) return undefined
+        const withoutExtension = path.slice(0, path.length - extname(path).length)
+        const base = this.published.endsWith('/') ? this.published : `${this.published}/`
+        return {
+            kind: 'http.page',
+            role: 'observe',
+            target: { type: 'external', system: 'http', id: withoutExtension, endpoint: `${base}${withoutExtension}` }
         }
     }
 
