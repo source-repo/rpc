@@ -1871,17 +1871,31 @@ textarea.control {
 /* The tree and the object it opened, side by side. A document is read beside the structure it was
    found in, because the structure is why the reader is there - taking it away to show the text
    would answer the question and lose the context that made it worth asking. */
+/* ── One, two or three panes, decided by the room there is ────────────────────────────────────
+ *
+ * Tree, then the rows of the branch it scopes, then the row that was opened. Three depths of one
+ * question - which set, which row, which fields - and where there is width for all three there is
+ * no reason to make somebody trade one for another.
+ *
+ * Wrapped on flex-basis rather than at viewport breakpoints, and that is the point rather than a
+ * shortcut: this same component draws inside the console's middle column and again in the full-page
+ * observer, which are very different widths at the same window size. A breakpoint on the window
+ * would give the narrow one three cramped columns and the wide one an empty third of a screen.
+ * Basis-driven wrapping asks how much room *this* pane has, which is the question that was meant.
+ */
 .tree-and-object {
     display: flex;
+    flex-wrap: wrap;
     gap: 1rem;
     align-items: flex-start;
 }
 .tree-and-object > .collection {
-    flex: 1 1 40%;
+    /* Scope: enough to read a branch name, and the first to give up width. */
+    flex: 1 1 15rem;
     min-width: 0;
 }
 .object-panel {
-    flex: 1 1 60%;
+    flex: 2 1 22rem;
     min-width: 0;
     border-left: 1px solid rgba(127, 127, 127, 0.25);
     padding-left: 1rem;
@@ -2019,7 +2033,9 @@ textarea.control {
 .app.observing .component-body {
     flex: 1 1 auto;
     min-height: 0;
-    flex-wrap: nowrap;
+    /* Wraps, because the scope selector below is a full-width row above the panes - and because a
+       pane with no room left is better under its neighbour than squeezed beside it. */
+    flex-wrap: wrap;
 }
 
 .app.observing .scope-pane {
@@ -2067,7 +2083,7 @@ textarea.control {
  * are the same gesture - open this row - answered by whichever of the two the resource supports.
  */
 .record-panel {
-    flex: 1 1 60%;
+    flex: 2 1 20rem;
     min-width: 0;
     border-left: 1px solid rgba(127, 127, 127, 0.25);
     padding-left: 1rem;
@@ -2116,7 +2132,8 @@ textarea.control {
 /* One branch's children, aligned. The wrap scrolls sideways on its own so a resource with twelve
    columns never makes the page scroll. */
 .branch-table-wrap {
-    flex: 1 1 60%;
+    /* The widest appetite of the three: it holds the columns somebody came to compare. */
+    flex: 3 1 24rem;
     min-width: 0;
     overflow-x: auto;
 }
@@ -2172,4 +2189,14 @@ textarea.control {
 
 .branch-actions-head {
     width: 1%;
+}
+
+/* The scope as a selector: a full-width row above the panes, where a pane would have been a column
+   beside them. */
+.scope-pick {
+    flex: 0 0 100%;
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    margin-bottom: 2px;
 }

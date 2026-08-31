@@ -219,6 +219,8 @@ export const ComponentPanel = ({
     const status = useChannelFact(store, statusOf, undefined)
 
     const tree = useMemo(() => scopeTree(component, types), [component, types])
+    // Nothing under any root: a list of choices rather than a hierarchy to walk.
+    const flatScope = tree.length > 0 && tree.every((node) => !node.children.length)
 
     /**
      * State first where there is one, and otherwise whatever the tree begins with.
@@ -525,10 +527,38 @@ export const ComponentPanel = ({
             {!observing && !error && <p className="muted">Cached props and state, read without a call. Observe to subscribe.</p>}
             {observing && (
                 <div className="component-body">
-                    <div className="scope-pane">
-                        <h4>scope</h4>
-                        <ScopeTree nodes={tree} selected={scope.join('.')} onSelect={setScope} />
-                    </div>
+                    {/* A pane when the scope has depth, a selector when it has not.
+                     *
+                     * `props` and `state` are a real hierarchy and the tree is the way to read one.
+                     * A provider that has neither - an aspect provider, a rack, anything whose
+                     * scope is a list of the resources it serves - gets roots with no children,
+                     * and a tree of those is a flat list wearing a tree's clothes, holding a whole
+                     * column to do it. Derived from the scope rather than declared, because a list
+                     * of choices with nothing under them is something the console can see for
+                     * itself.
+                     *
+                     * The choice matters more on such a node, not less: on an aspect provider it is
+                     * the choice of *which structure* is being looked at, which is the most
+                     * consequential control on the screen. So it moves to the top of it. */}
+                    {flatScope ? (
+                        <div className="scope-pick">
+                            <label className="muted" htmlFor="scope-pick">
+                                scope
+                            </label>
+                            <select id="scope-pick" className="period" value={scope.join('.')} onChange={(event) => setScope(tree.find((node) => node.path.join('.') === event.target.value)?.path ?? scope)}>
+                                {tree.map((node) => (
+                                    <option key={node.path.join('.')} value={node.path.join('.')}>
+                                        {node.name}
+                                    </option>
+                                ))}
+                            </select>
+                        </div>
+                    ) : (
+                        <div className="scope-pane">
+                            <h4>scope</h4>
+                            <ScopeTree nodes={tree} selected={scope.join('.')} onSelect={setScope} />
+                        </div>
+                    )}
                     <div className="value-table">
                         <h4>
                             {listing ? listing.document.fileId : scope.join('.')}
