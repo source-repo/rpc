@@ -116,6 +116,19 @@ export interface RpcGetChildrenParams extends RpcGetListParams {
 
 export interface RpcGetChildrenResult extends RpcGetListResult {
     /**
+     * Which of these children a viewer should open when this branch is opened, if any.
+     *
+     * A fact only the node has. A folder of documentation whose first business is its `README` is
+     * the case it exists for, and "README" is a convention of that domain rather than of consoles:
+     * a viewer that knew the word would be carrying somebody else's filing rule, and would apply it
+     * to a rack of serial ports the first time one had a port called readme.
+     *
+     * Advice, and bounded advice: an id this branch did not answer with is ignored, and a viewer
+     * that already has something open leaves it open, because arriving somewhere and having what
+     * you were reading replaced is worse than one more click.
+     */
+    readonly defaultChild?: string
+    /**
      * Whether each row has children of its own, positionally against `ids` and `data`.
      *
      * Carried beside the rows rather than merged into them, for the reason `ids` already is: a row

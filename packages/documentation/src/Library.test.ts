@@ -273,3 +273,59 @@ test('a link that leaves the library is left as it was written', async (t) => {
     t.regex(String((opened.content?.[0] as { markdown: string }).markdown), /https:\/\/example\.com\/page/, 'still in the text, untouched')
     t.false(opened.links?.some((link) => link.label?.includes('web')))
 })
+
+/**
+ * A folder that has something to say about itself.
+ *
+ * `README` is a convention of documentation, not of consoles - a viewer that knew the word would be
+ * carrying somebody else's filing rule and would apply it to a rack of serial ports the first time
+ * one had a port called readme. So the library says which child opens with a folder, and a viewer
+ * takes it as advice about ids it was already given.
+ */
+const readmeLibrary = () => {
+    const root = mkdtempSync(join(tmpdir(), 'documentation-readme-'))
+    for (const folder of ['both', 'text-only', 'neither', 'nearly']) mkdirSync(join(root, folder))
+    writeFileSync(join(root, 'both', 'README.md'), '# Both\n\nThe Markdown one, which wins.')
+    writeFileSync(join(root, 'both', 'README.txt'), 'The text one, which does not.')
+    writeFileSync(join(root, 'both', 'other.md'), '---\ntopics: onboarding\n---\n\n# Other')
+    writeFileSync(join(root, 'text-only', 'readme.txt'), 'Lower case, and still what the folder says about itself.')
+    writeFileSync(join(root, 'neither', 'notes.md'), '# Notes')
+    // A different document that begins with the same seven letters, which is not the same thing.
+    writeFileSync(join(root, 'nearly', 'readme-first.md'), '# Read me first')
+    return { root, docs: new DocumentLibrary(root, { label: 'Handbook', identity: provider }) }
+}
+
+test('a folder opens on its README, and the Markdown one wins', async (t) => {
+    const { root, docs } = readmeLibrary()
+    t.teardown(() => rmSync(root, { recursive: true, force: true }))
+
+    const answer = await branch(docs, 'by-folder', 'folder:both')
+    t.is(answer.defaultChild, 'folder:both/both/README.md')
+    t.true(answer.ids.includes(answer.defaultChild!), 'and it is one of the ids this branch actually answered with')
+})
+
+test('a folder with no Markdown README opens on whatever README it has', async (t) => {
+    const { root, docs } = readmeLibrary()
+    t.teardown(() => rmSync(root, { recursive: true, force: true }))
+
+    const answer = await branch(docs, 'by-folder', 'folder:text-only')
+    t.is(answer.defaultChild, 'folder:text-only/text-only/readme.txt', 'and the name is matched however it was capitalised')
+})
+
+test('a folder with no README says nothing, and a near miss is not one', async (t) => {
+    const { root, docs } = readmeLibrary()
+    t.teardown(() => rmSync(root, { recursive: true, force: true }))
+
+    t.is((await branch(docs, 'by-folder', 'folder:neither')).defaultChild, undefined)
+    // `readme-first.md` is a document whose name begins the same way and means something else.
+    t.is((await branch(docs, 'by-folder', 'folder:nearly')).defaultChild, undefined)
+})
+
+test('a topic never opens on a README, because a topic has no folder to speak for it', async (t) => {
+    const { root, docs } = readmeLibrary()
+    t.teardown(() => rmSync(root, { recursive: true, force: true }))
+
+    const answer = await branch(docs, 'by-topic', 'topic:onboarding')
+    t.true(answer.ids.length > 0, 'the topic has documents')
+    t.is(answer.defaultChild, undefined, 'a document gathered by subject is not a folder saying what it is')
+})

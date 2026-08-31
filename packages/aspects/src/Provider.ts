@@ -7,6 +7,13 @@ import type { AspectDescriptor, AspectRef, ObjectDetail, Occurrence } from './Mo
 export interface Branch {
     readonly occurrences: readonly Occurrence[]
     readonly total?: number
+    /**
+     * The occurrence in this branch worth opening with it, when there is an obvious one.
+     *
+     * Passed through to the wire unchanged. A folder whose first business is its `README` is the
+     * case; a structure with no such convention says nothing and nothing opens.
+     */
+    readonly defaultChild?: string
 }
 
 /**
@@ -218,6 +225,7 @@ export abstract class AspectProvider<Props extends Record<string, unknown>, Stat
             })),
             hasChildren: branch.occurrences.map((occurrence) => occurrence.hasChildren),
             ...(branch.total !== undefined ? { total: branch.total } : {}),
+            ...(branch.defaultChild !== undefined ? { defaultChild: branch.defaultChild } : {}),
             epoch: this.incarnation,
             revision: this.structureRevision
         }

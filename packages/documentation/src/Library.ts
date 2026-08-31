@@ -92,6 +92,33 @@ const DEFAULT_MAX_DOCUMENTS = 20_000
 const BY_FOLDER = 'by-folder'
 const BY_TOPIC = 'by-topic'
 
+/**
+ * The document a folder opens on, when it has an obvious one.
+ *
+ * A `README` is what a folder says about itself, and opening one costs a reader nothing they were
+ * not about to do. `.md` first and then any other extension, because a folder holding both a
+ * `README.md` and a `README.txt` means the Markdown one - and a folder holding only the second
+ * still has something to say.
+ *
+ * Only by folder. A topic is a set of documents *about* something, gathered from wherever they are
+ * filed, and the README of a topic is not a thing - a document called README that happened to carry
+ * the right topic would be a coincidence, and opening it would look like a rule nobody wrote.
+ *
+ * Case-insensitive on the name and nothing else: `readme` and `README` are the same file to a
+ * person and to most filesystems, while `readme-first` is a different document that would be a
+ * surprising thing to open.
+ */
+const readmeIn = (occurrences: readonly Occurrence[]): string | undefined => {
+    const named = occurrences.filter((one) => {
+        const file = one.fields?.path
+        if (typeof file !== 'string') return false
+        const name = file.includes('/') ? file.slice(file.lastIndexOf('/') + 1) : file
+        return /^readme(\.[^.]+)?$/i.test(name)
+    })
+    const markdown = named.find((one) => String(one.fields?.path ?? '').toLowerCase().endsWith('.md'))
+    return (markdown ?? named[0])?.occurrenceId
+}
+
 @rpcNamespace('documentation')
 export class DocumentLibrary extends AspectProvider<DocumentLibraryProps, DocumentLibraryState> {
     private readonly root: string
@@ -143,9 +170,10 @@ export class DocumentLibrary extends AspectProvider<DocumentLibraryProps, Docume
         ]
     }
 
-    children(aspectId: string, parent: string | undefined): { occurrences: Occurrence[]; total: number } {
+    children(aspectId: string, parent: string | undefined): { occurrences: Occurrence[]; total: number; defaultChild?: string } {
         const occurrences = aspectId === BY_FOLDER ? this.folderBranch(parent) : this.topicBranch(parent)
-        return { occurrences, total: occurrences.length }
+        const opening = aspectId === BY_FOLDER ? readmeIn(occurrences) : undefined
+        return { occurrences, total: occurrences.length, ...(opening ? { defaultChild: opening } : {}) }
     }
 
     /** Where a document appears in one arrangement. A document may be under several topics. */

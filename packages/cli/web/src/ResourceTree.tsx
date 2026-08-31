@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { RpcDataCache, RpcQuestion } from '@source-repo/query'
 import { useRpcData } from './data'
 import type { Ref } from './ObjectPanel'
@@ -35,6 +35,8 @@ interface Branch {
     readonly data: readonly unknown[]
     readonly hasChildren?: readonly boolean[]
     readonly total?: number
+    /** The child this branch says to open with it, if any. Advice, and checked before it is taken. */
+    readonly defaultChild?: string
 }
 
 const field = (row: unknown, name: string): unknown => (row && typeof row === 'object' ? (row as Record<string, unknown>)[name] : undefined)
@@ -285,6 +287,27 @@ const BranchRows = ({
     const question = useMemo(() => branchQuestion(resource, parentId, page, pageSize), [branchQuestion, resource, parentId, page, pageSize])
     const { data, error, fetching } = useRpcData(cache, question, period)
     const branch = data as Branch | undefined
+
+    /**
+     * Open what the branch said to open, once, and only into an empty seat.
+     *
+     * A folder of documentation whose first business is its `README` is what this is for, and the
+     * node is what knows that - the console has no idea which of a hundred filing conventions it is
+     * looking at. Taken only when nothing is open, because arriving in a folder and having the
+     * document you were reading replaced is worse than one more click; and only for an id this
+     * branch actually answered with, because advice that arrived from a peer is input.
+     */
+    const suggested = branch?.defaultChild
+    const taken = useRef<string | undefined>(undefined)
+    useEffect(() => {
+        if (!suggested || selected !== undefined || taken.current === suggested) return
+        const at = branch?.ids.indexOf(suggested) ?? -1
+        if (at < 0) return
+        taken.current = suggested
+        const ref = refOf(branch?.data[at])
+        if (ref && onSelect) onSelect(ref, suggested)
+        else if (onPickRow) onPickRow(suggested)
+    }, [suggested, selected, branch, onSelect, onPickRow])
 
     if (error) return <p className="tree-note error" style={{ paddingLeft: `${depth * 1.1}rem` }}>{String(error)}</p>
     if (!branch) return fetching ? <p className="tree-note muted" style={{ paddingLeft: `${depth * 1.1}rem` }}>reading…</p> : null
