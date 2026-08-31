@@ -1341,7 +1341,7 @@ textarea.control {
 .value-name.branch {
     display: inline-block;
     padding: 2px 0;
-    color: var(--fg);
+    color: var(--text);
     font-size: 12px;
 }
 
@@ -1373,13 +1373,14 @@ textarea.control {
 }
 
 .scope-name:hover {
-    color: var(--fg);
+    color: var(--text);
     background: rgba(38, 46, 58, 0.5);
 }
 
 .scope-name.on {
-    color: var(--fg);
-    background: rgba(38, 46, 58, 0.9);
+    color: var(--text);
+    background: rgba(78, 161, 255, 0.1);
+    box-shadow: inset 2px 0 0 var(--accent);
 }
 
 .value-grid {
@@ -1661,7 +1662,7 @@ textarea.control {
     background: var(--bg);
     border: 1px solid var(--accent);
     border-radius: 4px;
-    color: var(--fg);
+    color: var(--text);
     font-family: var(--mono);
     font-size: 13px;
     padding: 2px 6px;
@@ -1695,7 +1696,7 @@ textarea.control {
     background: var(--bg);
     border: 1px solid var(--line);
     border-radius: 4px;
-    color: var(--fg);
+    color: var(--text);
     font-family: var(--mono);
     font-size: 12px;
     padding: 2px 6px;
@@ -1933,8 +1934,24 @@ textarea.control {
 .object-link {
     text-decoration: underline;
 }
+/* ── What is selected, said the same way in three places ──────────────────────────────────────
+ *
+ * A tinted line with an accent edge down its left, for the scope node, the tree row and the table
+ * row alike. One language, because to a reader they are one idea - this is the thing being shown -
+ * and three different markings for it would read as three different states.
+ *
+ * The whole line rather than the label, which is what an underline on a word could not do. It
+ * matters more since a branch can open a row nobody clicked: a document that appeared because its
+ * folder named it needs to say which row it came from, or the reader is looking at something with
+ * no idea where it sits.
+ */
+.tree-row.on {
+    background: rgba(78, 161, 255, 0.1);
+    box-shadow: inset 2px 0 0 var(--accent);
+}
+
 .tree-selected {
-    text-decoration: underline;
+    color: var(--accent);
 }
 
 /* Fields and bindings on an opened object. A binding is drawn as a statement rather than a control:
@@ -2176,6 +2193,13 @@ textarea.control {
 
 .branch-table tbody tr.on td {
     color: var(--accent);
+    background: rgba(78, 161, 255, 0.1);
+}
+
+/* The edge belongs to the line, so it goes on the first cell rather than the row - a `tr` cannot
+   carry a box-shadow reliably once its cells have backgrounds of their own. */
+.branch-table tbody tr.on td:first-child {
+    box-shadow: inset 2px 0 0 var(--accent);
 }
 
 .branch-table .branch-actions {

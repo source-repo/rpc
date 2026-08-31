@@ -163,7 +163,7 @@ const Node = ({
 
     return (
         <>
-            <div className="tree-row" style={{ paddingLeft: `${depth * 1.1}rem` }}>
+            <div className={`tree-row${selected === id ? ' on' : ''}`} style={{ paddingLeft: `${depth * 1.1}rem` }}>
                 {expandable ? (
                     <button className="tree-toggle" onClick={() => setOpen(!open)} aria-expanded={open} title={open ? 'collapse' : 'expand'}>
                         {open ? '▾' : '▸'}

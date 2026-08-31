@@ -467,7 +467,11 @@ export const ValueGrid = ({
                                 cache={cache}
                                 branchQuestion={branchQuestion}
                                 period={period}
-                                selected={opened}
+                                // Either way a row can be open: through the aspects path into the
+                                // object panel, or by id into the record panel. The line says so in
+                                // both cases, or a document that arrived because its folder named
+                                // it would be showing with nothing to say where it came from.
+                                selected={where?.occurrenceId ?? opened}
                                 onPickRow={opensRows ? setOpened : undefined}
                                 actions={actionsFor(tree.path as string[])}
                                 onAction={onAction}
