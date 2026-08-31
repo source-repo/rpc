@@ -12,6 +12,8 @@ Also here: [OPC UA as an aspect](opc-ua/opc-ua-as-aspect.md) — written against
 
 Also here: [branches and rows](branches-and-rows.md) — how general the console's child-node view is, written after it was built, with the four decisions the serial-port fixture changed marked as such.
 
+Also here: [ways in](ways-in.md) — showing a node's other interfaces in the console, written before anything is built: bindings rather than child nodes, three grades of reach that are not one decision, and default-closed on the shape the AI grants document already has.
+
 Also here: [a knowledge system over Source RPC](knowledge-system-generality/source-rpc-general-knowledge-system-design-spec.md) and [Linear as its first adapter](knowledge-system-generality/source-rpc-linear-knowledge-adapter-design-spec.md) — proposed, not built, and kept mainly for the discipline in them: the rule that Source RPC transports and governs a knowledge capability while a separate provider owns knowledge semantics, and an anti-monster gate every proposed addition has to pass before it may enter the core. The two extensions they ask for are small and land on a seam the library already declared — `shape: 'tree'` says in its own comment that a tree is not served yet. A review against the implementation is appended to the first one.
 
 Also here: field-trial feedback, starting with [the first fresh-agent session](session-feedback-2026-08-01.md) — a Claude with no prior knowledge of the project working the network through the MCP server, whose findings were filed into Linear.
