@@ -1,0 +1,109 @@
+{
+  "schema": 1,
+  "types": {
+    "RackProps": {
+      "kind": "object",
+      "fields": {
+        "host": {
+          "type": {
+            "kind": "string"
+          }
+        },
+        "udev": {
+          "type": {
+            "kind": "string"
+          }
+        }
+      }
+    },
+    "RackState": {
+      "kind": "object",
+      "fields": {
+        "open": {
+          "type": {
+            "kind": "number"
+          }
+        },
+        "faulted": {
+          "type": {
+            "kind": "number"
+          }
+        },
+        "errors": {
+          "type": {
+            "kind": "number"
+          }
+        }
+      }
+    }
+  },
+  "namespaces": {
+    "ports": {
+      "methods": {
+        "resetPort": {
+          "params": [
+            {
+              "kind": "string"
+            }
+          ],
+          "paramNames": [
+            "id"
+          ],
+          "returns": {
+            "kind": "object",
+            "fields": {
+              "port": {
+                "type": {
+                  "kind": "string"
+                }
+              },
+              "status": {
+                "type": {
+                  "kind": "string"
+                }
+              }
+            }
+          },
+          "semantics": "idempotent-command"
+        },
+        "closePort": {
+          "params": [
+            {
+              "kind": "string"
+            }
+          ],
+          "paramNames": [
+            "id"
+          ],
+          "returns": {
+            "kind": "object",
+            "fields": {
+              "port": {
+                "type": {
+                  "kind": "string"
+                }
+              },
+              "status": {
+                "type": {
+                  "kind": "string"
+                }
+              }
+            }
+          },
+          "semantics": "idempotent-command"
+        }
+      },
+      "component": {
+        "snapshot": 1,
+        "props": {
+          "kind": "ref",
+          "name": "RackProps"
+        },
+        "state": {
+          "kind": "ref",
+          "name": "RackState"
+        }
+      }
+    }
+  }
+}

@@ -6,8 +6,8 @@ A two-peer plant to point `source-rpc console` at, and the reason the console ca
 
 ```sh
 npm run build                                    # once, from the repo root
-npm run example:contract                         # extract -> contract.json
-npm run example:build                            # strip   -> dist/plant.ts
+npm run example:display-context:contract                         # extract -> contract.json
+npm run example:display-context:build                            # strip   -> dist/plant.ts
 node examples/display-context/dist/plant.ts      # the plant, on :7843
 source-rpc console --hub http://localhost:7843   # the console, on :7844
 ```
