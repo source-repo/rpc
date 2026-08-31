@@ -66,11 +66,83 @@ const skipWithoutHub = (t: { pass: (message?: string) => void }) => {
     return !HUB_URL
 }
 
-test.before(() => {
+/**
+ * The hub is there *now*, not merely named - and it was there when the workflow started it.
+ *
+ * Those are different claims and the gap between them is minutes. CI builds the hub, waits for its
+ * port, and then runs the whole workspace suite; this file is near the end of it, so by the time
+ * these tests run the port check is four minutes stale. When the hub is gone by then, every test
+ * below hangs in `ready()` until ava gives up, and the run reports `19 tests remained pending after
+ * a timeout` - which names neither the hub nor the reason, and reads like a suite that is simply
+ * slow. It cost a green run being read as a red one and a re-run to tell them apart.
+ *
+ * So the hub is reached once, here, and a failure says so in the words somebody debugging needs:
+ * which hub, how many attempts, and what came back.
+ *
+ * Attempts rather than one, for the reason the MQTT suites already carry: a runner that has just
+ * built five .NET projects and run eleven packages' tests is not a quiet machine, and a first probe
+ * meeting a busy hub is not the same fact as a hub that is gone. Three of them over a few seconds
+ * separates the two without waiting long enough to matter.
+ */
+const HUB_PROBES = 3
+const PROBE_PAUSE_MS = 1000
+/**
+ * Each probe is bounded, and that is the part that makes this work at all.
+ *
+ * The transport retries its first connection on purpose - *"a peer may come up before its hub
+ * does"* - so `ready()` against a hub that is gone does not fail, it keeps trying. An unbounded
+ * probe therefore reproduces the exact failure it was written to replace: the hook hangs, ava times
+ * out, and the report says nothing about a hub. Racing each attempt against a deadline is what turns
+ * "it never came back" into an answer.
+ */
+const PROBE_DEADLINE_MS = 4000
+
+const hubAnswers = async (): Promise<string | undefined> => {
+    let last = 'no attempt was made'
+    for (let attempt = 1; attempt <= HUB_PROBES; attempt++) {
+        const client = clientOn(`probe${attempt}`, false)
+        let timer: ReturnType<typeof setTimeout> | undefined
+        try {
+            const reached = (async () => {
+                await client.ready()
+                // Connected is not answering: a client reports itself ready once negotiation
+                // succeeds, and a hub whose process is wedged can still complete one. So the probe
+                // makes an actual call, which is what every test below depends on.
+                const meter = await client.proxy<{ read(tag: string): Promise<string> }>('meter')
+                await meter.read('temp')
+            })()
+            await Promise.race([
+                reached,
+                new Promise((_, fail) => {
+                    timer = setTimeout(() => fail(new Error(`no answer within ${PROBE_DEADLINE_MS} ms`)), PROBE_DEADLINE_MS)
+                })
+            ])
+            return undefined
+        } catch (e) {
+            last = (e as { message?: string }).message ?? String(e)
+        } finally {
+            if (timer) clearTimeout(timer)
+            await client.close().catch(() => undefined)
+        }
+        if (attempt < HUB_PROBES) await new Promise((wait) => setTimeout(wait, PROBE_PAUSE_MS))
+    }
+    return last
+}
+
+test.before(async () => {
     // The same guard the broker suites use, and for the same reason: skipping is right on a laptop
     // with no .NET and wrong anywhere it matters.
-    if (!HUB_URL && process.env.SOURCE_RPC_REQUIRE_SIGNALR)
-        throw new Error('SOURCE_RPC_REQUIRE_SIGNALR is set, but SOURCE_RPC_TEST_SIGNALR_HUB names no hub - these tests must not be skipped here')
+    if (!HUB_URL) {
+        if (process.env.SOURCE_RPC_REQUIRE_SIGNALR)
+            throw new Error('SOURCE_RPC_REQUIRE_SIGNALR is set, but SOURCE_RPC_TEST_SIGNALR_HUB names no hub - these tests must not be skipped here')
+        return
+    }
+    const refused = await hubAnswers()
+    if (refused)
+        throw new Error(
+            `the SignalR hub at ${HUB_URL} did not answer after ${HUB_PROBES} attempts: ${refused}. ` +
+                'It was reachable when the workflow started it, so it has gone or stopped answering since - check signalr-hub.err rather than these tests.'
+        )
 })
 
 /**
