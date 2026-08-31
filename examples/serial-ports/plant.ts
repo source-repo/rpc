@@ -347,6 +347,11 @@ class SerialPorts extends RpcComponent<RackProps, RackState> {
                 // no capability whatsoever - `resetPort` is an ordinary `@rpc` method, already in
                 // `describe()`, already ruled on. What this carries is the one fact a viewer cannot
                 // work out for itself: which method belongs to which row.
+                // Neither declares `appliesTo`, which means leaves - and leaves is what these are
+                // about. A cabinet is not a thing `resetPort` can be called on, and a console that
+                // drew the button there would be offering a command that throws, which an operator
+                // discovers by pressing it. On a flat list the default shows every row, because
+                // every row of a list is a leaf.
                 actions: [
                     { method: 'resetPort', label: 'reset' },
                     { method: 'closePort', label: 'close', confirm: true }

@@ -366,6 +366,22 @@ export interface RpcDataAction {
      * a method `archive`.
      */
     readonly confirm?: boolean
+    /**
+     * Which rows this method is about, where the resource's rows are not all the same kind of thing.
+     *
+     * A flat list has no such problem: every row of it is the same shape, so an action about one is
+     * about all of them. A **tree** is different. A rack whose branches are cabinets and whose
+     * leaves are ports has one `resetPort`, and it is about the ports - offering it on a cabinet is
+     * offering a button that throws, which an operator learns by pressing it.
+     *
+     * Absent means **leaves**, and that default is chosen rather than convenient. It changes nothing
+     * for a list, whose rows have no children and are therefore all leaves; and for a tree it is the
+     * safe half, because the failure it prevents is a command offered against the wrong kind of
+     * thing. A node whose branches really are actionable - restart this hub, archive this folder -
+     * says so, and saying so is the author's claim rather than the viewer's inference. The same rule
+     * `confirm` follows one field up.
+     */
+    readonly appliesTo?: 'leaves' | 'branches' | 'all'
 }
 
 export interface RpcDataPresentationHint {

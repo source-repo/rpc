@@ -289,6 +289,10 @@ Without it a viewer can browse a resource and do nothing to it, because an edito
 
 Each action is called with the row's id and nothing else. `confirm` is the author's judgement about its own method, not a viewer's guess from the name — a console inferring it from the word "discard" would be guessing about a plant, and would be wrong the first time somebody wrote `archive`.
 
+`appliesTo` says which rows a method is about, and absent means **leaves**. A flat list needs it rarely, since every row of one is the same kind of thing and has no children — the default shows them all. A tree is different: a rack whose branches are cabinets and whose leaves are ports has one `resetPort`, and it is about the ports. A console drawing that button on a cabinet would be offering a command that throws, which an operator finds out by pressing it. The safe half is the default for the same reason `confirm` is the author's word and not the viewer's inference.
+
+On a tree, the id an action carries is the **object's**, not the occurrence's. A row's id there is where a thing sits in one arrangement — one object may legitimately be several rows — and the object's own id travels beside it in the reference. An action taking the occurrence would name a position: `delete` against it would remove a document's place in a folder and report that it had deleted the document.
+
 A viewer **checks the method exists** before offering it. A typo in a declaration would otherwise draw a control that always fails, which is worse than no control: an operator finds out by trying it.
 
 ### How long it took, and which half

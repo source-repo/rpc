@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react'
 import type { RpcDataCache, RpcQuestion } from '@source-repo/query'
 import { useRpcData } from './data'
 import type { Ref } from './ObjectPanel'
-import type { DescribedResource } from './types'
+import type { DescribedAction, DescribedResource } from './types'
 
 /**
  * A resource declared `shape: 'tree'`, browsed one branch at a time.
@@ -86,7 +86,9 @@ const Node = ({
     pageSize,
     selected,
     onSelect,
-    onOpenRow
+    onOpenRow,
+    actions,
+    onAction
 }: {
     id: string
     row: unknown
@@ -110,9 +112,33 @@ const Node = ({
      * would mean inventing the two thirds of one it does not have.
      */
     onOpenRow?: (id: string) => void
+    /** What may be done to a row of this resource, as methods the component already declares. */
+    actions?: DescribedAction[]
+    onAction?: (action: DescribedAction, id: string, resource: readonly string[]) => void
 }) => {
     const [open, setOpen] = useState(false)
     const ref = refOf(row)
+    /**
+     * What an action is about: the **object**, not the placement.
+     *
+     * A row's id here is its occurrence id - where a thing sits in one arrangement - because that is
+     * what a caller passes back as the parent of the next branch, and one object may legitimately be
+     * several rows. The object's own id travels beside it, in the reference. An action taking the
+     * occurrence would name a position in a tree: `delete` against it would remove a document's place
+     * in a folder and report that it had deleted the document.
+     *
+     * Where a row carries no reference there is no such distinction to get wrong - the resource's
+     * key is the thing itself - so the row id is right and is what is used.
+     */
+    const subject = ref?.id ?? id
+    /**
+     * The actions this row is the right kind of thing for.
+     *
+     * Read from `hasChildren`, which the branch already carried positionally, so this costs nothing
+     * on the wire. A row with children is a branch; one without is a leaf; and an action says which
+     * it is about, or says nothing and means leaves.
+     */
+    const offered = (actions ?? []).filter((action) => (action.appliesTo ?? 'leaves') === 'all' || (action.appliesTo ?? 'leaves') === (expandable ? 'branches' : 'leaves'))
     const label = labelOf(row, id, columns)
     const details = detailsOf(row, columns, label)
 
@@ -148,6 +174,19 @@ const Node = ({
                         <span className="muted">{column}</span> {value}
                     </span>
                 ))}
+                {/* Named calls, not verbs of ours: what is committed is the component's own method,
+                    and the button exists because the component said that method is about this row.
+                    The same rule the grid's rows follow, arriving in the half of the pane that
+                    could not draw them. */}
+                {offered.length ? (
+                    <span className="row-actions">
+                        {offered.map((action) => (
+                            <button key={action.method} className="toggle" title={`calls ${action.method}(${subject})`} onClick={() => onAction?.(action, subject, resource)}>
+                                {action.label ?? action.method}
+                            </button>
+                        ))}
+                    </span>
+                ) : null}
             </div>
             {/* Mounted only while open, so a closed branch is not merely hidden - it is not asked
                 for, and the watch that would keep it current is not open either. */}
@@ -164,6 +203,8 @@ const Node = ({
                     selected={selected}
                     onSelect={onSelect}
                     onOpenRow={onOpenRow}
+                    actions={actions}
+                    onAction={onAction}
                 />
             )}
         </>
@@ -181,7 +222,9 @@ const BranchRows = ({
     pageSize,
     selected,
     onSelect,
-    onOpenRow
+    onOpenRow,
+    actions,
+    onAction
 }: {
     parentId: string | undefined
     depth: number
@@ -203,6 +246,9 @@ const BranchRows = ({
      * would mean inventing the two thirds of one it does not have.
      */
     onOpenRow?: (id: string) => void
+    /** What may be done to a row of this resource, as methods the component already declares. */
+    actions?: DescribedAction[]
+    onAction?: (action: DescribedAction, id: string, resource: readonly string[]) => void
 }) => {
     const [page, setPage] = useState(0)
     const question = useMemo(() => branchQuestion(resource, parentId, page, pageSize), [branchQuestion, resource, parentId, page, pageSize])
@@ -234,6 +280,8 @@ const BranchRows = ({
                     selected={selected}
                     onSelect={onSelect}
                     onOpenRow={onOpenRow}
+                    actions={actions}
+                    onAction={onAction}
                 />
             ))}
             {/* A branch is paged like anything else. A folder of four thousand files is exactly the
@@ -255,7 +303,9 @@ export const ResourceTree = ({
     pageSize = 100,
     selected,
     onSelect,
-    onOpenRow
+    onOpenRow,
+    actions,
+    onAction
 }: {
     resource: DescribedResource
     cache: RpcDataCache
@@ -276,6 +326,9 @@ export const ResourceTree = ({
      * would mean inventing the two thirds of one it does not have.
      */
     onOpenRow?: (id: string) => void
+    /** What may be done to a row of this resource, as methods the component already declares. */
+    actions?: DescribedAction[]
+    onAction?: (action: DescribedAction, id: string, resource: readonly string[]) => void
 }) => {
     const columns = resource.presentation?.defaultColumns ?? []
     return (
@@ -284,7 +337,7 @@ export const ResourceTree = ({
                 <strong>{resource.label ?? resource.path.join('.')}</strong>
                 <span className="muted"> — a branch at a time</span>
             </div>
-            <BranchRows parentId={undefined} depth={0} resource={resource.path} columns={columns} cache={cache} branchQuestion={branchQuestion} period={period} pageSize={pageSize} selected={selected} onSelect={onSelect} onOpenRow={onOpenRow} />
+            <BranchRows parentId={undefined} depth={0} resource={resource.path} columns={columns} cache={cache} branchQuestion={branchQuestion} period={period} pageSize={pageSize} selected={selected} onSelect={onSelect} onOpenRow={onOpenRow} actions={actions} onAction={onAction} />
         </div>
     )
 }

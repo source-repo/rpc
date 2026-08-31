@@ -1731,6 +1731,26 @@
             "kind": "boolean"
           },
           "optional": true
+        },
+        "appliesTo": {
+          "type": {
+            "kind": "union",
+            "options": [
+              {
+                "kind": "literal",
+                "value": "leaves"
+              },
+              {
+                "kind": "literal",
+                "value": "branches"
+              },
+              {
+                "kind": "literal",
+                "value": "all"
+              }
+            ]
+          },
+          "optional": true
         }
       }
     },

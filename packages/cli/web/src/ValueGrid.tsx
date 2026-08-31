@@ -149,6 +149,10 @@ const Collection = ({
     // would tell an operator "nothing matches" over a filter that matched sixty.
     const controls = pageControls(page, pageSize, data, filter !== undefined)
 
+    // Every row of a list is a leaf, so an action about leaves is about all of them; an action
+    // declared for branches has nothing here to be about.
+    const offered = (actions ?? []).filter((action) => (action.appliesTo ?? 'leaves') !== 'branches')
+
     return (
         <div className="collection">
             <div className="collection-head">
@@ -231,15 +235,17 @@ const Collection = ({
                     {label}: {error}
                 </p>
             )}
+            {/* A list's rows have no children, so they are all leaves - which is why the default
+                shows them and only an explicit `branches` does not. */}
             {data?.ids.map((id) => (
                 <div className="collection-row" key={id}>
                     <ValueTree name={`${label}.${id}`} source={source} type={values} types={types} path={[...leaf.path, id]} edit={edit} depth={1} />
                     {/* Named calls, not verbs of ours: what is committed is the component's own
                         method, and the button exists because the component said that method is
                         about this row. Same rule as an editor drawn from `sets`, one level up. */}
-                    {actions?.length ? (
+                    {offered.length ? (
                         <span className="row-actions">
-                            {actions.map((action) => (
+                            {offered.map((action) => (
                                 <button key={action.method} className="toggle" title={`calls ${action.method}(${id})`} onClick={() => onAction?.(action, id, leaf.path)}>
                                     {action.label ?? action.method}
                                 </button>
@@ -366,6 +372,8 @@ export const ValueGrid = ({
                             selected={where?.occurrenceId ?? opened}
                             onSelect={objectAccess ? (ref: Ref, occurrenceId: string) => setWhere({ target: ref, aspectId: tree.path[0], occurrenceId, inherited: false }) : undefined}
                             onOpenRow={opensRows ? setOpened : undefined}
+                            actions={actionsFor(tree.path as string[])}
+                            onAction={onAction}
                         />
                         {objectAccess && where && <ObjectPanel target={where.target} access={objectAccess} where={where} onWhere={setWhere} />}
                         {/* Only where the resource said it answers for one row. A panel offered
