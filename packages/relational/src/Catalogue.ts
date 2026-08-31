@@ -285,7 +285,14 @@ export const wireRow = (table: TableInfo, row: Record<string, unknown>): Record<
     return mapped
 }
 
-/** Which verbs a table answers. All three of the served ones, since every table here has an id. */
+/**
+ * Which verbs a table answers.
+ *
+ * Not `getOne`, and that is a decline rather than a gap: the library serves it, and a table's row is
+ * the same shape whether one is asked for or fifty, so answering it here would be `getMany` with one
+ * id under another name. The verb earns its place where a resource's detail is *richer* than its
+ * rows - twenty fields behind the four worth tabulating - which is not the shape a table has.
+ */
 const VERBS: readonly RpcDataMethod[] = ['getList', 'getMany', 'getManyReference']
 
 /**

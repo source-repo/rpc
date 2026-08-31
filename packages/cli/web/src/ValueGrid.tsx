@@ -6,7 +6,8 @@ import { staticSource, ValueTree, type EditAffordance, type ValueSource } from '
 import { compileFilter } from './filter'
 import { pageControls } from './pager'
 import { useRpcData } from './data'
-import { ResourceTree, type BranchQuestion } from './ResourceTree'
+import { ResourceTree, type BranchQuestion, type RowQuestion } from './ResourceTree'
+import { RecordPanel } from './RecordPanel'
 import { ObjectPanel, type ObjectAccess, type Ref, type Where } from './ObjectPanel'
 import { useDebounced, useWaitedSeconds } from './timing'
 import type { DescribedAction, DescribedComponent, TypeNode } from './types'
@@ -264,6 +265,7 @@ export const ValueGrid = ({
     cache,
     pageQuestion,
     branchQuestion,
+    rowQuestion,
     objectAccess,
     period,
     actionsFor,
@@ -281,6 +283,8 @@ export const ValueGrid = ({
     pageQuestion: PageQuestion
     /** How to name one branch of a tree resource. Absent leaves such a resource undrawable. */
     branchQuestion?: BranchQuestion
+    /** How to name one row of a resource, for opening it. Absent leaves rows unopenable. */
+    rowQuestion?: RowQuestion
     /** How to open an object a row names, and follow its links. Absent leaves rows inert. */
     objectAccess?: ObjectAccess
     period: number | undefined
@@ -298,6 +302,14 @@ export const ValueGrid = ({
     // the place they are following *from*, and without it every link would land in whichever
     // structure the provider prefers.
     const [where, setWhere] = useState<Where | undefined>()
+    /**
+     * The row opened in the record panel, by id.
+     *
+     * Separate from `where`, which is an aspects placement and carries a structure with it. A row
+     * opened by id has no placement and needs none - and keeping them apart is what lets one tree
+     * offer whichever of the two its rows actually support.
+     */
+    const [opened, setOpened] = useState<string | undefined>()
 
     const [typed, setTyped] = useState('')
     // Settled rather than live, so eight keystrokes are one question and not eight.
@@ -328,6 +340,16 @@ export const ValueGrid = ({
     // typed leaf is its path, which is what makes `setp` find `state.zones.top.setpoint`.
     const plain = filter ? all.filter((leaf) => matchesFilter(filter, source.read(leaf.path), leaf.path.join('.'))) : all
 
+    // Offered only where the resource said it answers for one row, which is what the verb list is
+    // for: a viewer offers what is served and nothing else.
+    const opensRows = !!rowQuestion && !!tree && tree.verbs.includes('getOne')
+    // Closed when the reader moves to another resource. An id belongs to the resource that handed
+    // it out, so carrying it across would ask the new one about a row of the old one - which it
+    // answers, correctly and uselessly, with "no longer a row with this id".
+    const here = scope.join('.')
+    useEffect(() => setOpened(undefined), [here])
+    const columns = tree?.presentation?.defaultColumns ?? []
+
     // A tree is the whole pane when one is selected. There is nothing else under that scope node -
     // a resource has no typed leaves of its own - so drawing the empty grid furniture around it
     // would be a filter box and a field count for something that has neither.
@@ -341,10 +363,18 @@ export const ValueGrid = ({
                             cache={cache}
                             branchQuestion={branchQuestion}
                             period={period}
-                            selected={where?.occurrenceId}
+                            selected={where?.occurrenceId ?? opened}
                             onSelect={objectAccess ? (ref: Ref, occurrenceId: string) => setWhere({ target: ref, aspectId: tree.path[0], occurrenceId, inherited: false }) : undefined}
+                            onOpenRow={opensRows ? setOpened : undefined}
                         />
                         {objectAccess && where && <ObjectPanel target={where.target} access={objectAccess} where={where} onWhere={setWhere} />}
+                        {/* Only where the resource said it answers for one row. A panel offered
+                            against a resource that does not serve `getOne` would open on a refusal,
+                            which is a worse answer than no button at all - the verb list is there
+                            precisely so a viewer offers what is served and nothing else. */}
+                        {opensRows && opened !== undefined && (
+                            <RecordPanel cache={cache} question={rowQuestion(tree.path, opened)} id={opened} period={period} columns={columns} onClose={() => setOpened(undefined)} />
+                        )}
                     </div>
                 ) : (
                     <p className="muted">this pane was given no way to ask for a branch, so the tree cannot be drawn</p>

@@ -182,9 +182,11 @@ test('a resource that is not a collection is an empty list, not an error', async
     }
 
     // A verb that is not served says so, naming what is, rather than answering something plausible.
-    const later = await t.throwsAsync(field.$data('getOne' as 'getList', ['state', 'tags']))
+    // The example has to be a name that is not a verb at all now: `getOne` stood here while it was
+    // declared and unanswered, and it is served, so every member of `RpcDataMethod` is.
+    const later = await t.throwsAsync(field.$data('getEverything' as 'getList', ['state', 'tags']))
     t.regex(String(later?.message), /is not served here/)
-    t.regex(String(later?.message), /getList, getMany, getManyReference/, 'and the refusal is the list of what to reach for')
+    t.regex(String(later?.message), /getList, getOne, getMany, getManyReference, getChildren/, 'and the refusal is the list of what to reach for')
 
     await client.close()
     await server.close()

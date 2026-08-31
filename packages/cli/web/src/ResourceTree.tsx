@@ -27,6 +27,9 @@ import type { DescribedResource } from './types'
 /** One branch's question. Absent `parentId` asks for the roots, which is a different question. */
 export type BranchQuestion = (resource: readonly string[], parentId: string | undefined, page: number, pageSize: number) => RpcQuestion
 
+/** One row's question, for opening it on its own. `getOne`, where a resource answers that verb. */
+export type RowQuestion = (resource: readonly string[], id: string) => RpcQuestion
+
 interface Branch {
     readonly ids: readonly string[]
     readonly data: readonly unknown[]
@@ -82,7 +85,8 @@ const Node = ({
     period,
     pageSize,
     selected,
-    onSelect
+    onSelect,
+    onOpenRow
 }: {
     id: string
     row: unknown
@@ -96,6 +100,16 @@ const Node = ({
     pageSize: number
     selected?: string
     onSelect?: (ref: Ref, occurrenceId: string) => void
+    /**
+     * Open a row that carries no aspect reference, by its id.
+     *
+     * The other half of selection, and the reason it is a second prop rather than a widened first
+     * one: `onSelect` hands over a `Ref` - a peer, an instance and an object id - which is what an
+     * aspect provider's `openObject` needs and what only an aspect provider can produce. A resource
+     * that merely answers `getOne` has an id and nothing else, and pretending it had a reference
+     * would mean inventing the two thirds of one it does not have.
+     */
+    onOpenRow?: (id: string) => void
 }) => {
     const [open, setOpen] = useState(false)
     const ref = refOf(row)
@@ -112,8 +126,16 @@ const Node = ({
                 ) : (
                     <span className="tree-toggle tree-leaf" />
                 )}
+                {/* Openable two ways, and by whichever the row actually supports: an aspect
+                    reference goes to the object panel with its content and links, and a bare id
+                    goes to the record panel. Same button, because to a reader they are the same
+                    gesture - open this row. */}
                 {ref && onSelect ? (
                     <button className={`tree-label tree-openable${selected === id ? ' tree-selected' : ''}`} onClick={() => onSelect(ref, id)} title={`open ${ref.id}`}>
+                        {label}
+                    </button>
+                ) : onOpenRow ? (
+                    <button className={`tree-label tree-openable${selected === id ? ' tree-selected' : ''}`} onClick={() => onOpenRow(id)} title={id}>
                         {label}
                     </button>
                 ) : (
@@ -141,6 +163,7 @@ const Node = ({
                     pageSize={pageSize}
                     selected={selected}
                     onSelect={onSelect}
+                    onOpenRow={onOpenRow}
                 />
             )}
         </>
@@ -157,7 +180,8 @@ const BranchRows = ({
     period,
     pageSize,
     selected,
-    onSelect
+    onSelect,
+    onOpenRow
 }: {
     parentId: string | undefined
     depth: number
@@ -169,6 +193,16 @@ const BranchRows = ({
     pageSize: number
     selected?: string
     onSelect?: (ref: Ref, occurrenceId: string) => void
+    /**
+     * Open a row that carries no aspect reference, by its id.
+     *
+     * The other half of selection, and the reason it is a second prop rather than a widened first
+     * one: `onSelect` hands over a `Ref` - a peer, an instance and an object id - which is what an
+     * aspect provider's `openObject` needs and what only an aspect provider can produce. A resource
+     * that merely answers `getOne` has an id and nothing else, and pretending it had a reference
+     * would mean inventing the two thirds of one it does not have.
+     */
+    onOpenRow?: (id: string) => void
 }) => {
     const [page, setPage] = useState(0)
     const question = useMemo(() => branchQuestion(resource, parentId, page, pageSize), [branchQuestion, resource, parentId, page, pageSize])
@@ -199,6 +233,7 @@ const BranchRows = ({
                     pageSize={pageSize}
                     selected={selected}
                     onSelect={onSelect}
+                    onOpenRow={onOpenRow}
                 />
             ))}
             {/* A branch is paged like anything else. A folder of four thousand files is exactly the
@@ -219,7 +254,8 @@ export const ResourceTree = ({
     period,
     pageSize = 100,
     selected,
-    onSelect
+    onSelect,
+    onOpenRow
 }: {
     resource: DescribedResource
     cache: RpcDataCache
@@ -230,6 +266,16 @@ export const ResourceTree = ({
     selected?: string
     /** Absent leaves every row inert, which is right for a tree with nothing behind its rows. */
     onSelect?: (ref: Ref, occurrenceId: string) => void
+    /**
+     * Open a row that carries no aspect reference, by its id.
+     *
+     * The other half of selection, and the reason it is a second prop rather than a widened first
+     * one: `onSelect` hands over a `Ref` - a peer, an instance and an object id - which is what an
+     * aspect provider's `openObject` needs and what only an aspect provider can produce. A resource
+     * that merely answers `getOne` has an id and nothing else, and pretending it had a reference
+     * would mean inventing the two thirds of one it does not have.
+     */
+    onOpenRow?: (id: string) => void
 }) => {
     const columns = resource.presentation?.defaultColumns ?? []
     return (
@@ -238,7 +284,7 @@ export const ResourceTree = ({
                 <strong>{resource.label ?? resource.path.join('.')}</strong>
                 <span className="muted"> — a branch at a time</span>
             </div>
-            <BranchRows parentId={undefined} depth={0} resource={resource.path} columns={columns} cache={cache} branchQuestion={branchQuestion} period={period} pageSize={pageSize} selected={selected} onSelect={onSelect} />
+            <BranchRows parentId={undefined} depth={0} resource={resource.path} columns={columns} cache={cache} branchQuestion={branchQuestion} period={period} pageSize={pageSize} selected={selected} onSelect={onSelect} onOpenRow={onOpenRow} />
         </div>
     )
 }

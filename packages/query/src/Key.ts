@@ -1,4 +1,4 @@
-import { canonicalText, type RpcDataMethod, type RpcGetListParams, type RpcGetManyParams, type RpcGetManyReferenceParams } from '@source-repo/rpc'
+import { canonicalText, type RpcDataMethod, type RpcGetChildrenParams, type RpcGetListParams, type RpcGetManyParams, type RpcGetManyReferenceParams, type RpcGetOneParams } from '@source-repo/rpc'
 
 /**
  * What identifies a question, so that two of them can be the same question.
@@ -29,7 +29,7 @@ export interface RpcQuestion {
     readonly method: RpcDataMethod
     /** Where the collection lives: `['state','tags']`, or a single segment for a declared resource. */
     readonly resource: readonly string[]
-    readonly params?: RpcGetListParams | RpcGetManyParams | RpcGetManyReferenceParams
+    readonly params?: RpcGetListParams | RpcGetOneParams | RpcGetManyParams | RpcGetManyReferenceParams | RpcGetChildrenParams
 }
 
 /**

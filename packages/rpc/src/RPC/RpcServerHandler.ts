@@ -54,7 +54,7 @@ import {
     type RpcProjectionEntry,
     type RpcProjectionSlice
 } from './Component.js'
-import { declaredResource, getList, getMany, getManyReference, readDataRequest, servesDataResources, SLOW_DATA_REQUEST_MS, type RpcDataMethod, type RpcDataResource, type RpcDataResources, type RpcDataTiming, type RpcGetListParams, type RpcGetManyParams, type RpcGetManyReferenceParams } from './DataProvider.js'
+import { declaredResource, getList, getMany, getOne, getManyReference, readDataRequest, servesDataResources, SLOW_DATA_REQUEST_MS, type RpcDataMethod, type RpcDataResource, type RpcDataResources, type RpcDataTiming, type RpcGetListParams, type RpcGetOneParams, type RpcGetManyParams, type RpcGetManyReferenceParams } from './DataProvider.js'
 import { RpcSchema, validateParams, validateValue, type ComponentSchema } from './Schema.js'
 import { describeProblems, namespaceProblems } from './Compatibility.js'
 
@@ -995,7 +995,9 @@ export class RpcServerHandler extends MessageModule<Message<RpcMessage>, RpcMess
                         : request.method === 'getMany'
                           ? getMany(inst, request.resource, request.params as RpcGetManyParams)
                           : request.method === 'getManyReference'
-                            ? getManyReference(inst, request.resource, request.params as RpcGetManyReferenceParams)
+                          ? getManyReference(inst, request.resource, request.params as RpcGetManyReferenceParams)
+                          : request.method === 'getOne'
+                            ? getOne(inst, request.resource, request.params as RpcGetOneParams)
                             : getList(inst, request.resource, request.params as RpcGetListParams)
                     // Before the answer goes out, and before it is timed: a row that its own
                     // declared type forbids is this peer's fault, and saying so where it happened
@@ -1605,8 +1607,16 @@ export class RpcServerHandler extends MessageModule<Message<RpcMessage>, RpcMess
      */
     private checkRows(declared: RpcDataResource | undefined, answer: unknown): string | undefined {
         if (!this.validateResults || !declared?.row) return undefined
-        const rows = (answer as { data?: unknown[] })?.data
-        if (!Array.isArray(rows)) return undefined
+        const rows = (answer as { data?: unknown })?.data
+        // `getOne` answers one row where the others answer a page of them, and it is checked the
+        // same way rather than skipped: the reason a row is validated at all - that a viewer drawing
+        // the wrong shape looks like a viewer bug - does not stop applying because there is one of
+        // them. An absent `data` is a row that is not there, which is an answer and not a shape.
+        if (rows === undefined) return undefined
+        if (!Array.isArray(rows)) {
+            const failure = validateValue(rows, declared.row, this.schema?.types, 'row')
+            return failure ? `${declared.path.join('.')} served a row its own declared type forbids: ${failure}` : undefined
+        }
         for (const [index, row] of rows.entries()) {
             const failure = validateValue(row, declared.row, this.schema?.types, 'row')
             if (failure) return `${declared.path.join('.')} served a row its own declared type forbids (row ${index}): ${failure}`

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
-import { RpcServer, TransportEvent, type RpcGetListParams, type RpcGetListResult, type RpcSchema } from '@source-repo/rpc'
+import { RpcServer, TransportEvent, type RpcGetListParams, type RpcGetOneParams, type RpcGetOneResult, type RpcGetListResult, type RpcSchema } from '@source-repo/rpc'
 import { RpcDataCache, rpcOnlineFrom } from '@source-repo/query'
 import { RpcOperations } from '@source-repo/rpc'
 import { pageName } from './peerName'
@@ -75,18 +75,19 @@ const useConsole = () => {
                 ask: async ({ target, namespace, method, resource, params }) => {
                     const link = peer.current
                     if (!link) throw new Error('no link')
-                    // Two verbs, and the list is still an allow-list rather than a pass-through.
-                    // `getList` is a page of a collection and `getChildren` is one branch of a tree;
-                    // the console can draw both. The others stay refused out loud, because serving
-                    // a `getMany` as a `getList` would answer the wrong question with a straight
-                    // face - and the verb is passed through rather than re-stated, so a question
-                    // asking for a branch cannot be answered with a page.
-                    if (method !== 'getList' && method !== 'getChildren') throw new Error(`the console asks for lists and tree branches; ${method} is not wired here`)
+                    // Three verbs, and the list is still an allow-list rather than a pass-through.
+                    // `getList` is a page of a collection, `getChildren` is one branch of a tree and
+                    // `getOne` is a single row opened on its own; the console can draw all three.
+                    // The others stay refused out loud, because serving a `getMany` as a `getList`
+                    // would answer the wrong question with a straight face - and the verb is passed
+                    // through rather than re-stated, so a question asking for a branch cannot be
+                    // answered with a page.
+                    if (method !== 'getList' && method !== 'getChildren' && method !== 'getOne') throw new Error(`the console asks for lists, tree branches and single rows; ${method} is not wired here`)
                     const proxy = await link.proxy<DataProxy>(namespace, target)
                     // Declared, because it is true and because it is what keeps the operations tray
                     // readable: `$data` reads and answers, so a page of rows is not a row an
                     // operator has to look at twice. The claim travels nowhere and decides nothing.
-                    return proxy.$with({ semantics: 'query' }).$data(method, resource, params as RpcGetListParams)
+                    return proxy.$with({ semantics: 'query' }).$data(method, resource, params as RpcGetListParams | RpcGetOneParams)
                 }
             }),
         []
@@ -245,7 +246,20 @@ const download = (rows: unknown[], filename: string) => {
 }
 
 /** Just the DataProvider verb, so the page needs no generic over anybody's component class. */
-type DataProxy = { $data(method: 'getList' | 'getChildren', resource: readonly string[], params?: RpcGetListParams): Promise<RpcGetListResult> }
+/**
+ * The three verbs this console asks for, and the shapes they answer with.
+ *
+ * Widened alongside the allow-list rather than left as `getList`'s shape: `getOne` answers one row
+ * and no ids, so a type that claimed otherwise would let a pane read a page's fields off a record
+ * and only find out in a browser.
+ */
+type DataProxy = {
+    $data(
+        method: 'getList' | 'getChildren' | 'getOne',
+        resource: readonly string[],
+        params?: RpcGetListParams | RpcGetOneParams
+    ): Promise<RpcGetListResult | RpcGetOneResult>
+}
 
 /** Which of the side panel's three views is showing. */
 type SideTab = 'chat' | 'events' | 'traffic' | 'problems' | 'presence' | 'operations'

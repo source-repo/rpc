@@ -1,11 +1,26 @@
 import { QueryClient, QueryObserver, onlineManager, type QueryObserverResult } from '@tanstack/query-core'
-import { TransportEvent, type RpcActivitySignal, type RpcGetListResult, type RpcGetManyResult } from '@source-repo/rpc'
+import { TransportEvent, type RpcActivitySignal, type RpcGetListResult, type RpcGetManyResult, type RpcGetOneResult } from '@source-repo/rpc'
 import { freshnessOf, supersedes, type RpcChannelAt, type RpcFreshness } from './Freshness.js'
 import { pathsOverlap, revisionGoverns, rpcComponentKey, rpcPeerKey, rpcQueryKey, type RpcQuestion, type RpcQueryKey } from './Key.js'
 import { rpcQueryOptions, type RpcAttempt } from './Options.js'
 
-/** What `$data` answers. Both shapes carry the epoch and revision they were drawn at. */
-export type RpcDataAnswer = RpcGetListResult | RpcGetManyResult
+/**
+ * The answers that carry rows, with the ids beside them.
+ *
+ * The default everywhere below, because it is what a pane asks for: a page, or a set of rows by id.
+ */
+export type RpcRowsAnswer = RpcGetListResult | RpcGetManyResult
+
+/**
+ * What `$data` answers. Every shape carries the epoch and revision it was drawn at.
+ *
+ * Wider than the default on purpose. `getOne` answers a single row and has no `ids` beside it, so
+ * folding it into the default would take `.ids` away from every caller that never asked about it -
+ * and reading a page's ids off the answer is most of what this cache is used for. A caller wanting
+ * one row says so, by naming `RpcGetOneResult`, and that is the only place the narrower shape has
+ * to be thought about.
+ */
+export type RpcDataAnswer = RpcRowsAnswer | RpcGetOneResult
 
 /**
  * Where the freshness signal comes from: something holding a component's current epoch and revision.
@@ -65,7 +80,7 @@ export interface RpcDataCacheOptions {
 }
 
 /** What a watcher sees. The same shape a polled pane already drew, with the fact it could not have. */
-export interface RpcDataState<T extends RpcDataAnswer = RpcDataAnswer> {
+export interface RpcDataState<T extends RpcDataAnswer = RpcRowsAnswer> {
     /** The last answer, kept across refetches so a grid never blanks. */
     readonly data?: T
     readonly error?: string
@@ -97,7 +112,7 @@ export interface RpcDataWatchOptions {
     activity?: RpcActivitySignal
 }
 
-export interface RpcDataWatch<T extends RpcDataAnswer = RpcDataAnswer> {
+export interface RpcDataWatch<T extends RpcDataAnswer = RpcRowsAnswer> {
     getSnapshot(): RpcDataState<T>
     subscribe(listener: () => void): () => void
     /** Ask now, out of band, and restart the period from the answer. */
@@ -225,7 +240,7 @@ export class RpcDataCache {
      * flight get the one answer, which is stampede protection the cache does by construction and is
      * most of why it is worth integrating rather than writing.
      */
-    async fetch<T extends RpcDataAnswer = RpcDataAnswer>(question: RpcQuestion): Promise<T> {
+    async fetch<T extends RpcDataAnswer = RpcRowsAnswer>(question: RpcQuestion): Promise<T> {
         return (await this.queryClient.fetchQuery(this.options(question))) as T
     }
 
@@ -233,7 +248,7 @@ export class RpcDataCache {
      * The subscribed form: an observer, a period that skips what it does not need, and a snapshot
      * shaped for `useSyncExternalStore` - or for anything else with the same two methods.
      */
-    watch<T extends RpcDataAnswer = RpcDataAnswer>(question: RpcQuestion, options: RpcDataWatchOptions = {}): RpcDataWatch<T> {
+    watch<T extends RpcDataAnswer = RpcRowsAnswer>(question: RpcQuestion, options: RpcDataWatchOptions = {}): RpcDataWatch<T> {
         return new DataWatch<T>(this, question, options)
     }
 

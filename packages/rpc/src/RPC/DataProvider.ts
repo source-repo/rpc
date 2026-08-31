@@ -31,10 +31,20 @@ import type { RpcSchema, TypeNode } from './Schema.js'
  * them itself instead.
  */
 
-/** What a caller may ask for. The unserved ones are named so a refusal can say what is. */
+/** What a caller may ask for. */
 export type RpcDataMethod = 'getList' | 'getOne' | 'getMany' | 'getManyReference' | 'getChildren'
 
-const served: readonly RpcDataMethod[] = ['getList', 'getMany', 'getManyReference', 'getChildren']
+/**
+ * What is answered, which is now all of them.
+ *
+ * The list was for a while shorter than the type above it, and named the difference so a refusal
+ * could say what to reach for instead - `shape: 'tree'` was declarable before `getChildren` answered
+ * it, and `getOne` was named here for two releases before anything served it. Both seams are closed,
+ * and the list stays as a list rather than being folded away: what a resource *declares* it answers
+ * is still checked against what this library *can* answer, and the next verb to be named will spend
+ * its own while in the gap between the two.
+ */
+const served: readonly RpcDataMethod[] = ['getList', 'getOne', 'getMany', 'getManyReference', 'getChildren']
 
 /**
  * Rows by id, which is how a foreign key becomes a value.
@@ -44,6 +54,38 @@ const served: readonly RpcDataMethod[] = ['getList', 'getMany', 'getManyReferenc
  * One `getMany` for the page is the same instinct `rpcWrites` and a projection's path list already
  * apply by hand, and it is what a reference field on a grid needs to be affordable at all.
  */
+/**
+ * One row, by an id a list or a branch already handed out.
+ *
+ * Not `getMany` with a single id, because a detail view asks a different question. A list answers
+ * what a row looks like *among its siblings* - the four fields worth comparing down a column - and
+ * this answers what it looks like *on its own*, which for a serial port or a drive is twenty fields
+ * nobody wants in a table. The same resource legitimately serves both.
+ *
+ * Both answers are still governed by the one declared `row`, so a resource whose detail is richer
+ * than its rows declares those extra fields **optional** and simply does not populate them in a
+ * list. That is a truthful description of what it serves rather than a second type to keep in step
+ * with the first, and it means a caller reading the contract can see everything a row may carry.
+ */
+export interface RpcGetOneParams {
+    readonly id: string
+}
+
+export interface RpcGetOneResult extends RpcDataTiming {
+    /**
+     * The row, or **absent when nothing has that id**.
+     *
+     * Absent rather than an error, for the reason `getMany` leaves missing ids out of its answer: a
+     * row can be removed between the list that named it and the click that opened it, and that race
+     * is one no caller can avoid. A viewer drawing an error there would be reporting the ordinary
+     * passage of time as a fault in the peer.
+     */
+    readonly data?: unknown
+    readonly epoch: string
+    readonly revision: number
+    readonly stamp?: string
+}
+
 export interface RpcGetManyParams {
     readonly ids: readonly string[]
 }
@@ -406,7 +448,7 @@ export interface RpcDataResources {
     dataRequest(
         method: RpcDataMethod,
         resource: RpcResource,
-        params: RpcGetListParams | RpcGetManyParams | RpcGetManyReferenceParams | RpcGetChildrenParams
+        params: RpcGetListParams | RpcGetOneParams | RpcGetManyParams | RpcGetManyReferenceParams | RpcGetChildrenParams
     ): unknown | Promise<unknown>
 }
 
@@ -438,7 +480,7 @@ export const declaredResource = (instance: object, resource: RpcResource): RpcDa
  * rather than a record, and it is worth having as a stated feature rather than as something that
  * happens to fall out of the arithmetic.
  */
-export const readDataRequest = (method: unknown, resource: unknown, params: unknown): Error | { method: RpcDataMethod; resource: RpcResource; params: RpcGetListParams } => {
+export const readDataRequest = (method: unknown, resource: unknown, params: unknown): Error | { method: RpcDataMethod; resource: RpcResource; params: RpcGetListParams | RpcGetOneParams } => {
     if (typeof method !== 'string' || !served.includes(method as RpcDataMethod))
         return new Error(`$data: ${String(method)} is not served here - this component answers ${served.join(', ')}`)
     if (!Array.isArray(resource) || !resource.length || !resource.every((segment) => typeof segment === 'string'))
@@ -450,6 +492,11 @@ export const readDataRequest = (method: unknown, resource: unknown, params: unkn
             return new Error('$data: getMany takes a non-empty array of string ids')
         if (given.ids.length > MAX_GET_MANY_IDS) return new Error(`$data: getMany is bounded at ${MAX_GET_MANY_IDS} ids; ask for a page instead`)
         return { method: method as RpcDataMethod, resource: resource as RpcResource, params: given }
+    }
+    if (method === 'getOne') {
+        const one = given as unknown as RpcGetOneParams
+        if (typeof one.id !== 'string' || !one.id) return new Error('$data: getOne takes a non-empty string id')
+        return { method: method as RpcDataMethod, resource: resource as RpcResource, params: one }
     }
     if (method === 'getChildren') {
         const branch = given as unknown as RpcGetChildrenParams
@@ -734,6 +781,24 @@ export const getManyReference = (component: object, resource: RpcResource, param
  * There is no `total`: a caller that named the ids knows how many it asked for, and how many came
  * back is `ids.length`. Nothing here is a page, so nothing here has a count of pages.
  */
+/**
+ * One row of a record the component holds, by key.
+ *
+ * Served here as well as by declared resources, because a component's own record is a collection
+ * like any other and a caller that can list it should be able to open a row of it. It is `getMany`
+ * with one id and the answer unwrapped - written out rather than delegated so that "absent means no
+ * such row" is visible in the shape of this function rather than inferred from an empty array.
+ */
+export const getOne = (component: object, resource: RpcResource, params: RpcGetOneParams): RpcGetOneResult => {
+    const snapshot = componentSnapshot(component)
+    const collection = collectionAt(snapshot, resource) ?? {}
+    const held = Object.prototype.hasOwnProperty.call(collection, params.id)
+    // Spread rather than `data: undefined`, so an absent row is a key that is not there. A frame
+    // carrying `data: undefined` says the same thing in JSON and something else in a format that
+    // encodes fields positionally.
+    return { ...(held ? { data: collection[params.id] } : {}), epoch: snapshot.epoch, revision: snapshot.revision }
+}
+
 export const getMany = (component: object, resource: RpcResource, params: RpcGetManyParams): RpcGetManyResult => {
     const snapshot = componentSnapshot(component)
     const collection = collectionAt(snapshot, resource) ?? {}

@@ -63,7 +63,14 @@ export interface DocumentCatalogueOptions {
 
 const DEFAULT_SAMPLE = 20
 
-/** Only the three the library serves. `getOne` exists in the enum and is not answered anywhere. */
+/**
+ * Which verbs a collection answers.
+ *
+ * Not `getOne`, and that is a decline rather than a gap: the library serves it, and a document's row is
+ * the same shape whether one is asked for or fifty, so answering it here would be `getMany` with one
+ * id under another name. The verb earns its place where a resource's detail is *richer* than its
+ * rows - twenty fields behind the four worth tabulating - which is not the shape a document store has.
+ */
 const VERBS: readonly RpcDataMethod[] = ['getList', 'getMany', 'getManyReference']
 
 export const readCatalogue = async (db: Db, options: DocumentCatalogueOptions = {}): Promise<DocumentCatalogue> => {

@@ -2060,3 +2060,43 @@ textarea.control {
     color: var(--text);
     border-color: var(--muted);
 }
+
+/* ── One row, opened ──────────────────────────────────────────────────────────────────────────
+ *
+ * The record panel sits where the object panel does and is sized like it, because to a reader they
+ * are the same gesture - open this row - answered by whichever of the two the resource supports.
+ */
+.record-panel {
+    flex: 1 1 60%;
+    min-width: 0;
+    border-left: 1px solid rgba(127, 127, 127, 0.25);
+    padding-left: 1rem;
+}
+
+.record-head {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    margin-bottom: 8px;
+}
+
+.record-id {
+    font-size: 12px;
+    color: var(--text);
+    overflow-wrap: anywhere;
+}
+
+.record-close {
+    margin-left: auto;
+}
+
+.record-scalar {
+    font-size: 12px;
+    margin: 0;
+}
+
+/* Marked rather than hidden: a reader comparing the panel against the row it came from should find
+   every field in both, so the ones already in the table are dimmed and not removed. */
+.object-field.in-table dt {
+    opacity: 0.65;
+}

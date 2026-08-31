@@ -7,7 +7,7 @@ import { overlayRefusal, type RpcSourceBinding, type RpcSourceCatalogue, type Rp
 import { staticSource, storeSource, type EditAffordance } from './ValueTree'
 import { ScopeTree } from './ScopeTree'
 import { ValueGrid, type PageQuestion } from './ValueGrid'
-import type { BranchQuestion } from './ResourceTree'
+import type { BranchQuestion, RowQuestion } from './ResourceTree'
 import type { ObjectAccess, Link, Ref, Where } from './ObjectPanel'
 import { actionsFor, leavesUnder, scopeTree } from './scope'
 import type { DescribedAction, DescribedComponent, DescribedMethod, TypeNode } from './types'
@@ -422,6 +422,16 @@ export const ComponentPanel = ({
     })
 
     /**
+     * One row, opened on its own.
+     *
+     * Watched on the same period as the pane it was opened from, rather than fetched once: the
+     * fields a table has no room for are usually the ones that move - error counts, overruns, the
+     * text of the last failure - and a panel frozen at the moment it was opened would be showing an
+     * operator a plant that has since changed.
+     */
+    const rowQuestion: RowQuestion = (resource, id) => ({ target: peer, namespace, method: 'getOne', resource, params: { id } })
+
+    /**
      * State only: props are the host's inputs and are not the caller's to set. Depth is no longer
      * the limit it was - a declaration can name `zones.top.setpoint` - so a path renders with an
      * editor exactly when some method claims it, and without one when none does, which is the
@@ -535,7 +545,7 @@ export const ComponentPanel = ({
                             // channel of its own and can show nothing the grid could not.
                             <SourceView document={listing.document} bindings={listing.bindings} source={source} stale={stale} refusal={listing.refusal} />
                         ) : (
-                            <ValueGrid component={component} types={types} scope={scope} source={source} edit={edit} branchQuestion={branchQuestion} objectAccess={objectAccess} cache={data} pageQuestion={pageQuestion} period={period} actionsFor={(path) => actionsFor(component, path, methods)} onAction={(action, id, resource) => void runAction(action, id, resource)} />
+                            <ValueGrid component={component} types={types} scope={scope} source={source} edit={edit} branchQuestion={branchQuestion} rowQuestion={rowQuestion} objectAccess={objectAccess} cache={data} pageQuestion={pageQuestion} period={period} actionsFor={(path) => actionsFor(component, path, methods)} onAction={(action, id, resource) => void runAction(action, id, resource)} />
                         )}
                     </div>
                 </div>

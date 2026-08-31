@@ -1,5 +1,5 @@
 import test from 'ava'
-import { RpcDataCache, type RpcDataAnswer } from './Cache.js'
+import { RpcDataCache, type RpcDataAnswer, type RpcRowsAnswer } from './Cache.js'
 import type { RpcQuestion } from './Key.js'
 
 /**
@@ -46,7 +46,7 @@ const peer = (epoch = 'e1', revision = 0) => {
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 const tags: RpcQuestion = { target: 'oven3', namespace: 'oven', method: 'getList', resource: ['state', 'tags'] }
 const orders: RpcQuestion = { target: 'oven3', namespace: 'oven', method: 'getList', resource: ['orders'] }
-const heldIds = (cache: RpcDataCache, question: RpcQuestion) => cache.queryClient.getQueryData<RpcDataAnswer>(cache.key(question) as unknown as readonly unknown[])?.ids
+const heldIds = (cache: RpcDataCache, question: RpcQuestion) => cache.queryClient.getQueryData<RpcRowsAnswer>(cache.key(question) as unknown as readonly unknown[])?.ids
 
 test('a period tick over a confirmed-current answer asks for nothing at all', async (t) => {
     // The whole reason this replaces a polling loop. A five second period against a quiet plant

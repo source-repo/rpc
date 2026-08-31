@@ -250,7 +250,11 @@ Both methods are required together on purpose: a component that listed resources
 
 So `validateResults` checks the rows themselves against the type that claims to describe them, and refuses the answer naming the resource and the row when they disagree. Off by default, like the return check it sits beside: it is a host checking its own output, worth every millisecond in development and per-row work nobody should pay for in a plant.
 
-The verb list is what a viewer offers from, so it is worth being accurate: the console draws a resource only if it answers `getList`, because that is the only thing its grid can do with one, and a node that appeared and then refused every selection would be worse than one that was never offered.
+The verb list is what a viewer offers from, so it is worth being accurate: the console draws a resource only if it answers `getList` or `getChildren`, because a page and a branch are the two things its grid can do with one, and a node that appeared and then refused every selection would be worse than one that was never offered.
+
+`getOne` answers a single row by an id a list or a branch already handed out, and it is the verb a detail view is made of. It is separate from `getMany` with one id because it asks a different question: a list says what a row looks like *among its siblings* — the four fields worth reading down a column — and this says what it looks like *on its own*, which for a serial port or a drive is twenty fields no table has room for. Both answers are governed by the one declared `row`, so a resource whose detail is richer than its rows declares the extra fields **optional** and simply does not populate them in a list — a truthful description of what it serves, rather than a second type to keep in step with the first.
+
+Its answer leaves `data` out when nothing has that id. Absent rather than an error, for the reason `getMany` leaves missing ids out of its answer: a row can be removed between the list that named it and the click that opened it, and a viewer reporting that race as a fault would be blaming the peer for the passage of time.
 
 Resources are read at describe time rather than fixed at exposure, so a store that gains a table says so on the next describe rather than at the next restart.
 
@@ -321,7 +325,7 @@ A caller's own filter narrows further rather than replacing the reference, so a 
 
 That is the claim the DataProvider shape was taken for, arriving as almost no code: one-to-many is not a new mechanism, it is a list with the join already in hand.
 
-Writes are ordinary declared methods that happen to have standard names, so `authorize()`, the owner fence and idempotency all apply per call and none of it is special-cased. `getOne` is not served — a caller that wants one row asks `getMany` for one id, and a verb that exists only to be a worse version of another is not worth the wire.
+Writes are ordinary declared methods that happen to have standard names, so `authorize()`, the owner fence and idempotency all apply per call and none of it is special-cased. A store-backed read side declines `getOne` — the library answers it, but a table's row is the same shape read one at a time or fifty at a time, so there it would be `getMany` with one id under another name.
 
 That first sentence is now built rather than promised. `@source-repo/relational/writes` and `@source-repo/document/writes` publish `create`, `update` and `delete` as exactly those methods, in a namespace beside the read one and closed until a permission document names a resource — so two namespaces are two `authorize()` surfaces, and reading can be granted to everyone while writing is granted to nobody. Every change carries the stamp the row was read under, which is the same mandatory compare-and-set the topology layer's `expectedVersion` is. See [the security model](../security-model.md#changing-somebody-elses-store).
 

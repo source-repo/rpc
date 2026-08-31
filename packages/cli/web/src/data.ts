@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState, useSyncExternalStore } from 'react'
 import { canonicalText, visibilityActivity, type RpcGetListResult } from '@source-repo/rpc'
-import type { RpcDataCache, RpcDataState, RpcDataWatch, RpcQuestion } from '@source-repo/query'
+import type { RpcDataAnswer, RpcDataCache, RpcDataState, RpcDataWatch, RpcQuestion } from '@source-repo/query'
 
 /**
  * A collection page, watched rather than polled.
@@ -19,16 +19,28 @@ import type { RpcDataCache, RpcDataState, RpcDataWatch, RpcQuestion } from '@sou
 const activity = visibilityActivity()
 
 /** Stable, because `useSyncExternalStore` compares the snapshot by identity. */
-const NOTHING: RpcDataState<RpcGetListResult> = { fetching: false, freshness: 'unknown' }
+const NOTHING: RpcDataState<RpcDataAnswer> = { fetching: false, freshness: 'unknown' }
 
-export const useRpcData = (cache: RpcDataCache, question: RpcQuestion, periodMs: number | undefined): RpcDataState<RpcGetListResult> => {
-    const [watch, setWatch] = useState<RpcDataWatch<RpcGetListResult> | null>(null)
+/**
+ * Generic in what is being asked for, defaulting to a page.
+ *
+ * A page is what nearly every caller wants and it stays the default for that reason. `getOne`
+ * answers a single row with no `ids` beside it, so a pane opening one row names `RpcGetOneResult`
+ * and gets a snapshot typed as the thing it actually asked for - rather than every caller having to
+ * narrow a union to reach the ids they were always going to read.
+ */
+export const useRpcData = <T extends RpcDataAnswer = RpcGetListResult>(
+    cache: RpcDataCache,
+    question: RpcQuestion,
+    periodMs: number | undefined
+): RpcDataState<T> => {
+    const [watch, setWatch] = useState<RpcDataWatch<T> | null>(null)
     // What identifies the question, through the library's own encoder rather than a second one: two
     // renders that build the same options object in a different order must not open two watches.
     const identity = canonicalText([question.target, question.namespace, question.method, question.resource, question.params ?? {}])
 
     useEffect(() => {
-        const opened = cache.watch<RpcGetListResult>(question, { periodMs, activity })
+        const opened = cache.watch<T>(question, { periodMs, activity })
         setWatch(opened)
         return () => opened.close()
         // `identity` rather than `question` itself, which is a fresh object on every render: watching
@@ -38,6 +50,6 @@ export const useRpcData = (cache: RpcDataCache, question: RpcQuestion, periodMs:
 
     return useSyncExternalStore(
         useCallback((listener: () => void) => watch?.subscribe(listener) ?? (() => undefined), [watch]),
-        useCallback(() => watch?.getSnapshot() ?? NOTHING, [watch])
+        useCallback(() => watch?.getSnapshot() ?? (NOTHING as RpcDataState<T>), [watch])
     )
 }
