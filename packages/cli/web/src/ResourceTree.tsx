@@ -73,6 +73,10 @@ const detailsOf = (row: unknown, columns: readonly string[], label: string): [st
         .filter(([, value]) => value !== undefined && value !== null && value !== '' && String(value) !== label)
         .map(([column, value]) => [column, Array.isArray(value) ? value.join(', ') : String(value)] as [string, string])
 
+/** A cell. Objects and arrays are flattened rather than dropped, as they are beside a tree row. */
+const cell = (value: unknown): string =>
+    value === undefined || value === null ? '' : Array.isArray(value) ? value.join(', ') : typeof value === 'object' ? JSON.stringify(value) : String(value)
+
 const Node = ({
     id,
     row,
@@ -86,7 +90,8 @@ const Node = ({
     pageSize,
     selected,
     onSelect,
-    onOpenRow,
+    onPickRow,
+    branchesOnly,
     actions,
     onAction
 }: {
@@ -103,15 +108,27 @@ const Node = ({
     selected?: string
     onSelect?: (ref: Ref, occurrenceId: string) => void
     /**
-     * Open a row that carries no aspect reference, by its id.
+     * A row was picked, by its id.
      *
-     * The other half of selection, and the reason it is a second prop rather than a widened first
-     * one: `onSelect` hands over a `Ref` - a peer, an instance and an object id - which is what an
-     * aspect provider's `openObject` needs and what only an aspect provider can produce. A resource
-     * that merely answers `getOne` has an id and nothing else, and pretending it had a reference
-     * would mean inventing the two thirds of one it does not have.
+     * A second prop rather than a widened `onSelect`, because that one hands over a `Ref` - a peer,
+     * an instance and an object id - which is what an aspect provider's `openObject` needs and what
+     * only an aspect provider can produce. A resource that merely answers `getOne` has an id and
+     * nothing else, and pretending it had a reference would mean inventing two thirds of one.
+     *
+     * What picking *means* belongs to the host: with leaves in the tree it opens the row, and with
+     * only branches drawn it chooses the branch whose children are tabulated beside it. One gesture
+     * on one row, so one prop.
      */
-    onOpenRow?: (id: string) => void
+    onPickRow?: (id: string) => void
+    /**
+     * Draw only the rows that have children.
+     *
+     * The tree as *scope* rather than as the whole thing: the branches say which set of rows is
+     * being looked at, and the rows themselves are read across in a table beside it. Filtered here
+     * rather than asked for, because `hasChildren` already arrived with the branch - a resource has
+     * no verb for "the branches only", and inventing one would be a second question per branch.
+     */
+    branchesOnly?: boolean
     /** What may be done to a row of this resource, as methods the component already declares. */
     actions?: DescribedAction[]
     onAction?: (action: DescribedAction, id: string, resource: readonly string[]) => void
@@ -160,8 +177,8 @@ const Node = ({
                     <button className={`tree-label tree-openable${selected === id ? ' tree-selected' : ''}`} onClick={() => onSelect(ref, id)} title={`open ${ref.id}`}>
                         {label}
                     </button>
-                ) : onOpenRow ? (
-                    <button className={`tree-label tree-openable${selected === id ? ' tree-selected' : ''}`} onClick={() => onOpenRow(id)} title={id}>
+                ) : onPickRow ? (
+                    <button className={`tree-label tree-openable${selected === id ? ' tree-selected' : ''}`} onClick={() => onPickRow(id)} title={id}>
                         {label}
                     </button>
                 ) : (
@@ -202,7 +219,8 @@ const Node = ({
                     pageSize={pageSize}
                     selected={selected}
                     onSelect={onSelect}
-                    onOpenRow={onOpenRow}
+                    onPickRow={onPickRow}
+                    branchesOnly={branchesOnly}
                     actions={actions}
                     onAction={onAction}
                 />
@@ -222,7 +240,8 @@ const BranchRows = ({
     pageSize,
     selected,
     onSelect,
-    onOpenRow,
+    onPickRow,
+    branchesOnly,
     actions,
     onAction
 }: {
@@ -237,15 +256,27 @@ const BranchRows = ({
     selected?: string
     onSelect?: (ref: Ref, occurrenceId: string) => void
     /**
-     * Open a row that carries no aspect reference, by its id.
+     * A row was picked, by its id.
      *
-     * The other half of selection, and the reason it is a second prop rather than a widened first
-     * one: `onSelect` hands over a `Ref` - a peer, an instance and an object id - which is what an
-     * aspect provider's `openObject` needs and what only an aspect provider can produce. A resource
-     * that merely answers `getOne` has an id and nothing else, and pretending it had a reference
-     * would mean inventing the two thirds of one it does not have.
+     * A second prop rather than a widened `onSelect`, because that one hands over a `Ref` - a peer,
+     * an instance and an object id - which is what an aspect provider's `openObject` needs and what
+     * only an aspect provider can produce. A resource that merely answers `getOne` has an id and
+     * nothing else, and pretending it had a reference would mean inventing two thirds of one.
+     *
+     * What picking *means* belongs to the host: with leaves in the tree it opens the row, and with
+     * only branches drawn it chooses the branch whose children are tabulated beside it. One gesture
+     * on one row, so one prop.
      */
-    onOpenRow?: (id: string) => void
+    onPickRow?: (id: string) => void
+    /**
+     * Draw only the rows that have children.
+     *
+     * The tree as *scope* rather than as the whole thing: the branches say which set of rows is
+     * being looked at, and the rows themselves are read across in a table beside it. Filtered here
+     * rather than asked for, because `hasChildren` already arrived with the branch - a resource has
+     * no verb for "the branches only", and inventing one would be a second question per branch.
+     */
+    branchesOnly?: boolean
     /** What may be done to a row of this resource, as methods the component already declares. */
     actions?: DescribedAction[]
     onAction?: (action: DescribedAction, id: string, resource: readonly string[]) => void
@@ -260,9 +291,14 @@ const BranchRows = ({
     if (!branch.ids.length) return <p className="tree-note muted" style={{ paddingLeft: `${depth * 1.1}rem` }}>nothing here</p>
 
     const shown = (page + 1) * pageSize
+    // Filtered after the answer rather than asked for. `hasChildren` came with the branch, so the
+    // branches are already known here; a "branches only" verb would be a second question about a
+    // set the node has just described.
+    const drawn = branch.ids.map((id, index) => [id, index] as const).filter(([, index]) => !branchesOnly || branch.hasChildren?.[index] === true)
+    if (branchesOnly && !drawn.length) return null
     return (
         <>
-            {branch.ids.map((id, index) => (
+            {drawn.map(([id, index]) => (
                 <Node
                     key={id}
                     id={id}
@@ -279,7 +315,8 @@ const BranchRows = ({
                     pageSize={pageSize}
                     selected={selected}
                     onSelect={onSelect}
-                    onOpenRow={onOpenRow}
+                    onPickRow={onPickRow}
+                    branchesOnly={branchesOnly}
                     actions={actions}
                     onAction={onAction}
                 />
@@ -295,6 +332,134 @@ const BranchRows = ({
     )
 }
 
+/**
+ * One branch's children, read across instead of down.
+ *
+ * The same verb, the same rows and the same declared columns as the tree beside it - what differs is
+ * that these are *aligned*, and alignment is the whole point where a branch's children are the same
+ * kind of thing as each other. A rack of ports has one number worth reading down a column, and in a
+ * tree it sits after a label of whatever length the port happened to have.
+ *
+ * Which is why this is not a better tree. Where the children of a branch differ from one another -
+ * a folder holding documents and other folders, an address space holding objects and variables - a
+ * table is four columns of blanks and the tree is right. Both arrangements are drawn from the same
+ * answer, and which one opens is a fact about the data rather than a preference of this file.
+ */
+export const BranchTable = ({
+    resource,
+    columns,
+    parentId,
+    cache,
+    branchQuestion,
+    period,
+    pageSize = 100,
+    selected,
+    onPickRow,
+    actions,
+    onAction
+}: {
+    resource: readonly string[]
+    columns: readonly string[]
+    /** The branch being tabulated. Absent asks for the roots, as everywhere else. */
+    parentId: string | undefined
+    cache: RpcDataCache
+    branchQuestion: BranchQuestion
+    period: number | undefined
+    pageSize?: number
+    selected?: string
+    onPickRow?: (id: string) => void
+    actions?: DescribedAction[]
+    onAction?: (action: DescribedAction, id: string, resource: readonly string[]) => void
+}) => {
+    const [page, setPage] = useState(0)
+    const question = useMemo(() => branchQuestion(resource, parentId, page, pageSize), [branchQuestion, resource, parentId, page, pageSize])
+    const { data, error, fetching } = useRpcData(cache, question, period)
+    const branch = data as Branch | undefined
+
+    if (error) return <p className="tree-note error">{String(error)}</p>
+    if (!branch) return fetching ? <p className="tree-note muted">reading…</p> : null
+    if (!branch.ids.length) return <p className="tree-note muted">nothing here</p>
+
+    /**
+     * A level that is entirely branches is scope, not content.
+     *
+     * The columns a resource names describe its *rows* - `port`, `baudrate`, `status`, `errors` -
+     * and the cabinets at the root of a rack have none of them. Tabulating those draws the header
+     * over four columns of blanks, which is the exact failure the arrangement exists to avoid,
+     * arriving at the one moment nobody has chosen anything yet.
+     *
+     * Read from `hasChildren`, which came with the branch, so this is what the node said rather than
+     * a guess about depth: where every row of a level has children, the tree beside this is the
+     * right way to read them, and the table says so instead of drawing an empty grid. Where any row
+     * is a leaf, the level holds rows and is tabulated.
+     */
+    if (branch.hasChildren?.length === branch.ids.length && branch.hasChildren.every(Boolean))
+        return <p className="tree-note muted">pick a branch on the left to list what is in it</p>
+
+    const shown = (page + 1) * pageSize
+    // A column for the label even when the resource named none: a table of ids and nothing else is
+    // still a table, and it is what a resource that declared no `defaultColumns` honestly has.
+    const headings = columns.length ? columns : ['id']
+
+    return (
+        <div className="branch-table-wrap">
+            <table className="branch-table">
+                <thead>
+                    <tr>
+                        {headings.map((column) => (
+                            <th key={column}>{column}</th>
+                        ))}
+                        {actions?.length ? <th className="branch-actions-head" /> : null}
+                    </tr>
+                </thead>
+                <tbody>
+                    {branch.ids.map((id, index) => {
+                        const row = branch.data[index]
+                        const isBranch = branch.hasChildren?.[index] === true
+                        // The object, not the placement - the same rule the tree rows follow, and
+                        // for the same reason: an action against an occurrence names a position.
+                        const subject = refOf(row)?.id ?? id
+                        const offered = (actions ?? []).filter(
+                            (action) => (action.appliesTo ?? 'leaves') === 'all' || (action.appliesTo ?? 'leaves') === (isBranch ? 'branches' : 'leaves')
+                        )
+                        return (
+                            <tr key={id} className={selected === id ? 'on' : undefined} onClick={onPickRow ? () => onPickRow(id) : undefined}>
+                                {headings.map((column) => (
+                                    <td key={column}>{cell(column === 'id' ? id : field(row, column))}</td>
+                                ))}
+                                {actions?.length ? (
+                                    <td className="branch-actions">
+                                        {offered.map((action) => (
+                                            <button
+                                                key={action.method}
+                                                className="toggle"
+                                                title={`calls ${action.method}(${subject})`}
+                                                // The row opens on a click; a button in it must not
+                                                // also open the row behind it.
+                                                onClick={(event) => {
+                                                    event.stopPropagation()
+                                                    onAction?.(action, subject, resource)
+                                                }}
+                                            >
+                                                {action.label ?? action.method}
+                                            </button>
+                                        ))}
+                                    </td>
+                                ) : null}
+                            </tr>
+                        )
+                    })}
+                </tbody>
+            </table>
+            {branch.total !== undefined && branch.total > shown && (
+                <button className="tree-more" onClick={() => setPage(page + 1)}>
+                    {branch.total - shown} more
+                </button>
+            )}
+        </div>
+    )
+}
+
 export const ResourceTree = ({
     resource,
     cache,
@@ -303,7 +468,8 @@ export const ResourceTree = ({
     pageSize = 100,
     selected,
     onSelect,
-    onOpenRow,
+    onPickRow,
+    branchesOnly,
     actions,
     onAction
 }: {
@@ -317,15 +483,27 @@ export const ResourceTree = ({
     /** Absent leaves every row inert, which is right for a tree with nothing behind its rows. */
     onSelect?: (ref: Ref, occurrenceId: string) => void
     /**
-     * Open a row that carries no aspect reference, by its id.
+     * A row was picked, by its id.
      *
-     * The other half of selection, and the reason it is a second prop rather than a widened first
-     * one: `onSelect` hands over a `Ref` - a peer, an instance and an object id - which is what an
-     * aspect provider's `openObject` needs and what only an aspect provider can produce. A resource
-     * that merely answers `getOne` has an id and nothing else, and pretending it had a reference
-     * would mean inventing the two thirds of one it does not have.
+     * A second prop rather than a widened `onSelect`, because that one hands over a `Ref` - a peer,
+     * an instance and an object id - which is what an aspect provider's `openObject` needs and what
+     * only an aspect provider can produce. A resource that merely answers `getOne` has an id and
+     * nothing else, and pretending it had a reference would mean inventing two thirds of one.
+     *
+     * What picking *means* belongs to the host: with leaves in the tree it opens the row, and with
+     * only branches drawn it chooses the branch whose children are tabulated beside it. One gesture
+     * on one row, so one prop.
      */
-    onOpenRow?: (id: string) => void
+    onPickRow?: (id: string) => void
+    /**
+     * Draw only the rows that have children.
+     *
+     * The tree as *scope* rather than as the whole thing: the branches say which set of rows is
+     * being looked at, and the rows themselves are read across in a table beside it. Filtered here
+     * rather than asked for, because `hasChildren` already arrived with the branch - a resource has
+     * no verb for "the branches only", and inventing one would be a second question per branch.
+     */
+    branchesOnly?: boolean
     /** What may be done to a row of this resource, as methods the component already declares. */
     actions?: DescribedAction[]
     onAction?: (action: DescribedAction, id: string, resource: readonly string[]) => void
@@ -337,7 +515,7 @@ export const ResourceTree = ({
                 <strong>{resource.label ?? resource.path.join('.')}</strong>
                 <span className="muted"> — a branch at a time</span>
             </div>
-            <BranchRows parentId={undefined} depth={0} resource={resource.path} columns={columns} cache={cache} branchQuestion={branchQuestion} period={period} pageSize={pageSize} selected={selected} onSelect={onSelect} onOpenRow={onOpenRow} actions={actions} onAction={onAction} />
+            <BranchRows parentId={undefined} depth={0} resource={resource.path} columns={columns} cache={cache} branchQuestion={branchQuestion} period={period} pageSize={pageSize} selected={selected} onSelect={onSelect} onPickRow={onPickRow} branchesOnly={branchesOnly} actions={actions} onAction={onAction} />
         </div>
     )
 }

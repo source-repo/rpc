@@ -67,6 +67,8 @@ export interface DescribedAction {
 /** One collection a component serves that its contract cannot describe: a table, a queue, a store. */
 export interface DescribedResource {
     path: string[]
+    /** Whether one branch's children resemble each other. Decides which arrangement opens. */
+    children?: 'alike' | 'assorted'
     row?: TypeNode
     verbs: string[]
     shape?: 'list' | 'tree'

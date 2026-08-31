@@ -6,7 +6,7 @@ import { staticSource, ValueTree, type EditAffordance, type ValueSource } from '
 import { compileFilter } from './filter'
 import { pageControls } from './pager'
 import { useRpcData } from './data'
-import { ResourceTree, type BranchQuestion, type RowQuestion } from './ResourceTree'
+import { BranchTable, ResourceTree, type BranchQuestion, type RowQuestion } from './ResourceTree'
 import { RecordPanel } from './RecordPanel'
 import { ObjectPanel, type ObjectAccess, type Ref, type Where } from './ObjectPanel'
 import { useDebounced, useWaitedSeconds } from './timing'
@@ -63,6 +63,39 @@ const FRESHNESS: { [state in RpcFreshness]: { label: string; title: string; clas
  * - and, because both fetches are issued in the same tick, they cost one frame rather than two on a
  * transport that batches calls.
  */
+/**
+ * Which arrangement this resource was last read in, per reader.
+ *
+ * The node's declaration says which one *opens*; this says which one somebody chose last, and it
+ * wins - because that is the line the codebase already draws around presentation. Which columns
+ * come first is the resource's advice; which columns you end up looking at is yours.
+ *
+ * Wrapped, because `localStorage` throws outright in a private window and in a browser set to block
+ * site data. A pane that would not render because it could not remember a preference is a worse
+ * failure than one that forgets.
+ */
+const VIEWS = ['structure', 'values'] as const
+type Arrangement = (typeof VIEWS)[number]
+
+const viewKey = (namespace: string, resource: readonly string[]) => `msgrpc.view.${namespace}.${resource.join('.')}`
+
+const rememberedView = (namespace: string, resource: readonly string[]): Arrangement | undefined => {
+    try {
+        const held = window.localStorage.getItem(viewKey(namespace, resource))
+        return VIEWS.find((one) => one === held)
+    } catch {
+        return undefined
+    }
+}
+
+const rememberView = (namespace: string, resource: readonly string[], view: Arrangement) => {
+    try {
+        window.localStorage.setItem(viewKey(namespace, resource), view)
+    } catch {
+        // Nothing to do, and nothing worth saying: the arrangement still changed on screen.
+    }
+}
+
 const Collection = ({
     leaf,
     types,
@@ -316,6 +349,15 @@ export const ValueGrid = ({
      * offer whichever of the two its rows actually support.
      */
     const [opened, setOpened] = useState<string | undefined>()
+    /**
+     * The branch being tabulated, when the values arrangement is showing. Absent is the roots.
+     *
+     * Its own state rather than the tree's selection, because in that arrangement the two panes ask
+     * different questions: what is picked on the left decides what is *listed* on the right, and
+     * what is picked on the right decides what is *opened*. Two selections, two things.
+     */
+    const [branch, setBranch] = useState<string | undefined>()
+    const [chosenView, setChosenView] = useState<Arrangement | undefined>()
 
     const [typed, setTyped] = useState('')
     // Settled rather than live, so eight keystrokes are one question and not eight.
@@ -353,28 +395,84 @@ export const ValueGrid = ({
     // it out, so carrying it across would ask the new one about a row of the old one - which it
     // answers, correctly and uselessly, with "no longer a row with this id".
     const here = scope.join('.')
-    useEffect(() => setOpened(undefined), [here])
+    useEffect(() => {
+        setOpened(undefined)
+        setBranch(undefined)
+        setChosenView(undefined)
+    }, [here])
     const columns = tree?.presentation?.defaultColumns ?? []
 
     // A tree is the whole pane when one is selected. There is nothing else under that scope node -
     // a resource has no typed leaves of its own - so drawing the empty grid furniture around it
     // would be a filter box and a field count for something that has neither.
+    // Where this resource lives, read from a question the host built rather than from knowledge this
+    // pane has: addressing belongs to whoever holds the link, which is what the question functions
+    // are for. Building one asks nothing.
+    const addressed = tree && branchQuestion ? branchQuestion(tree.path, undefined, 0, 1) : undefined
+    // The reader's choice, then the last one they made here, then the node's. In that order, and it
+    // is the order that matters: the declaration says which arrangement *opens*, and anything the
+    // person looking has said since outranks it.
+    const view: Arrangement =
+        chosenView ?? (addressed && tree ? rememberedView(addressed.namespace, tree.path) : undefined) ?? (tree?.children === 'alike' ? 'values' : 'structure')
+    const chooseView = (next: Arrangement) => {
+        setChosenView(next)
+        setOpened(undefined)
+        if (addressed && tree) rememberView(addressed.namespace, tree.path, next)
+    }
+
     if (tree)
         return (
             <div className="value-grid">
                 {branchQuestion ? (
-                    <div className="tree-and-object">
+                    <>
+                        {/* Both arrangements are always offered. The node's declaration decides which
+                            one opens, never which one is available - a resource that could only be
+                            read the way its author expected would be a node deciding what somebody
+                            is allowed to look at. */}
+                        <div className="arrangement">
+                            {VIEWS.map((name) => (
+                                <button
+                                    key={name}
+                                    className={view === name ? 'toggle on' : 'toggle'}
+                                    onClick={() => chooseView(name)}
+                                    title={name === 'structure' ? 'the resource as a hierarchy' : "one branch's children, in columns"}
+                                >
+                                    {name}
+                                </button>
+                            ))}
+                        </div>
+                        <div className="tree-and-object">
                         <ResourceTree
                             resource={tree}
                             cache={cache}
                             branchQuestion={branchQuestion}
                             period={period}
-                            selected={where?.occurrenceId ?? opened}
+                            selected={view === 'values' ? branch : (where?.occurrenceId ?? opened)}
                             onSelect={objectAccess ? (ref: Ref, occurrenceId: string) => setWhere({ target: ref, aspectId: tree.path[0], occurrenceId, inherited: false }) : undefined}
-                            onOpenRow={opensRows ? setOpened : undefined}
-                            actions={actionsFor(tree.path as string[])}
+                            branchesOnly={view === 'values'}
+                            // One gesture, two meanings, decided by the arrangement: with the leaves
+                            // drawn a pick opens the row, and with only branches drawn it chooses
+                            // which branch is tabulated beside it.
+                            onPickRow={view === 'values' ? setBranch : opensRows ? setOpened : undefined}
+                            // In the values arrangement the rows are on the right, and so are the
+                            // buttons about them.
+                            actions={view === 'structure' ? actionsFor(tree.path as string[]) : undefined}
                             onAction={onAction}
                         />
+                        {view === 'values' && (
+                            <BranchTable
+                                resource={tree.path}
+                                columns={columns}
+                                parentId={branch}
+                                cache={cache}
+                                branchQuestion={branchQuestion}
+                                period={period}
+                                selected={opened}
+                                onPickRow={opensRows ? setOpened : undefined}
+                                actions={actionsFor(tree.path as string[])}
+                                onAction={onAction}
+                            />
+                        )}
                         {objectAccess && where && <ObjectPanel target={where.target} access={objectAccess} where={where} onWhere={setWhere} />}
                         {/* Only where the resource said it answers for one row. A panel offered
                             against a resource that does not serve `getOne` would open on a refusal,
@@ -383,7 +481,8 @@ export const ValueGrid = ({
                         {opensRows && opened !== undefined && (
                             <RecordPanel cache={cache} question={rowQuestion(tree.path, opened)} id={opened} period={period} columns={columns} onClose={() => setOpened(undefined)} />
                         )}
-                    </div>
+                        </div>
+                    </>
                 ) : (
                     <p className="muted">this pane was given no way to ask for a branch, so the tree cannot be drawn</p>
                 )}

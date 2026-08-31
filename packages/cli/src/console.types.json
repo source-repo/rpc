@@ -1586,6 +1586,22 @@
           },
           "optional": true
         },
+        "children": {
+          "type": {
+            "kind": "union",
+            "options": [
+              {
+                "kind": "literal",
+                "value": "alike"
+              },
+              {
+                "kind": "literal",
+                "value": "assorted"
+              }
+            ]
+          },
+          "optional": true
+        },
         "label": {
           "type": {
             "kind": "string"

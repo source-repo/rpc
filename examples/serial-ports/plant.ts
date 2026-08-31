@@ -339,6 +339,11 @@ class SerialPorts extends RpcComponent<RackProps, RackState> {
                 path: ['ports'],
                 verbs: ['getChildren', 'getOne'],
                 shape: 'tree',
+                // The children of any one branch here resemble each other: cabinets under the root,
+                // hubs under a cabinet, ports under a hub. So the values arrangement is what opens -
+                // reading the error count down a column is the job this rack exists for. A reader
+                // who wants the hierarchy switches to structure and the console remembers it.
+                children: 'alike',
                 label: 'Serial ports',
                 // The four worth reading down a column, and `description` deliberately not among
                 // them. Every field stays selectable; this decides only what is shown first.

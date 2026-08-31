@@ -2100,3 +2100,76 @@ textarea.control {
 .object-field.in-table dt {
     opacity: 0.65;
 }
+
+/* ── The two arrangements of one tree resource ────────────────────────────────────────────────
+ *
+ * A toggle above the panes rather than a control inside either, because it is about which of them
+ * is showing. Right-aligned, so it sits where a control does and not where a heading does.
+ */
+.arrangement {
+    display: flex;
+    justify-content: flex-end;
+    gap: 4px;
+    margin-bottom: 6px;
+}
+
+/* One branch's children, aligned. The wrap scrolls sideways on its own so a resource with twelve
+   columns never makes the page scroll. */
+.branch-table-wrap {
+    flex: 1 1 60%;
+    min-width: 0;
+    overflow-x: auto;
+}
+
+.branch-table {
+    border-collapse: collapse;
+    width: 100%;
+    font-size: 11px;
+    /* Digits line up down a column, which is the entire reason this arrangement exists. */
+    font-variant-numeric: tabular-nums;
+}
+
+.branch-table th {
+    text-align: left;
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--muted);
+    font-weight: 600;
+    padding: 0 10px 4px 0;
+    border-bottom: 1px solid var(--line);
+    white-space: nowrap;
+}
+
+.branch-table td {
+    padding: 3px 10px 3px 0;
+    border-bottom: 1px solid rgba(38, 46, 58, 0.55);
+    white-space: nowrap;
+    font-family: var(--mono);
+}
+
+.branch-table tbody tr {
+    cursor: pointer;
+}
+
+.branch-table tbody tr:hover td {
+    background: rgba(78, 161, 255, 0.06);
+}
+
+.branch-table tbody tr.on td {
+    color: var(--accent);
+}
+
+.branch-table .branch-actions {
+    text-align: right;
+    white-space: nowrap;
+}
+
+.branch-table .branch-actions .toggle {
+    margin-left: 4px;
+}
+
+.branch-actions-head {
+    width: 1%;
+}

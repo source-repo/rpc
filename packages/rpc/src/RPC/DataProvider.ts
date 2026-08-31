@@ -413,6 +413,33 @@ export interface RpcDataResource {
      * and the declaration is what a viewer reads to decide whether to draw a tree at all.
      */
     readonly shape?: 'list' | 'tree'
+    /**
+     * Whether the children of one branch are the same kind of thing as each other.
+     *
+     * A fact about the data, not a layout, and the difference matters because the field beside it -
+     * `presentation.defaultColumns` - is written to keep layout off the wire. This says nothing
+     * about panes or widths or order. It says whether a branch's children are worth reading *across*
+     * as rows of one table, or *opened* one at a time, and only the node knows.
+     *
+     * `alike` - every child of a branch resembles its siblings and carries the row shape this
+     * resource declares. A rack whose branches are cabinets and whose leaves are ports is this: the
+     * ports under a hub are the same five fields as each other, and reading the error count down the
+     * column is the job. Note it is a claim about *siblings*, not about leaves - the cabinets under
+     * the root are alike too, and so are the hubs under a cabinet.
+     *
+     * `assorted`, or absent - the children of a branch differ from one another, and each is worth
+     * opening on its own. A folder holding both documents and other folders is this, and so is an
+     * address space holding objects, variables and methods. It is the default because it asks
+     * nothing of a node that already exists, and because a table of things that are not alike is
+     * columns of blanks while a tree of things that are alike is merely less convenient.
+     *
+     * **This chooses which arrangement opens, never which is available.** A viewer offers both and
+     * remembers what the reader picked, because that is a preference and preferences belong to
+     * whoever is looking. A declaration that could not be overridden would be a node deciding what
+     * somebody is allowed to look at, and would make a wrong declaration cost a screen rather than a
+     * click.
+     */
+    readonly children?: 'alike' | 'assorted'
     /** What to call it on a screen, where the path is not what a person would read. */
     readonly label?: string
     /**
