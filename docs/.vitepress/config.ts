@@ -15,6 +15,15 @@ export default defineConfig({
     // The design documents link to working material in notes/, which is deliberately not on the
     // site. Those links resolve on GitHub; the checker would fail the build over them.
     ignoreDeadLinks: true,
+    /**
+     * The folder READMEs are for the document library, not for this site.
+     *
+     * A `README.md` and an `index.md` in one directory are the same route to VitePress, so the two
+     * would fight over `/` - and these exist to be what a folder says about itself when somebody
+     * browses it in a console, which is a different audience with a different question. Excluded
+     * here rather than renamed, because the name is the whole convention.
+     */
+    srcExclude: ['**/README.md'],
     themeConfig: {
         nav: [
             { text: 'Guide', link: '/guide/getting-started' },
