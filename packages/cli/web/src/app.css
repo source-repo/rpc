@@ -1068,6 +1068,10 @@ textarea.control {
     display: flex;
     gap: 24px;
     flex-wrap: wrap;
+    /* Wrapped lines take the height they need, not an equal share of what there is. The default is
+       `stretch`, which on the full-page observer gave the scope selector - one drop-down on a line
+       of its own - half the window, and the panes the other half. */
+    align-content: flex-start;
     margin-top: 8px;
 }
 
@@ -2024,9 +2028,11 @@ textarea.control {
     gap: 8px;
 }
 
-/* Pushed to the end so the way back is always in the same corner, wherever the name ends. */
-.observing-head .full-page {
-    margin-left: auto;
+/* First, because a way back is at the left of a page - that is where a reader's hand already is,
+   and where every other back control they use lives. */
+.observing-head .observing-back {
+    order: -1;
+    margin-right: 4px;
 }
 
 .observing-body {

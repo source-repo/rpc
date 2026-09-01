@@ -413,6 +413,14 @@ export const App = () => {
     }
 
     /**
+     * The peer the address asks for, when the console was opened with one.
+     *
+     * The other half of the full-page view's way back: it returns here naming the peer somebody was
+     * looking at, so they land where they left rather than at a list.
+     */
+    const asked = useMemo(() => new URLSearchParams(window.location.search).get('peer') ?? undefined, [])
+
+    /**
      * Describe the peer this page was opened onto, once there is a console to ask.
      *
      * The same describe a click makes: a standalone observer still needs the contract to know what
@@ -421,9 +429,10 @@ export const App = () => {
      * watching it.
      */
     useEffect(() => {
-        if (!observing || !service || selected) return
-        void select(observing.peer)
-    }, [observing, service, selected])
+        if (!service || selected) return
+        const wanted = observing?.peer ?? asked
+        if (wanted) void select(wanted)
+    }, [observing, asked, service, selected])
 
     /** Every event in one namespace, in one click - the usual first move on an unfamiliar peer. */
     const watchAll = async (namespace: string, events: DescribedEvent[]) => {
@@ -483,7 +492,11 @@ export const App = () => {
                         </span>
                     </h1>
                     <span className={`status ${status === 'connected' ? 'ok' : 'warn'}`}>{status}</span>
-                    <a className="full-page" href={window.location.pathname}>
+                    {/* Back to the console *and* to the peer this page was opened from. Without
+                        the peer the console reopens with nothing selected, so a reader who came
+                        here from a description lands back at a peer list and has to find their way
+                        in again - which is a worse answer the deeper they had gone. */}
+                    <a className="full-page observing-back" href={`${window.location.pathname}?peer=${encodeURIComponent(observing.peer)}`}>
                         ← console
                     </a>
                 </header>

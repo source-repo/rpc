@@ -171,11 +171,23 @@ const Node = ({
                 ) : (
                     <span className="tree-toggle tree-leaf" />
                 )}
-                {/* Openable two ways, and by whichever the row actually supports: an aspect
-                    reference goes to the object panel with its content and links, and a bare id
-                    goes to the record panel. Same button, because to a reader they are the same
-                    gesture - open this row. */}
-                {ref && onSelect ? (
+                {/* What a click means depends on what the tree is *for*, and there are two cases.
+                    
+                    With the leaves drawn, it opens the row: an aspect reference goes to the object
+                    panel with its content and links, a bare id to the record panel. Same gesture
+                    either way, so the same button.
+                    
+                    With only branches drawn the tree is scope, and a click chooses which branch is
+                    tabulated beside it. That has to win over opening, and it did not: every row an
+                    aspect provider hands out carries a reference, so the object panel took every
+                    click and the table stayed on the roots however far somebody drilled. A plain
+                    component's rows have no reference, which is why it looked right there and was
+                    broken everywhere else. */}
+                {branchesOnly && onPickRow ? (
+                    <button className={`tree-label tree-openable${selected === id ? ' tree-selected' : ''}`} onClick={() => onPickRow(id)} title={id}>
+                        {label}
+                    </button>
+                ) : ref && onSelect ? (
                     <button className={`tree-label tree-openable${selected === id ? ' tree-selected' : ''}`} onClick={() => onSelect(ref, id)} title={`open ${ref.id}`}>
                         {label}
                     </button>

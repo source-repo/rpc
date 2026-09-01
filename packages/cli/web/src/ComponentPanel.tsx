@@ -498,9 +498,12 @@ export const ComponentPanel = ({
                         ))}
                     </select>
                 )}
+                {/* One control, and it says what pressing it does rather than what it does
+                    underneath. `observe` was the word for taking the subscription, which is true and
+                    is not what somebody is deciding: they are deciding whether to look. */}
                 {!observing && (
                     <button className="toggle" onClick={() => void observe()} disabled={busy}>
-                        {busy ? 'observing…' : 'observe'}
+                        {busy ? 'opening…' : 'view'}
                     </button>
                 )}
                 {observing && (
@@ -508,13 +511,18 @@ export const ComponentPanel = ({
                         stop
                     </button>
                 )}
-                {/* An anchor rather than a button, so it behaves like the address it is: middle-click
-                    opens it beside the console, ctrl-click in a new tab, right-click copies
-                    something somebody can put on a wall display or leave in a runbook. The current
-                    pathname is kept because a console mounted under a base path serves this page
-                    from the same place. */}
-                {!standalone && (
-                    <a className="full-page" href={fullPageHref} title={`observe ${namespace} on a page of its own`}>
+                {/* Offered from inside the opened view rather than beside the button that opens
+                    it. Two controls on a closed panel asked somebody to choose between viewing and
+                    viewing-elsewhere before they had seen either; one after the other asks the
+                    second question only once the first is answered.
+                    
+                    An anchor rather than a button, so it behaves like the address it is:
+                    middle-click opens it beside the console, ctrl-click in a new tab, right-click
+                    copies something somebody can put on a wall display or leave in a runbook. The
+                    current pathname is kept because a console mounted under a base path serves this
+                    page from the same place. */}
+                {!standalone && observing && (
+                    <a className="full-page" href={fullPageHref} title={`${namespace} on a page of its own`}>
                         full page ↗
                     </a>
                 )}
