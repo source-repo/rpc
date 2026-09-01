@@ -367,7 +367,7 @@ export class DocumentLibrary extends AspectProvider<DocumentLibraryProps, Docume
         const here = this.folders.get(path)
         if (!here) return []
         return [
-            ...here.folders.map((folder) => ({ occurrenceId: `folder:${folder}`, title: basename(folder), kind: 'documentation.folder', hasChildren: this.folderHasChildren(folder) })),
+            ...here.folders.map((folder) => ({ occurrenceId: `folder:${folder}`, title: basename(folder), kind: 'documentation.folder', grouping: true, hasChildren: this.folderHasChildren(folder) })),
             ...here.documents.map((id) => this.occurrenceOf(id, `folder:${path}/${id}`, 'filed-in'))
         ]
     }
@@ -376,7 +376,7 @@ export class DocumentLibrary extends AspectProvider<DocumentLibraryProps, Docume
         if (parent === undefined)
             return [...this.topics.keys()]
                 .sort()
-                .map((topic) => ({ occurrenceId: `topic:${topic}`, title: topic, kind: 'documentation.topic', hasChildren: (this.topics.get(topic)?.length ?? 0) > 0 }))
+                .map((topic) => ({ occurrenceId: `topic:${topic}`, title: topic, kind: 'documentation.topic', grouping: true, hasChildren: (this.topics.get(topic)?.length ?? 0) > 0 }))
         const topic = parent.slice('topic:'.length)
         return (this.topics.get(topic) ?? []).map((id) => this.occurrenceOf(id, `topic:${topic}/${id}`, 'about'))
     }
@@ -392,6 +392,8 @@ export class DocumentLibrary extends AspectProvider<DocumentLibraryProps, Docume
             kind: document.kind,
             relation,
             hasChildren: false,
+            // A document is the thing being listed, whatever a future reader hangs off it.
+            grouping: false,
             fields: { path: document.path, words: document.words, modified: document.modified }
         }
     }

@@ -103,6 +103,16 @@ const OBJECTS_FOLDER = 'i=85'
  */
 const isObjectsFolder = (nodeId: string): boolean => nodeId === OBJECTS_FOLDER || nodeId === `ns=0;${OBJECTS_FOLDER}`
 
+/**
+ * Whether a node class is a place to look inside rather than a thing to list.
+ *
+ * Objects and their types and Views hold other nodes; Variables and Methods are what a reader came
+ * to see. It is deliberately about the class and not about `hasChildren`, which answers a different
+ * question - a Variable with properties hanging off it is still a measurement, and an Object with
+ * nothing in it yet is still a cabinet.
+ */
+const isGrouping = (nodeClass: string): boolean => nodeClass === 'Object' || nodeClass === 'ObjectType' || nodeClass === 'View'
+
 @rpcNamespace('opcua')
 export class OpcUaAspectProvider extends AspectProvider<OpcUaProviderProps, OpcUaProviderState> {
     private readonly options: OpcUaProviderOptions
@@ -281,6 +291,10 @@ export class OpcUaAspectProvider extends AspectProvider<OpcUaProviderProps, OpcU
                 kind: `opcua.${reference.nodeClass.toLowerCase()}`,
                 relation: reference.reference,
                 hasChildren: flags[at],
+                // What the node *is*, which is not whether anything hangs off it. A Variable with
+                // `EngineeringUnits` and `EURange` under it is still a measurement somebody wants in
+                // a row, and an Object with nothing under it yet is still a place.
+                grouping: isGrouping(reference.nodeClass),
                 fields: { nodeClass: reference.nodeClass, nodeId: reference.portable, ...(values[at] !== undefined ? { value: values[at] } : {}) }
             }))
         }

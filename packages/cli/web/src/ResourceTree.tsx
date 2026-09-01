@@ -34,10 +34,22 @@ interface Branch {
     readonly ids: readonly string[]
     readonly data: readonly unknown[]
     readonly hasChildren?: readonly boolean[]
+    /** Which rows are places rather than things. Absent means fall back to `hasChildren`. */
+    readonly grouping?: readonly boolean[]
     readonly total?: number
     /** The child this branch says to open with it, if any. Advice, and checked before it is taken. */
     readonly defaultChild?: string
 }
+
+/**
+ * Whether a row is scope rather than a row of data.
+ *
+ * The node's answer where it gave one, and `hasChildren` where it did not. Those are different
+ * questions and the fallback is a guess - a right-often-enough one, and wrong in both directions:
+ * an OPC UA Variable carrying `EngineeringUnits` has children and is still a measurement, and an
+ * empty folder has none and is still a folder.
+ */
+const isScope = (branch: Branch, index: number): boolean => branch.grouping?.[index] ?? branch.hasChildren?.[index] === true
 
 const field = (row: unknown, name: string): unknown => (row && typeof row === 'object' ? (row as Record<string, unknown>)[name] : undefined)
 
@@ -331,7 +343,7 @@ const BranchRows = ({
     // Filtered after the answer rather than asked for. `hasChildren` came with the branch, so the
     // branches are already known here; a "branches only" verb would be a second question about a
     // set the node has just described.
-    const drawn = branch.ids.map((id, index) => [id, index] as const).filter(([, index]) => !branchesOnly || branch.hasChildren?.[index] === true)
+    const drawn = branch.ids.map((id, index) => [id, index] as const).filter(([, index]) => !branchesOnly || isScope(branch, index))
     if (branchesOnly && !drawn.length) {
         onDrew?.(false)
         return null
@@ -442,12 +454,19 @@ export const BranchTable = ({
      * And only for an id this branch actually answered with, because `defaultChild` arrived from a
      * peer and advice from a peer is input.
      */
-    // A level of nothing but branches is scope, and the table says so instead of drawing rows - so
-    // there is nothing here to open. Computed before the effect rather than after the early return
-    // below, because hooks run either way: without this the panel opened the first *branch* while
-    // the table beside it was saying to pick one.
-    const allBranches = !!branch && branch.hasChildren?.length === branch.ids.length && branch.hasChildren.every(Boolean)
-    const suggested = branch && !allBranches ? (branch.defaultChild ?? branch.ids[0]) : undefined
+    /**
+     * The rows this table lists: the things, never the places.
+     *
+     * A branch belongs in the tree, where picking it decides what is listed here. Drawing it here as
+     * well would put the same node in two panes meaning two different things, and would mix a row
+     * that has columns with one that has none of them.
+     *
+     * Computed before the early returns below rather than after, because hooks run either way: with
+     * this after them, the panel opened the first *branch* while the table beside it was saying to
+     * pick one.
+     */
+    const listed = branch ? branch.ids.map((id, index) => [id, index] as const).filter(([, index]) => !isScope(branch, index)) : []
+    const suggested = branch && listed.length ? (listed.some(([id]) => id === branch.defaultChild) ? branch.defaultChild : listed[0][0]) : undefined
     const opening = `${parentId ?? ''}\u0000${suggested ?? ''}`
     const taken = useRef<string | undefined>(undefined)
     useEffect(() => {
@@ -481,7 +500,8 @@ export const BranchTable = ({
      * right way to read them, and the table says so instead of drawing an empty grid. Where any row
      * is a leaf, the level holds rows and is tabulated.
      */
-    if (allBranches) return <p className="tree-note muted">pick a branch on the left to list what is in it</p>
+    // Nothing here is a thing to list - it is all scope, and the tree beside this is how it is read.
+    if (!listed.length) return <p className="tree-note muted">pick a branch on the left to list what is in it</p>
 
     const shown = (page + 1) * pageSize
     // A column for the label even when the resource named none: a table of ids and nothing else is
@@ -500,16 +520,15 @@ export const BranchTable = ({
                     </tr>
                 </thead>
                 <tbody>
-                    {branch.ids.map((id, index) => {
+                    {listed.map(([id, index]) => {
                         const row = branch.data[index]
-                        const isBranch = branch.hasChildren?.[index] === true
                         // The object, not the placement - the same rule the tree rows follow, and
                         // for the same reason: an action against an occurrence names a position.
                         const reference = refOf(row)
                         const subject = reference?.id ?? id
-                        const offered = (actions ?? []).filter(
-                            (action) => (action.appliesTo ?? 'leaves') === 'all' || (action.appliesTo ?? 'leaves') === (isBranch ? 'branches' : 'leaves')
-                        )
+                        // Everything here is a leaf by construction now, so an action for branches
+                        // has nothing in this table to be about - it belongs on a tree row.
+                        const offered = (actions ?? []).filter((action) => (action.appliesTo ?? 'leaves') !== 'branches')
                         return (
                             <tr
                                 key={id}

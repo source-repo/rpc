@@ -278,5 +278,15 @@ export interface Occurrence {
     /** Why it is here: the relationship that placed it, where one did. */
     readonly relation?: string
     readonly hasChildren: boolean
+    /**
+     * Whether this is a place to look inside rather than a thing to list.
+     *
+     * A folder, a topic, a workflow state - the grouping nodes this package already has a word for.
+     * Distinct from `hasChildren`, which says whether anything is under it: an empty folder is still
+     * a folder, and a measurement with two properties hanging off it is still a measurement.
+     *
+     * Absent falls back to `hasChildren`, which is what a viewer assumed before this existed.
+     */
+    readonly grouping?: boolean
     readonly fields?: Readonly<Record<string, unknown>>
 }

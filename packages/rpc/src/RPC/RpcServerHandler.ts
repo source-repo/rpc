@@ -1642,6 +1642,15 @@ export class RpcServerHandler extends MessageModule<Message<RpcMessage>, RpcMess
         const branch = answer as { ids?: unknown; hasChildren?: unknown } | undefined
         if (!Array.isArray(branch?.hasChildren)) return '$data: getChildren must answer hasChildren, one flag per row'
         if (!branch.hasChildren.every((flag) => typeof flag === 'boolean')) return '$data: getChildren answered a hasChildren that is not all booleans'
+        // Checked the same way and for the same reason: a viewer reads it at the same index as the
+        // row, so a short array leaves the last rows classified as whatever the fallback says.
+        const grouping = (answer as { grouping?: unknown } | undefined)?.grouping
+        if (grouping !== undefined) {
+            if (!Array.isArray(grouping) || !grouping.every((flag) => typeof flag === 'boolean'))
+                return '$data: getChildren answered a grouping that is not an array of booleans'
+            if (Array.isArray(branch.ids) && grouping.length !== branch.ids.length)
+                return `$data: getChildren answered ${branch.ids.length} rows and ${grouping.length} grouping flags - they are read positionally`
+        }
         if (Array.isArray(branch.ids) && branch.hasChildren.length !== branch.ids.length)
             return `$data: getChildren answered ${branch.ids.length} rows and ${branch.hasChildren.length} hasChildren flags - they are read positionally and must be the same length`
         return undefined

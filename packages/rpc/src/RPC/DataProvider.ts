@@ -116,6 +116,25 @@ export interface RpcGetChildrenParams extends RpcGetListParams {
 
 export interface RpcGetChildrenResult extends RpcGetListResult {
     /**
+     * Whether each row is a place to look inside or a thing to list, positionally against `ids`.
+     *
+     * **Not the same question as `hasChildren`, and the difference is the whole reason this exists.**
+     * That one says a node has descendants; this says what the node *is* in the arrangement. A
+     * folder is a place. A document is a thing. An OPC UA Object is a place and a Variable is a
+     * thing - and a Variable very often has children, because `EngineeringUnits` and `EURange` are
+     * properties hanging off it. Reading the first as an answer to the second puts that Variable in
+     * the scope tree and takes it out of the table, which is exactly backwards: its properties are
+     * what a viewer shows *about* it, not a place to navigate to.
+     *
+     * The same mistake in the other direction is an empty folder, which has no children and is still
+     * not a document.
+     *
+     * Absent falls back to `hasChildren`, which is what every existing tree meant by it and is right
+     * often enough to be a sensible default - but it is a guess, and a resource whose leaves carry
+     * properties should say.
+     */
+    readonly grouping?: readonly boolean[]
+    /**
      * Which of these children a viewer should open when this branch is opened, if any.
      *
      * A fact only the node has. A folder of documentation whose first business is its `README` is

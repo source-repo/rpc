@@ -224,6 +224,11 @@ export abstract class AspectProvider<Props extends Record<string, unknown>, Stat
                 ...(occurrence.fields ?? {})
             })),
             hasChildren: branch.occurrences.map((occurrence) => occurrence.hasChildren),
+            // Only when some occurrence says so: a provider that never sets it publishes nothing,
+            // and a viewer falls back to `hasChildren` exactly as it did before.
+            ...(branch.occurrences.some((occurrence) => occurrence.grouping !== undefined)
+                ? { grouping: branch.occurrences.map((occurrence) => occurrence.grouping ?? occurrence.hasChildren) }
+                : {}),
             ...(branch.total !== undefined ? { total: branch.total } : {}),
             ...(branch.defaultChild !== undefined ? { defaultChild: branch.defaultChild } : {}),
             epoch: this.incarnation,
