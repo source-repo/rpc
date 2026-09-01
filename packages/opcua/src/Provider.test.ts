@@ -58,7 +58,7 @@ test.after.always(async () => {
     await server?.shutdown()
 })
 
-const connected = async (t: { teardown: (fn: () => Promise<void>) => void }, options: { childrenProbe?: 'browse' | 'node-class' } = {}) => {
+const connected = async (t: { teardown: (fn: () => Promise<void>) => void }, options: { childrenProbe?: 'browse' | 'node-class'; browseBudget?: number } = {}) => {
     const opcua = new OpcUaAspectProvider({ endpointUrl, identity: provider, label: 'Test plant', ...options })
     await opcua.connect()
     t.teardown(async () => {
@@ -72,6 +72,19 @@ const branch = async (opcua: OpcUaAspectProvider, parent?: string) =>
 
 const rows = (answer: RpcGetChildrenResult) => answer.data as { title: string; id: string; nodeClass: string; occurrenceId: string }[]
 
+/** Every leaf beneath a node, which is `getList` rather than a branch at a time. */
+const beneath = async (
+    opcua: OpcUaAspectProvider,
+    under?: string,
+    page?: { page: number; pageSize: number },
+    filter?: { field: string; op: string; operand: unknown }
+) =>
+    (await opcua.dataRequest('getList', ['address-space'], {
+        ...(under === undefined ? {} : { under }),
+        ...(page ? { pagination: page } : {}),
+        ...(filter ? { filter } : {})
+    } as never)) as RpcGetChildrenResult
+
 test.serial('the address space is one aspect, published as a lazy tree', async (t) => {
     const opcua = await connected(t)
 
@@ -82,7 +95,10 @@ test.serial('the address space is one aspect, published as a lazy tree', async (
     t.is(resources.length, 1)
     t.is(resources[0].path[0], 'address-space')
     t.is(resources[0].shape, 'tree')
-    t.deepEqual(resources[0].verbs, ['getChildren'])
+    // Both, because this provider can answer for a subtree as well as for a branch: `getChildren`
+    // is a level at a time and `getList` is every leaf beneath one, walked until the page is full.
+    // A provider that could not afford the second would declare only the first.
+    t.deepEqual(resources[0].verbs, ['getChildren', 'getList'])
 })
 
 test.serial('a branch is browsed when it is opened, and not before', async (t) => {
@@ -373,4 +389,69 @@ test.serial('a binding travels to a console without it knowing any OPC UA', asyn
     // OPC UA to understand that this thing is observable and where.
     t.is(speed.bindings?.[0].role, 'observe')
     t.is((speed.bindings?.[0].target as { system: string }).system, 'opcua')
+})
+
+/**
+ * The scoping half of a tree: every leaf beneath a node, however deep, without a viewer walking.
+ *
+ * This is the verb that makes filtering and sorting worth having, because both are questions about
+ * a *set* of rows and a branch at a time is not one. What makes it affordable is that the walk
+ * stops when the page is full - the bound is the page and not the address space.
+ */
+test.serial('every leaf beneath a node arrives without the caller walking', async (t) => {
+    const opcua = await connected(t)
+
+    // Line1 holds a device, and the device holds the tags. Nothing at Line1's own level is a leaf.
+    const line1 = rows(await branch(opcua)).find((row) => row.title === 'Line1')!
+    const direct = rows(await branch(opcua, line1.occurrenceId))
+    t.deepEqual(direct.map((row) => row.title), ['Filler01'], 'a branch at a time reaches the device and stops')
+
+    const deep = rows(await beneath(opcua, line1.occurrenceId))
+    t.deepEqual(deep.map((row) => row.title).sort(), ['Running', 'Speed'], 'and the leaves under it arrive whole')
+    t.true(deep.every((row) => row.nodeClass === 'Variable'), 'leaves only - the device is scope, not a row')
+})
+
+test.serial('a page is the bound, and a short page says there is more', async (t) => {
+    const opcua = await connected(t)
+
+    const first = await beneath(opcua, undefined, { page: 0, pageSize: 1 })
+    t.is(first.ids.length, 1)
+    t.true(first.hasMore, 'more follow, said without counting them')
+    t.is(first.total, undefined, 'and no total, because counting is the walk the page avoided')
+
+    const second = await beneath(opcua, undefined, { page: 1, pageSize: 1 })
+    t.is(second.ids.length, 1)
+    t.not(second.ids[0], first.ids[0], 'a second page is a different row, not the same one again')
+})
+
+test.serial('a walk that runs out of budget stops and says so, rather than taking as long as it takes', async (t) => {
+    // One browse buys the Objects folder and nothing under it, so the page cannot be filled - which
+    // is the sparse-hierarchy case in miniature: ten thousand empty folders before the first leaf.
+    const opcua = await connected(t, { browseBudget: 1 })
+
+    const cut = await beneath(opcua, undefined, { page: 0, pageSize: 50 })
+    t.is(cut.ids.length, 0, 'nothing was reached within the budget')
+    t.true(cut.hasMore, 'and it says there is more rather than implying the tree is empty')
+})
+
+/**
+ * The condition is the peer's work, and it is applied while walking rather than to what walked.
+ *
+ * This is the whole reason scoping is worth having. A page of fifty under a filter has to be fifty
+ * *matches*; a viewer that received fifty rows and kept three would be paying for the address space
+ * to find out that most of it did not match, which is the thing `getList` exists to prevent.
+ */
+test.serial('a filter is applied by the provider, as the walk goes', async (t) => {
+    const opcua = await connected(t)
+
+    const all = rows(await beneath(opcua))
+    t.true(all.length > 2, `the plant has several tags: ${all.map((row) => row.title).join(', ')}`)
+
+    const running = rows(await beneath(opcua, undefined, { page: 0, pageSize: 50 }, { field: 'title', op: 'eq', operand: 'Running' }))
+    t.true(running.length > 0)
+    t.true(
+        running.every((row) => row.title === 'Running'),
+        `only the matches came back: ${running.map((row) => row.title).join(', ')}`
+    )
+    t.true(running.length < all.length, 'and fewer of them than the unfiltered walk found')
 })

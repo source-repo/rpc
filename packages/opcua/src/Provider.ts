@@ -1,4 +1,4 @@
-import { rpc, rpcNamespace, type RpcRef } from '@source-repo/rpc'
+import { matchesFilter, rpc, rpcNamespace, type RpcFilter, type RpcRef } from '@source-repo/rpc'
 import { AspectProvider, type AspectDescriptor, type AspectRef, type Branch, type ObjectBinding, type ObjectDetail, type Occurrence } from '@source-repo/aspects'
 import { AttributeIds, BrowseDirection, NodeClass, OPCUAClient, type ClientSession, type OPCUAClientOptions } from 'node-opcua-client'
 import { fromSessionNodeId, portableNodeIdFromText, portableNodeIdToText, toSessionNodeId } from './Identity.js'
@@ -75,6 +75,19 @@ export interface OpcUaProviderOptions {
     readonly identity?: RpcRef
     readonly childrenProbe?: ChildrenProbe
     /**
+     * How many Browse requests one scoped page may spend before it gives up and says `hasMore`.
+     *
+     * A subtree listing walks until the page is full and stops, which is bounded by the page and not
+     * by the address space - that much is free. What is not bounded is a hierarchy that is *sparse*:
+     * ten thousand empty folders before the first Variable will fill fifty rows eventually and spend
+     * a minute doing it, and a console waiting a minute for a first page is a console somebody
+     * closes.
+     *
+     * So the walk has a second bound and reports honestly when it hits one. A short page that
+     * arrived is worth more than a full page that did not.
+     */
+    readonly browseBudget?: number
+    /**
      * Arrangements this server does not publish: functional, location, operations.
      *
      * Supplied as code by whoever deploys this, because a grouping rule is exactly the kind of
@@ -92,6 +105,15 @@ export interface OpcUaProviderOptions {
 const ADDRESS_SPACE = 'address-space'
 /** Where a browse of the address space starts. `i=85` is the Objects folder in every UA server. */
 const OBJECTS_FOLDER = 'i=85'
+
+/**
+ * Browses one scoped page may spend before it stops and says there is more.
+ *
+ * Two hundred is a device tree several levels deep, and far more than a dense hierarchy needs to
+ * fill fifty rows. It is a bound on the *pathological* case rather than a budget anybody normal
+ * spends, which is why it is generous and why hitting it is worth reporting.
+ */
+const DEFAULT_BROWSE_BUDGET = 200
 
 /**
  * Whether a node id names the Objects folder, in either spelling.
@@ -457,6 +479,25 @@ export class OpcUaAspectProvider extends AspectProvider<OpcUaProviderProps, OpcU
     }
 
     /**
+     * Every leaf of a derived arrangement beneath a group, from the index it was built from.
+     *
+     * No walk and no budget: `index()` already visited the server once and the answer is in memory,
+     * which is the whole reason an arrangement that had to be indexed can afford to be scoped.
+     */
+    private derivedLeaves(aspectId: string, under: string | undefined, page: { from: number; size: number }): Branch {
+        const built = this.indexOf(aspectId)
+        const found: Occurrence[] = []
+        const walk = (group: string) => {
+            for (const occurrence of built.children.get(group) ?? []) {
+                if (occurrence.hasChildren) walk(occurrence.occurrenceId)
+                else found.push(occurrence)
+            }
+        }
+        walk(under ?? derivedRoot)
+        return { total: found.length, occurrences: found.slice(page.from, page.from + page.size) }
+    }
+
+    /**
      * The built arrangement, or a refusal that says what to do about it.
      *
      * An arrangement that has not been indexed is not empty - nobody has looked yet - and answering
@@ -491,6 +532,90 @@ export class OpcUaAspectProvider extends AspectProvider<OpcUaProviderProps, OpcU
             reference: String(reference.referenceTypeId?.toString() ?? '')
         }))
     }
+
+    /**
+     * Every Variable and Method beneath a node, depth-first, a page at a time.
+     *
+     * The walk `children` refuses to do for a *whole* tree, done for exactly as much of one as a
+     * page needs. Depth-first because that is the order somebody reading a plant expects - a
+     * device's tags together, then the next device's - and because it lets the walk stop the moment
+     * the page is full rather than after a level.
+     *
+     * Two bounds, and the second is the one that matters on a real address space. The page fills and
+     * the walk stops; or the browse budget is spent and it stops anyway, with `hasMore` true. A
+     * hierarchy with ten thousand empty folders before its first leaf is the case for the second -
+     * bounded by the page alone, that page costs a minute.
+     *
+     * No `total`. Counting what is under a node is the whole walk when the page was a corner of it,
+     * and the contract says an absent total means unknown rather than none for exactly this.
+     */
+    override async leaves(aspectId: string, under: string | undefined, page: { from: number; size: number; filter?: RpcFilter }): Promise<Branch> {
+        if (aspectId !== ADDRESS_SPACE) return this.derivedLeaves(aspectId, under, page)
+        this.connected()
+
+        const budget = this.options.browseBudget ?? DEFAULT_BROWSE_BUDGET
+        // One past the page, because that is how a walk knows whether anything follows without
+        // counting what does. The contract names the same trick for a store that cannot afford a
+        // count: ask for one row more than the page and see whether it arrives.
+        const wanted = page.from + page.size + 1
+        const found: Occurrence[] = []
+        let spent = 0
+        let cut = false
+
+        const walk = async (occurrenceId: string | undefined, node: string): Promise<void> => {
+            if (found.length >= wanted || cut) return
+            if (spent >= budget) {
+                cut = true
+                return
+            }
+            spent += 1
+            const references = await this.browse(node)
+            for (const reference of references) {
+                if (found.length >= wanted || cut) return
+                const childOccurrence = occurrenceId ? `${occurrenceId}/${reference.session}` : reference.session
+                if (isGrouping(reference.nodeClass)) {
+                    await walk(childOccurrence, reference.session)
+                    continue
+                }
+                const leaf: Occurrence = {
+                    occurrenceId: childOccurrence,
+                    ref: { provider: this.identity, resource: ['nodes'], id: reference.portable },
+                    title: reference.title,
+                    kind: `opcua.${reference.nodeClass.toLowerCase()}`,
+                    relation: reference.reference,
+                    hasChildren: false,
+                    grouping: false,
+                    fields: { nodeClass: reference.nodeClass, nodeId: reference.portable }
+                }
+                // Tested here rather than after the page is cut, which is the difference between a
+                // filter and a sieve: a condition matching nothing must cost the walk and not the
+                // whole address space, and a page of fifty matches must be fifty *matches* rather
+                // than fifty rows of which three matched. The library's own matcher, so a condition
+                // means the same thing here as it does over a table.
+                if (!page.filter || matchesFilter(page.filter, { ...leaf.fields, title: leaf.title }, leaf.occurrenceId)) found.push(leaf)
+            }
+        }
+
+        await walk(under, under ? this.nodeOf(under) : OBJECTS_FOLDER)
+        const window = found.slice(page.from, page.from + page.size)
+        const values = await this.valuesFor(window.map((one) => ({ session: this.nodeOf(one.occurrenceId), nodeClass: 'Variable' })))
+        return {
+            occurrences: window.map((one, at) => (values[at] !== undefined ? { ...one, fields: { ...one.fields, value: values[at] } } : one)),
+            // More either because the walk filled the page and stopped, or because it ran out of
+            // budget with the page unfilled - and a reader is owed the difference between those.
+            hasMore: found.length > page.from + page.size || cut
+        }
+    }
+
+    /**
+     * Sorting is deliberately not applied to a walk that stopped early.
+     *
+     * An order over what a cut walk happened to reach is not an order over what is there, and a
+     * pager showing "the highest fifty" that means "the first fifty found, arranged" is worse than
+     * one that does not offer to sort. Where the walk completes - `hasMore` false - the set is the
+     * whole set and ordering it is honest, which is what a caller wanting a true order should ask
+     * for by taking a page large enough to finish.
+     */
 
     /** The flag a viewer draws an expander from, by whichever probe this provider was given. */
     private async hasChildrenFor(children: readonly { readonly session: string; readonly nodeClass: string }[]): Promise<boolean[]> {

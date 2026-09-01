@@ -269,6 +269,27 @@ export interface RpcGetListParams {
     readonly filter?: RpcFilter
     /** Applied to the filtered set, before paging - an order over the page alone would mean nothing. */
     readonly sort?: RpcSort
+    /**
+     * Only rows beneath this branch of a `shape: 'tree'` resource, at any depth.
+     *
+     * The scoping half of a tree, and the reason it is a parameter here rather than a verb of its
+     * own: what a reader wants under a branch is a *list* - filtered, sorted, paged - and every one
+     * of those already belongs to `getList`. Scoping it is one more condition, applied before the
+     * page is cut, exactly as `filter` is.
+     *
+     * **Answered by the node and never by a viewer walking.** `getChildren` is a branch at a time
+     * because the number of descendants is not knowable before somebody asks; a viewer collecting
+     * leaves itself would be that walk, done in the one place with the least idea what it costs. A
+     * node knows: a table does it with a predicate on a path, and a browsing protocol does it by
+     * walking until the page is full and stopping.
+     *
+     * Which is why `total` may be absent here even where a flat list would have known it - the count
+     * of what is under a node can cost the whole walk when the page cost a corner of it. `hasMore`
+     * is the half that matters and the half that stays cheap.
+     *
+     * Absent asks the resource for everything it holds, which is what `getList` has always meant.
+     */
+    readonly under?: string
 }
 
 /**
@@ -546,6 +567,8 @@ export const readDataRequest = (method: unknown, resource: unknown, params: unkn
         if (typeof one.id !== 'string' || !one.id) return new Error('$data: getOne takes a non-empty string id')
         return { method: method as RpcDataMethod, resource: resource as RpcResource, params: one }
     }
+    if (given.under !== undefined && (typeof given.under !== 'string' || !given.under))
+        return new Error('$data: under is the non-empty id of a branch, or absent for the whole resource')
     if (method === 'getChildren') {
         const branch = given as unknown as RpcGetChildrenParams
         // Checked rather than coerced, as everything else here is: a parentId that arrived as a

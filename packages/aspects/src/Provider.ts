@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { RpcComponent, rpc, type RpcDataMethod, type RpcDataResource, type RpcGetChildrenParams, type RpcGetChildrenResult, type RpcResource } from '@source-repo/rpc'
+import { RpcComponent, rpc, type RpcDataMethod, type RpcDataResource, type RpcGetChildrenParams, type RpcFilter, type RpcGetChildrenResult, type RpcGetListParams, type RpcResource } from '@source-repo/rpc'
 import { resolveLink, type AspectLink, type AspectLocation, type AspectPlacements, type LinkRefusal } from './Link.js'
 import type { AspectDescriptor, AspectRef, ObjectDetail, Occurrence } from './Model.js'
 
@@ -7,6 +7,14 @@ import type { AspectDescriptor, AspectRef, ObjectDetail, Occurrence } from './Mo
 export interface Branch {
     readonly occurrences: readonly Occurrence[]
     readonly total?: number
+    /**
+     * Whether more follow, where counting them would cost more than the page did.
+     *
+     * The cheap half of a total, and the half a pager actually needs. A whole-branch answer usually
+     * knows the count and says so; a subtree walk that stopped when the page filled knows only that
+     * it stopped, and this is how it says that honestly instead of implying an end.
+     */
+    readonly hasMore?: boolean
     /**
      * The occurrence in this branch worth opening with it, when there is an obvious one.
      *
@@ -95,6 +103,30 @@ export abstract class AspectProvider<Props extends Record<string, unknown>, Stat
     abstract children(aspectId: string, parentOccurrenceId: string | undefined, page: { readonly from: number; readonly size: number }): Branch | Promise<Branch>
     abstract placements(target: AspectRef, aspectId: string): readonly string[] | Promise<readonly string[]>
     abstract open(target: AspectRef): ObjectDetail | undefined | Promise<ObjectDetail | undefined>
+
+    /**
+     * Every leaf beneath a branch, at any depth, a page at a time.
+     *
+     * Optional, and a provider that cannot answer it cheaply should not: the resources it publishes
+     * then declare `getChildren` alone and a viewer scopes by branch instead of by subtree. That is
+     * a smaller screen, not a broken one.
+     *
+     * The reason it is here rather than assembled by whoever is asking: collecting the leaves under
+     * a node *is* the walk `children` exists to avoid, and the only place with any idea what it
+     * costs is the provider. A library over a folder tree already holds every document and answers
+     * from memory. A browsing protocol walks until the page is full and stops, which is bounded by
+     * the page rather than by the tree - and stops early on a budget besides, because a hierarchy
+     * with ten thousand empty folders before its first leaf will spend a minute finding fifty.
+     *
+     * `total` is deliberately allowed to be absent even where a flat list would know it. Counting
+     * what is under a node can cost the whole walk when the page cost a corner of it; `hasMore` is
+     * the half a pager needs and the half that stays cheap.
+     */
+    leaves?(
+        aspectId: string,
+        under: string | undefined,
+        page: { readonly from: number; readonly size: number; readonly filter?: RpcFilter }
+    ): Branch | Promise<Branch>
 
     /** The largest page this provider will answer, whatever a caller asks for. */
     protected maxPageSize = DEFAULT_MAX_PAGE
@@ -185,7 +217,9 @@ export abstract class AspectProvider<Props extends Record<string, unknown>, Stat
             path: [aspect.id],
             label: aspect.label,
             shape: 'tree' as const,
-            verbs: ['getChildren' as const],
+            // `getList` only where this provider can answer for a subtree. The verb list is what a
+            // viewer offers from, so declaring one that would refuse is worse than not having it.
+            verbs: this.leaves ? (['getChildren', 'getList'] as const) : (['getChildren'] as const),
             presentation: { defaultColumns: aspect.defaultColumns ?? ['title', 'kind'] },
             row: {
                 kind: 'object' as const,
@@ -200,14 +234,20 @@ export abstract class AspectProvider<Props extends Record<string, unknown>, Stat
         }))
     }
 
-    async dataRequest(method: RpcDataMethod, resource: RpcResource, params: RpcGetChildrenParams): Promise<RpcGetChildrenResult> {
-        if (method !== 'getChildren') throw new Error(`an aspect answers getChildren, not ${method}`)
+    async dataRequest(method: RpcDataMethod, resource: RpcResource, params: RpcGetChildrenParams & RpcGetListParams): Promise<RpcGetChildrenResult> {
+        if (method !== 'getChildren' && method !== 'getList')
+            throw new Error(`an aspect answers getChildren${this.leaves ? ' and getList' : ''}, not ${method}`)
         const aspect = this.aspects().find((declared) => declared.id === resource[0])
         if (!aspect) throw new Error(`no aspect ${resource.join('.')}`)
 
         const size = Math.min(params.pagination?.pageSize ?? this.maxPageSize, this.maxPageSize)
         const from = (params.pagination?.page ?? 0) * size
-        const branch = await this.children(aspect.id, params.parentId, { from, size })
+        // One branch, or every leaf beneath one. The second is what makes a tree filterable: the
+        // scope stops being where you are and becomes which rows the question is about.
+        const branch =
+            method === 'getList'
+                ? await this.leaves!(aspect.id, params.under, { from, size, ...(params.filter ? { filter: params.filter } : {}) })
+                : await this.children(aspect.id, params.parentId, { from, size })
 
         return {
             // The occurrence id is the row id, because that is what a caller passes back as the
@@ -230,6 +270,7 @@ export abstract class AspectProvider<Props extends Record<string, unknown>, Stat
                 ? { grouping: branch.occurrences.map((occurrence) => occurrence.grouping ?? occurrence.hasChildren) }
                 : {}),
             ...(branch.total !== undefined ? { total: branch.total } : {}),
+            ...(branch.hasMore !== undefined ? { hasMore: branch.hasMore } : {}),
             ...(branch.defaultChild !== undefined ? { defaultChild: branch.defaultChild } : {}),
             epoch: this.incarnation,
             revision: this.structureRevision
