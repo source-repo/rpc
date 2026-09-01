@@ -13,6 +13,12 @@
  * tell an operator "nothing matches" over a filter that matched sixty.
  */
 
+/*
+ * Named `paging` rather than `pager` because `Pager.tsx` sits beside it and a case-insensitive
+ * filesystem cannot tell those two apart. `./Pager` resolved to this file on Windows - `.ts` is
+ * tried before `.tsx` - and the build failed with "Pager is not exported by pager.ts", which is a
+ * true statement about the wrong file. The arithmetic lives here; the control is the component.
+ */
 export interface PagedAnswer {
     readonly ids: readonly string[]
     /** Absent means unknown. Never read it as zero. */

@@ -3,7 +3,7 @@ import type { RpcDataCache, RpcQuestion } from '@source-repo/query'
 import { useRpcData } from './data'
 import type { Ref } from './ObjectPanel'
 import type { DescribedAction, DescribedResource } from './types'
-import { pageControls } from './pager'
+import { pageControls } from './paging'
 import { Pager } from './Pager'
 
 /**

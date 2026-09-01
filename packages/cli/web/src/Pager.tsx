@@ -1,4 +1,4 @@
-import type { PageControls } from './pager'
+import type { PageControls } from './paging'
 
 /**
  * Where you are in a set, and how to move.

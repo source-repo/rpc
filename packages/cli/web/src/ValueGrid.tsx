@@ -4,7 +4,7 @@ import type { RpcDataCache, RpcFreshness, RpcQuestion } from '@source-repo/query
 import { leavesUnder, treeResourceAt, typeAt, type ScopeLeaf } from './scope'
 import { staticSource, ValueTree, type EditAffordance, type ValueSource } from './ValueTree'
 import { compileFilter } from './filter'
-import { pageControls } from './pager'
+import { pageControls } from './paging'
 import { useRpcData } from './data'
 import { BranchTable, ResourceTree, type BranchQuestion, type RowQuestion, type ScopedQuestion } from './ResourceTree'
 import { Pager } from './Pager'

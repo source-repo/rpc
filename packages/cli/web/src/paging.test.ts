@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest'
-import { pageControls } from './pager'
+import { pageControls } from './paging'
 
 /**
  * Paging a resource that could not afford to count itself.
