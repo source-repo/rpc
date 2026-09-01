@@ -369,15 +369,18 @@ export class OpcUaAspectProvider extends AspectProvider<OpcUaProviderProps, OpcU
         const node = toSessionNodeId(portable, this.namespaces)
         if (!node) return undefined
 
-        // Five attributes in one Read, because the round trip is the cost and the fifth is free:
+        // Six attributes in one Read, because the round trip is the cost and the rest are free.
         // AccessLevel is what says whether this node can be written at all, which a binding has to
-        // report honestly rather than leaving a caller to find out by trying.
-        const [displayName, browseName, nodeClass, description, accessLevel] = await session.read([
+        // report honestly rather than leaving a caller to find out by trying - and Value is what a
+        // reader opened a Variable to see. An Object has no Value and answers a bad status for it,
+        // which costs nothing and is dropped below.
+        const [displayName, browseName, nodeClass, description, accessLevel, value] = await session.read([
             { nodeId: node, attributeId: AttributeIds.DisplayName },
             { nodeId: node, attributeId: AttributeIds.BrowseName },
             { nodeId: node, attributeId: AttributeIds.NodeClass },
             { nodeId: node, attributeId: AttributeIds.Description },
-            { nodeId: node, attributeId: AttributeIds.AccessLevel }
+            { nodeId: node, attributeId: AttributeIds.AccessLevel },
+            { nodeId: node, attributeId: AttributeIds.Value }
         ])
         const title = String((displayName.value.value as { text?: string })?.text ?? (browseName.value.value as { name?: string })?.name ?? target.id)
         const kind = NodeClass[Number(nodeClass.value.value)] ?? 'Unspecified'
@@ -387,7 +390,18 @@ export class OpcUaAspectProvider extends AspectProvider<OpcUaProviderProps, OpcU
             kind: `opcua.${String(kind).toLowerCase()}`,
             title,
             ...(((description.value.value as { text?: string })?.text) ? { summary: String((description.value.value as { text?: string }).text) } : {}),
-            fields: { nodeId: target.id, browseName: String((browseName.value.value as { name?: string })?.name ?? ''), nodeClass: String(kind) },
+            fields: {
+                nodeId: target.id,
+                browseName: String((browseName.value.value as { name?: string })?.name ?? ''),
+                nodeClass: String(kind),
+                // Carried here as well as on the row, because an object is not always reached from
+                // one: a link, a binding or a saved address opens it with no table beside it, and a
+                // Variable whose value is missing from the one view that shows everything about it
+                // would be the odd gap. Absent on an Object, which has no Value to read.
+                ...(value?.statusCode?.isGood?.() !== false && value?.value?.value !== undefined && value.value.value !== null
+                    ? { value: String(value.value.value) }
+                    : {})
+            },
             origin: { system: 'opcua', externalId: target.id, url: this.props.endpointUrl, retrievedAt: new Date().toISOString() },
             bindings: this.bindingsFor(target.id, String(kind), Number(accessLevel.value?.value ?? 0))
         }

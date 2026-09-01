@@ -65,3 +65,17 @@ The arrangement is per resource, not per branch. A resource that is genuinely bo
 `getOne` is served but no store-backed read side declares it. `relational` and `document` still answer `getList`, `getMany` and `getManyReference`, and their reason survives: a table's row is the same shape read one at a time or fifty, so `getOne` there would be `getMany` with one id under another name.
 
 Nothing consumes `children` except the console. That is fine and expected — it is a declaration about data, and a second viewer would read it the same way.
+
+## Afterwards: the choice did not survive contact
+
+*Added at `f3d7bfb`+, after the console was used against a real address space rather than a fixture.*
+
+The two arrangements and the toggle between them are gone, and so is `children: 'alike' | 'assorted'`. There is one arrangement: the tree holds branches and is scope, the table holds the rows of the branch that is picked, and the panel beside them holds what a row cannot — a document's text, a node's every attribute.
+
+The reasoning above was not wrong about the *shapes*; it was wrong that a reader has to choose between them. What the second arrangement offered — leaves drawn in the tree — turned out to be the same view with a different pane in focus, and a leaf in a tree is a row nobody can read across. The document case, which is the one the toggle was built to protect, reads perfectly well as folders on the left and documents as rows: it is the arrangement somebody wants when *organising* rather than reading, and reading is one click away in the panel.
+
+So the declaration went with it. `children` existed to pick which arrangement opened; with one arrangement it decided nothing, and a contract field expressing a choice nobody makes is the speculative surface `defaultColumns` is written to keep off the wire. If a second arrangement ever earns its place, the field can come back with it.
+
+What did survive, and is worth separating from what did not: `appliesTo` on an action, the pure-scope rule for a level of nothing but branches, `getOne`, `defaultChild`, and the object's id rather than its occurrence's. Those were all found the same way and none of them depended on there being two views.
+
+Still open, raised while looking at it: the columns are whatever the resource named, and a reader cannot choose others. A column selector, remembered per reader in the browser, is the obvious next thing and is not built.

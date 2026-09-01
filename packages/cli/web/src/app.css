@@ -2140,20 +2140,6 @@ textarea.control {
     opacity: 0.65;
 }
 
-/* ── The two arrangements of one tree resource ────────────────────────────────────────────────
- *
- * A toggle above the panes rather than a control inside either, because it is about which of them
- * is showing. Right-aligned, so it sits where a control does and not where a heading does.
- */
-.arrangement {
-    display: flex;
-    justify-content: flex-end;
-    gap: 4px;
-    margin-bottom: 6px;
-}
-
-/* One branch's children, aligned. The wrap scrolls sideways on its own so a resource with twelve
-   columns never makes the page scroll. */
 .branch-table-wrap {
     /* The widest appetite of the three: it holds the columns somebody came to compare. */
     flex: 3 1 24rem;
