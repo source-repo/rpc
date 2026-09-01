@@ -1,5 +1,6 @@
 import { readdirSync } from 'node:fs'
 import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { expect, test } from 'vitest'
 
 /**
@@ -23,7 +24,15 @@ import { expect, test } from 'vitest'
 const withoutExtension = (name: string) => name.replace(/\.[^.]+$/, '')
 
 test('no two modules differ only in case, which a case-insensitive filesystem cannot tell apart', () => {
-    const here = new URL('.', import.meta.url).pathname
+    /**
+     * `fileURLToPath` and not `.pathname`, which is the same trap one layer down.
+     *
+     * A file URL's pathname is `/D:/a/rpc/...` on Windows, and the leading slash makes Node resolve
+     * it against the current drive - so this guard, written to catch a Windows-only bug, failed on
+     * Windows and nowhere else with `scandir 'D:\D:\a\rpc\...'`. The conversion is what knows
+     * that a drive letter is not a directory.
+     */
+    const here = fileURLToPath(new URL('.', import.meta.url))
     const collisions: string[] = []
 
     const walk = (directory: string) => {
