@@ -416,7 +416,13 @@ export const ValueGrid = ({
         chosenView ?? (addressed && tree ? rememberedView(addressed.namespace, tree.path) : undefined) ?? (tree?.children === 'alike' ? 'values' : 'structure')
     const chooseView = (next: Arrangement) => {
         setChosenView(next)
+        // Both selections go, and the branch with them. What is open was picked out of the other
+        // arrangement and is not in this one: switching to values left the object panel showing
+        // whatever had last been opened in the tree, beside a table it had nothing to do with -
+        // which reads as a pane that does not respond rather than as one that is out of date.
         setOpened(undefined)
+        setWhere(undefined)
+        setBranch(undefined)
         if (addressed && tree) rememberView(addressed.namespace, tree.path, next)
     }
 
@@ -453,7 +459,19 @@ export const ValueGrid = ({
                             // One gesture, two meanings, decided by the arrangement: with the leaves
                             // drawn a pick opens the row, and with only branches drawn it chooses
                             // which branch is tabulated beside it.
-                            onPickRow={view === 'values' ? setBranch : opensRows ? setOpened : undefined}
+                            onPickRow={
+                                view === 'values'
+                                    ? (id: string) => {
+                                          // A new branch is a new set of rows, so whatever was open
+                                          // out of the last one is not in this one.
+                                          setBranch(id)
+                                          setOpened(undefined)
+                                          setWhere(undefined)
+                                      }
+                                    : opensRows
+                                      ? setOpened
+                                      : undefined
+                            }
                             // In the values arrangement the rows are on the right, and so are the
                             // buttons about them.
                             actions={view === 'structure' ? actionsFor(tree.path as string[]) : undefined}
@@ -472,7 +490,22 @@ export const ValueGrid = ({
                                 // both cases, or a document that arrived because its folder named
                                 // it would be showing with nothing to say where it came from.
                                 selected={where?.occurrenceId ?? opened}
-                                onPickRow={opensRows ? setOpened : undefined}
+                                onSelect={
+                                    objectAccess
+                                        ? (ref: Ref, occurrenceId: string) => {
+                                              setOpened(undefined)
+                                              setWhere({ target: ref, aspectId: tree.path[0], occurrenceId, inherited: false })
+                                          }
+                                        : undefined
+                                }
+                                onPickRow={
+                                    opensRows
+                                        ? (id: string) => {
+                                              setWhere(undefined)
+                                              setOpened(id)
+                                          }
+                                        : undefined
+                                }
                                 actions={actionsFor(tree.path as string[])}
                                 onAction={onAction}
                             />

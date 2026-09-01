@@ -506,9 +506,11 @@ export const ComponentPanel = ({
                         {busy ? 'opening…' : 'view'}
                     </button>
                 )}
+                {/* `close` rather than `stop`: a subscription is dropped underneath, which is true
+                    and is not what anybody is doing. They opened a view and they are shutting it. */}
                 {observing && (
                     <button className="toggle on" onClick={stop}>
-                        stop
+                        close
                     </button>
                 )}
                 {/* Offered from inside the opened view rather than beside the button that opens

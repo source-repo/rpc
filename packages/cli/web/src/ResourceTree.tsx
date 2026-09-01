@@ -136,6 +136,20 @@ const Node = ({
     onAction?: (action: DescribedAction, id: string, resource: readonly string[]) => void
 }) => {
     const [open, setOpen] = useState(false)
+    /**
+     * Whether opening this one showed anything, once it has been opened.
+     *
+     * `hasChildren` says the node has children, which is true of a device with three variables under
+     * it - and in the branches-only arrangement those are drawn on the right rather than below, so
+     * the expander opened onto nothing and stayed there offering to do it again. The flag cannot
+     * answer this: what this tree needs to know is whether there are *branch* children, and only the
+     * branch itself says that.
+     *
+     * So it is learned from the one that was fetched, and the expander goes when the answer is no.
+     * That costs the first click, and the click is usually already paid: picking a branch tabulates
+     * exactly the children this asks about, so the cache has them.
+     */
+    const [barren, setBarren] = useState(false)
     const ref = refOf(row)
     /**
      * What an action is about: the **object**, not the placement.
@@ -164,7 +178,7 @@ const Node = ({
     return (
         <>
             <div className={`tree-row${selected === id ? ' on' : ''}`} style={{ paddingLeft: `${depth * 1.1}rem` }}>
-                {expandable ? (
+                {expandable && !barren ? (
                     <button className="tree-toggle" onClick={() => setOpen(!open)} aria-expanded={open} title={open ? 'collapse' : 'expand'}>
                         {open ? '▾' : '▸'}
                     </button>
@@ -221,8 +235,14 @@ const Node = ({
             </div>
             {/* Mounted only while open, so a closed branch is not merely hidden - it is not asked
                 for, and the watch that would keep it current is not open either. */}
-            {open && (
+            {open && !barren && (
                 <BranchRows
+                    onDrew={(any) => {
+                        if (!any) {
+                            setBarren(true)
+                            setOpen(false)
+                        }
+                    }}
                     parentId={id}
                     depth={depth + 1}
                     resource={resource}
@@ -257,7 +277,8 @@ const BranchRows = ({
     onPickRow,
     branchesOnly,
     actions,
-    onAction
+    onAction,
+    onDrew
 }: {
     parentId: string | undefined
     depth: number
@@ -294,6 +315,8 @@ const BranchRows = ({
     /** What may be done to a row of this resource, as methods the component already declares. */
     actions?: DescribedAction[]
     onAction?: (action: DescribedAction, id: string, resource: readonly string[]) => void
+    /** Whether this drew any rows, so a parent can stop offering to open what opens onto nothing. */
+    onDrew?: (any: boolean) => void
 }) => {
     const [page, setPage] = useState(0)
     const question = useMemo(() => branchQuestion(resource, parentId, page, pageSize), [branchQuestion, resource, parentId, page, pageSize])
@@ -330,7 +353,10 @@ const BranchRows = ({
     // branches are already known here; a "branches only" verb would be a second question about a
     // set the node has just described.
     const drawn = branch.ids.map((id, index) => [id, index] as const).filter(([, index]) => !branchesOnly || branch.hasChildren?.[index] === true)
-    if (branchesOnly && !drawn.length) return null
+    if (branchesOnly && !drawn.length) {
+        onDrew?.(false)
+        return null
+    }
     return (
         <>
             {drawn.map(([id, index]) => (
@@ -389,6 +415,7 @@ export const BranchTable = ({
     period,
     pageSize = 100,
     selected,
+    onSelect,
     onPickRow,
     actions,
     onAction
@@ -402,6 +429,14 @@ export const BranchTable = ({
     period: number | undefined
     pageSize?: number
     selected?: string
+    /**
+     * Open a row. The same two paths the tree has, and for the same reason.
+     *
+     * A row an aspect provider handed out carries a reference and opens through `openObject`; a row
+     * from a plain resource has an id and opens through `getOne`. A table whose rows could only be
+     * opened the second way left every aspect provider's rows inert - which is most of them.
+     */
+    onSelect?: (ref: Ref, id: string) => void
     onPickRow?: (id: string) => void
     actions?: DescribedAction[]
     onAction?: (action: DescribedAction, id: string, resource: readonly string[]) => void
@@ -453,12 +488,19 @@ export const BranchTable = ({
                         const isBranch = branch.hasChildren?.[index] === true
                         // The object, not the placement - the same rule the tree rows follow, and
                         // for the same reason: an action against an occurrence names a position.
-                        const subject = refOf(row)?.id ?? id
+                        const reference = refOf(row)
+                        const subject = reference?.id ?? id
                         const offered = (actions ?? []).filter(
                             (action) => (action.appliesTo ?? 'leaves') === 'all' || (action.appliesTo ?? 'leaves') === (isBranch ? 'branches' : 'leaves')
                         )
                         return (
-                            <tr key={id} className={selected === id ? 'on' : undefined} onClick={onPickRow ? () => onPickRow(id) : undefined}>
+                            <tr
+                                key={id}
+                                className={selected === id ? 'on' : undefined}
+                                onClick={
+                                    reference && onSelect ? () => onSelect(reference, id) : onPickRow ? () => onPickRow(id) : undefined
+                                }
+                            >
                                 {headings.map((column) => (
                                     <td key={column}>{cell(column === 'id' ? id : field(row, column))}</td>
                                 ))}

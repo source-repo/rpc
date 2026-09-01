@@ -142,7 +142,11 @@ export class OpcUaAspectProvider extends AspectProvider<OpcUaProviderProps, OpcU
                 revision: String(this.namespaces.length),
                 default: true,
                 preferredPresentation: 'tree',
-                defaultColumns: ['title', 'nodeClass']
+                // `value` before the class, because on a plant it is the column somebody came to
+                // read: a row saying `Running` and `Variable` answers a question nobody asked. It is
+                // absent on an Object and on a Variable that could not be read, and a column with
+                // gaps in it is still the right column.
+                defaultColumns: ['title', 'value', 'nodeClass']
             },
             // The arrangements the deployment supplied. They are offered whether or not an index
             // has been built - a viewer should be able to see that a functional aspect exists and
@@ -266,6 +270,7 @@ export class OpcUaAspectProvider extends AspectProvider<OpcUaProviderProps, OpcU
         const total = references.length
         const window = references.slice(page.from, page.from + page.size)
         const flags = await this.hasChildrenFor(window)
+        const values = await this.valuesFor(window)
 
         return {
             total,
@@ -276,9 +281,43 @@ export class OpcUaAspectProvider extends AspectProvider<OpcUaProviderProps, OpcU
                 kind: `opcua.${reference.nodeClass.toLowerCase()}`,
                 relation: reference.reference,
                 hasChildren: flags[at],
-                fields: { nodeClass: reference.nodeClass, nodeId: reference.portable }
+                fields: { nodeClass: reference.nodeClass, nodeId: reference.portable, ...(values[at] !== undefined ? { value: values[at] } : {}) }
             }))
         }
+    }
+
+    /**
+     * What the Variables in this page currently read.
+     *
+     * A branch of a plant's address space is mostly Variables, and a row that says `Running` and
+     * `Variable` and nothing else is a row nobody wanted: the thing being looked for is `false`, or
+     * `27.3`. So the value travels with the branch.
+     *
+     * One Read covering the whole page, for the reason the browse beside it is batched: OPC UA's
+     * Read takes an array, so this is one further round trip per expansion and not one per row.
+     * Non-Variables are skipped rather than read and discarded - an Object has no Value attribute,
+     * and asking for one is a status code coming back for every folder in the tree.
+     *
+     * Still no subscription, which is the line this package holds: a value here is what it read when
+     * the branch was asked for, and a viewer that wants it to keep moving asks again. Two hundred
+     * thousand nodes are not two hundred thousand monitored items because somebody opened a folder.
+     */
+    private async valuesFor(children: readonly { readonly session: string; readonly nodeClass: string }[]): Promise<(string | undefined)[]> {
+        const wanted = children.map((child, at) => (child.nodeClass === 'Variable' ? at : -1)).filter((at) => at >= 0)
+        if (!wanted.length) return children.map(() => undefined)
+
+        const session = this.connected()
+        const read = await session.read(wanted.map((at) => ({ nodeId: children[at].session, attributeId: AttributeIds.Value })))
+        const answers: (string | undefined)[] = children.map(() => undefined)
+        for (const [which, at] of wanted.entries()) {
+            const held = read[which]
+            // A bad status is a value that could not be read, which is a fact about the node rather
+            // than a failure of the branch - so it is said in the cell instead of throwing the page
+            // away. An unreadable tag beside forty good ones is exactly what somebody is looking for.
+            if (held?.statusCode?.isGood?.() === false) answers[at] = `(${held.statusCode.name ?? 'bad'})`
+            else if (held?.value?.value !== undefined && held.value.value !== null) answers[at] = String(held.value.value)
+        }
+        return answers
     }
 
     /**
