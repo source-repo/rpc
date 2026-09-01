@@ -566,9 +566,17 @@ export const BranchTable = ({
                                     reference && onSelect ? () => onSelect(reference, id) : onPickRow ? () => onPickRow(id) : undefined
                                 }
                             >
-                                {headings.map((column) => (
-                                    <td key={column}>{cell(column === 'id' ? id : field(row, column))}</td>
-                                ))}
+                                {headings.map((column) => {
+                                    const shown = cell(column === 'id' ? id : field(row, column))
+                                    // The whole value on the cell, because the column shows as much
+                                    // of it as fits and a reader should not have to open a row to
+                                    // find out what was cut.
+                                    return (
+                                        <td key={column} title={shown}>
+                                            {shown}
+                                        </td>
+                                    )
+                                })}
                                 {actions?.length ? (
                                     <td className="branch-actions">
                                         {offered.map((action) => (

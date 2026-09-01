@@ -1081,8 +1081,11 @@ textarea.control {
 }
 
 .value-table {
-    min-width: 200px;
-    flex: 1;
+    /* `min-width: 0` and not `200px`: a flex item's default minimum is its content, so the pane
+       handed a very wide table grew instead of letting the table's own `overflow-x` do its job.
+       The basis keeps it from collapsing; the minimum is what lets it shrink. */
+    min-width: 0;
+    flex: 1 1 200px;
 }
 
 .value-table h4 {
@@ -1964,7 +1967,10 @@ textarea.control {
 .object-fields {
     margin: 0 0 0.8rem;
     display: grid;
-    grid-template-columns: auto 1fr;
+    /* `minmax(0, 1fr)` rather than `1fr`, which is `minmax(auto, 1fr)` and therefore refuses to go
+       below the content's minimum. A value with no spaces in it - a URI, a profile list - has a
+       minimum as wide as the string, so the panel grew even while the text was visibly wrapping. */
+    grid-template-columns: auto minmax(0, 1fr);
     gap: 0.15rem 0.6rem;
     font-size: 0.9em;
 }
@@ -1976,7 +1982,10 @@ textarea.control {
 }
 .object-fields dd {
     margin: 0;
-    word-break: break-word;
+    /* `anywhere` rather than `break-word`, because the latter does not count toward the intrinsic
+       minimum and a long URI would still have claimed the width it could not use. */
+    overflow-wrap: anywhere;
+    min-width: 0;
 }
 .object-bindings {
     margin-top: 0.6rem;
@@ -2132,6 +2141,7 @@ textarea.control {
 .record-scalar {
     font-size: 12px;
     margin: 0;
+    overflow-wrap: anywhere;
 }
 
 /* Marked rather than hidden: a reader comparing the panel against the row it came from should find
@@ -2173,6 +2183,15 @@ textarea.control {
     border-bottom: 1px solid rgba(38, 46, 58, 0.55);
     white-space: nowrap;
     font-family: var(--mono);
+    /* Capped, and this is what stops one value resizing the console. A UA node's
+       `ServerProfileArray` is several hundred characters on one line; uncapped it made the table
+       fourteen thousand pixels wide and pushed the panel - and the controls above it - to
+       twenty-nine thousand, on a window of thirteen hundred. A column is for comparing values at a
+       glance, so what does not fit is cut here and read in full in the panel, where there is room
+       for it to wrap. The whole string is on the cell's `title` either way. */
+    max-width: 22rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
 .branch-table tbody tr {
