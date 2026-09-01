@@ -2072,11 +2072,102 @@ textarea.control {
 
 .app.observing .scope-pane {
     max-width: 320px;
+    max-height: 100%;
     overflow-y: auto;
+}
+
+/**
+ * A column where the scope is a *selector*, a row where it is a pane.
+ *
+ * The two cases are exclusive - a component whose scope has depth gets the tree, one whose scope is
+ * a list of resources gets the select - and they want opposite layouts. A pane belongs beside the
+ * values; a selector is a full-width row above them, and as a wrapped flex line it cannot bound what
+ * is under it: the second line takes whatever height its content asks for, so a hundred rows push
+ * the pane past the fold and `overflow: hidden` above cuts off the rest, pager included.
+ *
+ * `:has` rather than a class from the component, because the component already says which one it
+ * drew by drawing it, and a second declaration of the same fact is one that can disagree.
+ */
+.app.observing .component-body:has(> .scope-pick) {
+    flex-direction: column;
+    flex-wrap: nowrap;
+}
+
+/* Its `flex-basis: 100%` means a full line in a row and the *whole height* in a column, which is
+   the same declaration meaning opposite things. Here it is one row of controls and nothing else. */
+.app.observing .component-body:has(> .scope-pick) > .scope-pick {
+    flex: 0 0 auto;
 }
 
 .app.observing .value-table {
     min-height: 0;
+    /* Capped against the body's own height, and `min-height: 0` is not enough to do it.
+       `.component-body` wraps, and a wrapping flex container sizes each *line* to its content when
+       there is no free space left to distribute - so an item taller than the body makes the line
+       taller than the body rather than being squeezed into it, and everything below the fold is
+       clipped by the `overflow: hidden` above rather than scrolled to. A hundred rows of a branch is
+       exactly that case. */
+    max-height: 100%;
+    /* The panes scroll, not the whole grid: three columns sharing one scrollbar means moving down a
+       list of four hundred tags takes the tree and the panel with it, and the reader loses the
+       thing they were reading against. */
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+}
+
+/* A column, so the height the pane was given reaches the panes inside it. As a block it is bounded
+   itself and passes nothing on: the row of controls and the three panes below it lay out at their
+   content height and are clipped at the fold. */
+.app.observing .value-grid {
+    min-height: 0;
+    flex: 1 1 auto;
+    display: flex;
+    flex-direction: column;
+}
+
+.app.observing .tree-and-object {
+    min-height: 0;
+    flex: 1 1 auto;
+    /* The fallback for the narrow case. These panes wrap, and once they are on two lines no cap on
+       one of them can keep the pair inside the pane - so the group scrolls as a group, which is the
+       right answer when they are stacked anyway. */
+    overflow-y: auto;
+}
+
+/* Stretched rather than top-aligned, so each pane has a height to scroll within. Top-aligned they
+   size to their content, and content taller than the window is simply cut off. */
+.app.observing .tree-and-object {
+    align-items: stretch;
+}
+
+/* `max-height` and not only `min-height: 0`, for the reason the pane above is capped: this is a
+   wrapping flex container, so its line grows to whatever the tallest pane needs and stretch then
+   makes all three that tall. Capping each at the container's own height is what makes the scrollbar
+   appear on the pane instead of the content disappearing under the fold. */
+.app.observing .tree-and-object > .collection,
+.app.observing .branch-table-wrap,
+.app.observing .object-panel,
+.app.observing .record-panel {
+    min-height: 0;
+    max-height: 100%;
+}
+
+.app.observing .tree-and-object > .collection,
+.app.observing .object-panel,
+.app.observing .record-panel {
+    overflow-y: auto;
+}
+
+/* The table pane scrolls one layer in, so its pager stays on screen. */
+.app.observing .branch-table-wrap {
+    display: flex;
+    flex-direction: column;
+}
+
+.app.observing .branch-table-scroll {
+    min-height: 0;
+    flex: 1 1 auto;
     overflow-y: auto;
 }
 
@@ -2153,6 +2244,12 @@ textarea.control {
 .branch-table-wrap {
     /* The widest appetite of the three: it holds the columns somebody came to compare. */
     flex: 3 1 24rem;
+    min-width: 0;
+}
+
+/* Sideways here rather than on the wrapper, so a table too wide to fit takes its scrollbar and
+   leaves the pager where it is. */
+.branch-table-scroll {
     min-width: 0;
     overflow-x: auto;
 }

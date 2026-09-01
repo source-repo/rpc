@@ -367,7 +367,7 @@ export class DocumentLibrary extends AspectProvider<DocumentLibraryProps, Docume
         const here = this.folders.get(path)
         if (!here) return []
         return [
-            ...here.folders.map((folder) => ({ occurrenceId: `folder:${folder}`, title: basename(folder), kind: 'documentation.folder', grouping: true, hasChildren: this.folderHasChildren(folder) })),
+            ...here.folders.map((folder) => ({ occurrenceId: `folder:${folder}`, title: basename(folder), kind: 'documentation.folder', grouping: this.folderHolds(folder), hasChildren: this.folderHasChildren(folder) })),
             ...here.documents.map((id) => this.occurrenceOf(id, `folder:${path}/${id}`, 'filed-in'))
         ]
     }
@@ -396,6 +396,18 @@ export class DocumentLibrary extends AspectProvider<DocumentLibraryProps, Docume
             grouping: false,
             fields: { path: document.path, words: document.words, modified: document.modified }
         }
+    }
+
+    /**
+     * Whether a folder holds anything at all - sub-folders or documents.
+     *
+     * A folder with nothing in it is not a place to look inside: as a branch it would be a scope
+     * that scopes nothing, and picking it would answer with an empty list forever. It is listed as
+     * the thing it is instead, beside the documents of the folder that holds it.
+     */
+    private folderHolds(folder: string): boolean {
+        const here = this.folders.get(folder)
+        return !!here && (here.folders.length > 0 || here.documents.length > 0)
     }
 
     /**

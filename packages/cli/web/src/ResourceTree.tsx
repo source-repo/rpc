@@ -544,68 +544,74 @@ export const BranchTable = ({
 
     return (
         <div className="branch-table-wrap">
-            <table className="branch-table">
-                <thead>
-                    <tr>
-                        {headings.map((column) => (
-                            <th key={column}>{column}</th>
-                        ))}
-                        {actions?.length ? <th className="branch-actions-head" /> : null}
-                    </tr>
-                </thead>
-                <tbody>
-                    {listed.map(([id, index]) => {
-                        const row = branch.data[index]
-                        // The object, not the placement - the same rule the tree rows follow, and
-                        // for the same reason: an action against an occurrence names a position.
-                        const reference = refOf(row)
-                        const subject = reference?.id ?? id
-                        // Everything here is a leaf by construction now, so an action for branches
-                        // has nothing in this table to be about - it belongs on a tree row.
-                        const offered = (actions ?? []).filter((action) => (action.appliesTo ?? 'leaves') !== 'branches')
-                        return (
-                            <tr
-                                key={id}
-                                className={selected === id ? 'on' : undefined}
-                                onClick={
-                                    reference && onSelect ? () => onSelect(reference, id) : onPickRow ? () => onPickRow(id) : undefined
-                                }
-                            >
-                                {headings.map((column) => {
-                                    const shown = cell(column === 'id' ? id : field(row, column))
-                                    // The whole value on the cell, because the column shows as much
-                                    // of it as fits and a reader should not have to open a row to
-                                    // find out what was cut.
-                                    return (
-                                        <td key={column} title={shown}>
-                                            {shown}
+            {/* The rows scroll inside this, and the pager below stays put. One element rather than
+                none, because a pager that scrolls away with a hundred rows is a pager somebody has
+                to reach the bottom of the page to press - which is the position they were using it
+                to leave. */}
+            <div className="branch-table-scroll">
+                <table className="branch-table">
+                    <thead>
+                        <tr>
+                            {headings.map((column) => (
+                                <th key={column}>{column}</th>
+                            ))}
+                            {actions?.length ? <th className="branch-actions-head" /> : null}
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {listed.map(([id, index]) => {
+                            const row = branch.data[index]
+                            // The object, not the placement - the same rule the tree rows follow, and
+                            // for the same reason: an action against an occurrence names a position.
+                            const reference = refOf(row)
+                            const subject = reference?.id ?? id
+                            // Everything here is a leaf by construction now, so an action for branches
+                            // has nothing in this table to be about - it belongs on a tree row.
+                            const offered = (actions ?? []).filter((action) => (action.appliesTo ?? 'leaves') !== 'branches')
+                            return (
+                                <tr
+                                    key={id}
+                                    className={selected === id ? 'on' : undefined}
+                                    onClick={
+                                        reference && onSelect ? () => onSelect(reference, id) : onPickRow ? () => onPickRow(id) : undefined
+                                    }
+                                >
+                                    {headings.map((column) => {
+                                        const shown = cell(column === 'id' ? id : field(row, column))
+                                        // The whole value on the cell, because the column shows as much
+                                        // of it as fits and a reader should not have to open a row to
+                                        // find out what was cut.
+                                        return (
+                                            <td key={column} title={shown}>
+                                                {shown}
+                                            </td>
+                                        )
+                                    })}
+                                    {actions?.length ? (
+                                        <td className="branch-actions">
+                                            {offered.map((action) => (
+                                                <button
+                                                    key={action.method}
+                                                    className="toggle"
+                                                    title={`calls ${action.method}(${subject})`}
+                                                    // The row opens on a click; a button in it must not
+                                                    // also open the row behind it.
+                                                    onClick={(event) => {
+                                                        event.stopPropagation()
+                                                        onAction?.(action, subject, resource)
+                                                    }}
+                                                >
+                                                    {action.label ?? action.method}
+                                                </button>
+                                            ))}
                                         </td>
-                                    )
-                                })}
-                                {actions?.length ? (
-                                    <td className="branch-actions">
-                                        {offered.map((action) => (
-                                            <button
-                                                key={action.method}
-                                                className="toggle"
-                                                title={`calls ${action.method}(${subject})`}
-                                                // The row opens on a click; a button in it must not
-                                                // also open the row behind it.
-                                                onClick={(event) => {
-                                                    event.stopPropagation()
-                                                    onAction?.(action, subject, resource)
-                                                }}
-                                            >
-                                                {action.label ?? action.method}
-                                            </button>
-                                        ))}
-                                    </td>
-                                ) : null}
-                            </tr>
-                        )
-                    })}
-                </tbody>
-            </table>
+                                    ) : null}
+                                </tr>
+                            )
+                        })}
+                    </tbody>
+                </table>
+            </div>
             {/* A pager rather than a "more" button, because this list has a size, a place in a set
                 and sometimes a count of pages - and where the peer could not afford a count it says
                 so by leaving the denominator off rather than by having no pager. */}

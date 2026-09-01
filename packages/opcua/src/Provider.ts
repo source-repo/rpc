@@ -312,11 +312,19 @@ export class OpcUaAspectProvider extends AspectProvider<OpcUaProviderProps, OpcU
                 title: reference.title,
                 kind: `opcua.${reference.nodeClass.toLowerCase()}`,
                 relation: reference.reference,
-                hasChildren: flags[at],
-                // What the node *is*, which is not whether anything hangs off it. A Variable with
-                // `EngineeringUnits` and `EURange` under it is still a measurement somebody wants in
-                // a row, and an Object with nothing under it yet is still a place.
-                grouping: isGrouping(reference.nodeClass),
+                hasChildren: flags[at].branches,
+                /**
+                 * A place to look inside - which needs both that it is the kind of node that holds
+                 * others, and that it holds any.
+                 *
+                 * A Variable with `EngineeringUnits` under it is still a measurement somebody wants
+                 * in a row, so the class matters. And an Object with *nothing* under it is not a
+                 * place to look inside either: `ModellingRules` on a stock server holds nothing at
+                 * all, and as a branch it is a scope that scopes nothing - a row of a tree that can
+                 * never answer the question the tree is for. It is listed as the thing it is
+                 * instead, which is where a node with no contents belongs.
+                 */
+                grouping: isGrouping(reference.nodeClass) && flags[at].any,
                 fields: { nodeClass: reference.nodeClass, nodeId: reference.portable, ...(values[at] !== undefined ? { value: values[at] } : {}) }
             }))
         }
@@ -626,20 +634,23 @@ export class OpcUaAspectProvider extends AspectProvider<OpcUaProviderProps, OpcU
      * presses it is worse than a tree that never made it. Those Variables are on the right, in the
      * list the device scopes, which is where they were always going.
      *
+     * Two facts come back rather than one, because both are in the same answer: `branches` is the
+     * expander, and `any` is whether the node holds anything at all - which is what decides whether
+     * it is a place worth putting in a tree.
+     *
      * Nothing extra is spent finding out - the browse already returns each child's node class, so
-     * this is a filter over an answer that had arrived anyway.
+     * this is a reading of an answer that had arrived anyway.
      */
-    private async hasChildrenFor(children: readonly { readonly session: string; readonly nodeClass: string }[]): Promise<boolean[]> {
+    private async hasChildrenFor(children: readonly { readonly session: string; readonly nodeClass: string }[]): Promise<{ branches: boolean; any: boolean }[]> {
         if (!children.length) return []
-        // Free, and answered from what the browse already returned: a container almost always has
-        // children and a Variable usually does not. Wrong for a Variable that carries properties,
-        // which gets no expander until something asks - the cost of the choice, stated where it is
-        // made rather than discovered by somebody wondering why a node will not open.
         // The free probe guesses from the child's own class rather than looking inside it: a place
-        // usually holds places, a Variable does not. Wrong for a cabinet that happens to hold only
-        // tags, which is the cost of not asking - stated here rather than found by somebody
+        // usually holds places, a Variable does not, and neither answer can know whether the node is
+        // empty - so it calls a place a place whether or not anything is in it. Wrong for a cabinet
+        // that happens to hold only tags, and wrong for a branch with nothing under it at all; that
+        // is the cost of not asking, stated where the choice is made rather than found by somebody
         // wondering why a node will not open.
-        if ((this.options.childrenProbe ?? 'browse') === 'node-class') return children.map((child) => isGrouping(child.nodeClass))
+        if ((this.options.childrenProbe ?? 'browse') === 'node-class')
+            return children.map((child) => ({ branches: isGrouping(child.nodeClass), any: isGrouping(child.nodeClass) }))
 
         // One Browse request covering every child at once. OPC UA's Browse takes an array of nodes,
         // so this is one extra round trip per expansion rather than one per row - the difference
@@ -649,6 +660,15 @@ export class OpcUaAspectProvider extends AspectProvider<OpcUaProviderProps, OpcU
             children.map((child) => ({ nodeId: child.session, browseDirection: BrowseDirection.Forward, referenceTypeId: 'HierarchicalReferences', includeSubtypes: true, resultMask: 63 }))
         )
         this.browses += 1
-        return results.map((result) => (result.references ?? []).some((reference) => isGrouping(NodeClass[reference.nodeClass] ?? 'Unspecified')))
+        // Two facts from one browse, because both are in the answer already: whether anything is
+        // under this node at all, and whether any of it is a place. The first decides whether the
+        // node is scope; the second decides whether it can be opened.
+        return results.map((result) => {
+            const references = result.references ?? []
+            return {
+                branches: references.some((reference) => isGrouping(NodeClass[reference.nodeClass] ?? 'Unspecified')),
+                any: references.length > 0
+            }
+        })
     }
 }
