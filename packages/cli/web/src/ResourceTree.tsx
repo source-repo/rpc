@@ -162,15 +162,15 @@ const Node = ({
     /**
      * Whether opening this one showed anything, once it has been opened.
      *
-     * `hasChildren` says the node has children, which is true of a device with three variables under
-     * it - and in the branches-only arrangement those are drawn on the right rather than below, so
-     * the expander opened onto nothing and stayed there offering to do it again. The flag cannot
-     * answer this: what this tree needs to know is whether there are *branch* children, and only the
-     * branch itself says that.
+     * A fallback now, and it should almost never fire. `hasChildren` is the flag a viewer draws an
+     * expander from, so a provider drawing a tree of places reports whether there are *branch*
+     * children - the ones this tree would show - and both providers here do. An arrow that opens
+     * onto nothing is then not drawn in the first place, which is the right answer: a tree that
+     * withdraws an arrow after somebody presses it is worse than one that never offered.
      *
-     * So it is learned from the one that was fetched, and the expander goes when the answer is no.
-     * That costs the first click, and the click is usually already paid: picking a branch tabulates
-     * exactly the children this asks about, so the cache has them.
+     * This stays for a provider whose `hasChildren` means "has any children", which is a reasonable
+     * reading of the name. Without it such a tree would keep a dead arrow forever; with it the arrow
+     * goes after one click, which is the lesser of the two.
      */
     const [barren, setBarren] = useState(false)
     const ref = refOf(row)
@@ -237,11 +237,16 @@ const Node = ({
                         {label}
                     </span>
                 )}
-                {details.map(([column, value]) => (
-                    <span className="tree-detail" key={column}>
-                        <span className="muted">{column}</span> {value}
-                    </span>
-                ))}
+                {/* Columns beside a branch, only where the tree is drawing the rows themselves.
+                    As scope it draws places, and what kind of place `Line1` is - `nodeClass Object`
+                    on every row, forever - is noise beside the one thing a reader is choosing.
+                    Everything about a row is in the list, which is where a row is. */}
+                {!branchesOnly &&
+                    details.map(([column, value]) => (
+                        <span className="tree-detail" key={column}>
+                            <span className="muted">{column}</span> {value}
+                        </span>
+                    ))}
                 {/* Named calls, not verbs of ours: what is committed is the component's own method,
                     and the button exists because the component said that method is about this row.
                     The same rule the grid's rows follow, arriving in the half of the pane that

@@ -91,7 +91,10 @@ test('a branch is fetched on its own', async (t) => {
         rows(roots).map((row) => row.title),
         ['guide', 'reference']
     )
-    t.deepEqual(roots.hasChildren, [true, true])
+    // `guide` holds a sub-folder and can be opened; `reference` holds only documents and cannot.
+    // The flag is what a viewer draws an expander from, and in a tree of places the documents are
+    // not under a folder - they are beside it, in the list that folder scopes.
+    t.deepEqual(roots.hasChildren, [true, false])
 
     const guide = await branch(docs, 'by-folder', 'folder:guide')
     t.deepEqual(

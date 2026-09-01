@@ -398,9 +398,17 @@ export class DocumentLibrary extends AspectProvider<DocumentLibraryProps, Docume
         }
     }
 
+    /**
+     * Whether a folder can be *opened*, which means sub-folders and not documents.
+     *
+     * The flag a viewer draws an expander from, and in a tree of places the documents are not under
+     * the folder - they are beside it, in the list the folder scopes. A folder holding nothing but
+     * documents therefore offers no arrow, because pressing it would reveal nothing and a tree that
+     * withdraws an arrow after a click is worse than one that never drew it.
+     */
     private folderHasChildren(folder: string): boolean {
         const here = this.folders.get(folder)
-        return !!here && (here.folders.length > 0 || here.documents.length > 0)
+        return !!here && here.folders.length > 0
     }
 
     private record(full: string, reader: DocumentReader, size: number, modified: Date): DocumentRecord | undefined {

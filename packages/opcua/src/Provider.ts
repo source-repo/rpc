@@ -617,15 +617,29 @@ export class OpcUaAspectProvider extends AspectProvider<OpcUaProviderProps, OpcU
      * for by taking a page large enough to finish.
      */
 
-    /** The flag a viewer draws an expander from, by whichever probe this provider was given. */
+    /**
+     * The flag a viewer draws an expander from - which means *branch* children, not any children.
+     *
+     * Those are different questions and the arrow is about the first. A device holds three Variables
+     * and no Objects, so it has children and still cannot be opened in a tree of places: an expander
+     * there is an offer that turns out to be empty, and a tree that withdraws one after somebody
+     * presses it is worse than a tree that never made it. Those Variables are on the right, in the
+     * list the device scopes, which is where they were always going.
+     *
+     * Nothing extra is spent finding out - the browse already returns each child's node class, so
+     * this is a filter over an answer that had arrived anyway.
+     */
     private async hasChildrenFor(children: readonly { readonly session: string; readonly nodeClass: string }[]): Promise<boolean[]> {
         if (!children.length) return []
         // Free, and answered from what the browse already returned: a container almost always has
         // children and a Variable usually does not. Wrong for a Variable that carries properties,
         // which gets no expander until something asks - the cost of the choice, stated where it is
         // made rather than discovered by somebody wondering why a node will not open.
-        if ((this.options.childrenProbe ?? 'browse') === 'node-class')
-            return children.map((child) => child.nodeClass === 'Object' || child.nodeClass === 'ObjectType' || child.nodeClass === 'VariableType' || child.nodeClass === 'View')
+        // The free probe guesses from the child's own class rather than looking inside it: a place
+        // usually holds places, a Variable does not. Wrong for a cabinet that happens to hold only
+        // tags, which is the cost of not asking - stated here rather than found by somebody
+        // wondering why a node will not open.
+        if ((this.options.childrenProbe ?? 'browse') === 'node-class') return children.map((child) => isGrouping(child.nodeClass))
 
         // One Browse request covering every child at once. OPC UA's Browse takes an array of nodes,
         // so this is one extra round trip per expansion rather than one per row - the difference
@@ -635,6 +649,6 @@ export class OpcUaAspectProvider extends AspectProvider<OpcUaProviderProps, OpcU
             children.map((child) => ({ nodeId: child.session, browseDirection: BrowseDirection.Forward, referenceTypeId: 'HierarchicalReferences', includeSubtypes: true, resultMask: 63 }))
         )
         this.browses += 1
-        return results.map((result) => (result.references?.length ?? 0) > 0)
+        return results.map((result) => (result.references ?? []).some((reference) => isGrouping(NodeClass[reference.nodeClass] ?? 'Unspecified')))
     }
 }
