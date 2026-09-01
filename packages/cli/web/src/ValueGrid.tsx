@@ -6,7 +6,8 @@ import { staticSource, ValueTree, type EditAffordance, type ValueSource } from '
 import { compileFilter } from './filter'
 import { pageControls } from './pager'
 import { useRpcData } from './data'
-import { BranchTable, ResourceTree, type BranchQuestion, type RowQuestion } from './ResourceTree'
+import { BranchTable, ResourceTree, type BranchQuestion, type RowQuestion, type ScopedQuestion } from './ResourceTree'
+import { Pager } from './Pager'
 import { RecordPanel } from './RecordPanel'
 import { ObjectPanel, type ObjectAccess, type Ref, type Where } from './ObjectPanel'
 import { useDebounced, useWaitedSeconds } from './timing'
@@ -216,19 +217,7 @@ const Collection = ({
                 {/* Drawn whenever there is anywhere to go, which is the only test that works for
                     both kinds of resource: a counted one knows how many pages there are, and an
                     uncounted one knows only that something follows. */}
-                {controls.paged && (
-                    <span className="pager">
-                        <button className="toggle" disabled={!controls.hasPrevious} onClick={() => setPage((at) => at - 1)}>
-                            ◂
-                        </button>
-                        {/* "2/9" where the pages can be counted, and "2" where they cannot - a
-                            page number over a total nobody knows would be a made-up denominator. */}
-                        <span className="muted mono">{controls.position}</span>
-                        <button className="toggle" disabled={!controls.hasNext} onClick={() => setPage((at) => at + 1)}>
-                            ▸
-                        </button>
-                    </span>
-                )}
+                <Pager page={page} pageSize={pageSize} controls={controls} onPage={setPage} showCount={false} />
             </div>
             {error && (
                 <p className="component-error">
@@ -276,6 +265,8 @@ export const ValueGrid = ({
     period,
     preview = true,
     onPreview,
+    scopedQuestion,
+    onPageSize,
     actionsFor,
     onAction,
     pageSize = 50
@@ -299,6 +290,9 @@ export const ValueGrid = ({
     /** Whether a picked row opens beside the table. A global preference, held by the host. */
     preview?: boolean
     onPreview?: (on: boolean) => void
+    /** How to ask for every leaf beneath a branch, where a resource answers for a subtree. */
+    scopedQuestion?: ScopedQuestion
+    onPageSize?: (size: number) => void
     /** What may be done to a row of the resource at this path, if anything. */
     actionsFor: (path: string[]) => DescribedAction[] | undefined
     onAction?: (action: DescribedAction, id: string, resource: readonly string[]) => void
@@ -427,7 +421,12 @@ export const ValueGrid = ({
                                 parentId={branch}
                                 cache={cache}
                                 branchQuestion={branchQuestion}
+                                // Offered only where the resource says it answers for a subtree.
+                                // Everything else about the table is the same either way.
+                                scopedQuestion={tree.verbs.includes('getList') ? scopedQuestion : undefined}
                                 period={period}
+                                pageSize={pageSize}
+                                onPageSize={onPageSize}
                                 // Either way a row can be open: through the aspects path into the
                                 // object panel, or by id into the record panel. The line says so in
                                 // both cases, or a document that arrived because its folder named

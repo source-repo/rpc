@@ -3,6 +3,8 @@ import type { RpcDataCache, RpcQuestion } from '@source-repo/query'
 import { useRpcData } from './data'
 import type { Ref } from './ObjectPanel'
 import type { DescribedAction, DescribedResource } from './types'
+import { pageControls } from './pager'
+import { Pager } from './Pager'
 
 /**
  * A resource declared `shape: 'tree'`, browsed one branch at a time.
@@ -29,6 +31,15 @@ export type BranchQuestion = (resource: readonly string[], parentId: string | un
 
 /** One row's question, for opening it on its own. `getOne`, where a resource answers that verb. */
 export type RowQuestion = (resource: readonly string[], id: string) => RpcQuestion
+
+/**
+ * Every leaf beneath a branch: `getList` with `under`, where a resource answers that verb.
+ *
+ * A different question from a branch's children, and it has to be, because it is the one a filter
+ * and an order are *about* - a set of rows rather than a level of them. The peer answers it and
+ * nothing here walks anything.
+ */
+export type ScopedQuestion = (resource: readonly string[], under: string | undefined, page: number, pageSize: number) => RpcQuestion
 
 interface Branch {
     readonly ids: readonly string[]
@@ -403,8 +414,10 @@ export const BranchTable = ({
     parentId,
     cache,
     branchQuestion,
+    scopedQuestion,
     period,
     pageSize = 100,
+    onPageSize,
     selected,
     onSelect,
     onPickRow,
@@ -417,8 +430,17 @@ export const BranchTable = ({
     parentId: string | undefined
     cache: RpcDataCache
     branchQuestion: BranchQuestion
+    /**
+     * How to ask for every leaf beneath the branch, where the resource answers for a subtree.
+     *
+     * Absent falls back to the branch's own children - a smaller screen and not a broken one: a
+     * reader scopes level by level instead of by subtree, and everything else is the same.
+     */
+    scopedQuestion?: ScopedQuestion
     period: number | undefined
     pageSize?: number
+    /** Absent leaves the size fixed, which is right where the host decides it. */
+    onPageSize?: (size: number) => void
     selected?: string
     /**
      * Open a row. The same two paths the tree has, and for the same reason.
@@ -433,9 +455,16 @@ export const BranchTable = ({
     onAction?: (action: DescribedAction, id: string, resource: readonly string[]) => void
 }) => {
     const [page, setPage] = useState(0)
-    const question = useMemo(() => branchQuestion(resource, parentId, page, pageSize), [branchQuestion, resource, parentId, page, pageSize])
+    // A subtree where the resource answers for one, a level where it does not.
+    const question = useMemo(
+        () => (scopedQuestion ? scopedQuestion(resource, parentId, page, pageSize) : branchQuestion(resource, parentId, page, pageSize)),
+        [scopedQuestion, branchQuestion, resource, parentId, page, pageSize]
+    )
     const { data, error, fetching } = useRpcData(cache, question, period)
     const branch = data as Branch | undefined
+    // Back to the first page when the branch changes: page four of one branch is not page four of
+    // the next, and staying put would land somebody past the end of a list they never scrolled.
+    useEffect(() => setPage(0), [parentId, scopedQuestion])
 
     /**
      * Open one on arrival: what the branch named, or failing that the first row.
@@ -503,7 +532,7 @@ export const BranchTable = ({
     // Nothing here is a thing to list - it is all scope, and the tree beside this is how it is read.
     if (!listed.length) return <p className="tree-note muted">pick a branch on the left to list what is in it</p>
 
-    const shown = (page + 1) * pageSize
+    const controls = pageControls(page, pageSize, branch, false)
     // A column for the label even when the resource named none: a table of ids and nothing else is
     // still a table, and it is what a resource that declared no `defaultColumns` honestly has.
     const headings = columns.length ? columns : ['id']
@@ -564,11 +593,12 @@ export const BranchTable = ({
                     })}
                 </tbody>
             </table>
-            {branch.total !== undefined && branch.total > shown && (
-                <button className="tree-more" onClick={() => setPage(page + 1)}>
-                    {branch.total - shown} more
-                </button>
-            )}
+            {/* A pager rather than a "more" button, because this list has a size, a place in a set
+                and sometimes a count of pages - and where the peer could not afford a count it says
+                so by leaving the denominator off rather than by having no pager. */}
+            <div className="table-pager">
+                <Pager page={page} pageSize={pageSize} controls={controls} onPage={setPage} onPageSize={onPageSize} />
+            </div>
         </div>
     )
 }

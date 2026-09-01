@@ -7,7 +7,7 @@ import { overlayRefusal, type RpcSourceBinding, type RpcSourceCatalogue, type Rp
 import { staticSource, storeSource, type EditAffordance } from './ValueTree'
 import { ScopeTree } from './ScopeTree'
 import { ValueGrid, type PageQuestion } from './ValueGrid'
-import type { BranchQuestion, RowQuestion } from './ResourceTree'
+import type { BranchQuestion, RowQuestion, ScopedQuestion } from './ResourceTree'
 import type { ObjectAccess, Link, Ref, Where } from './ObjectPanel'
 import { actionsFor, leavesUnder, scopeTree } from './scope'
 import type { DescribedAction, DescribedComponent, DescribedMethod, TypeNode } from './types'
@@ -60,6 +60,31 @@ import type { DescribedAction, DescribedComponent, DescribedMethod, TypeNode } f
  * touched it is expecting.
  */
 const PREVIEW_KEY = 'msgrpc.preview'
+/**
+ * Rows per page, for every component at once.
+ *
+ * A fact about the screen somebody is reading rather than about the resource, which is why it is
+ * theirs and why it is global: a laptop is a laptop whichever node is on it.
+ */
+const PAGE_SIZE_KEY = 'msgrpc.pageSize'
+const DEFAULT_PAGE_SIZE = 50
+
+const rememberedPageSize = (): number => {
+    try {
+        const held = Number(window.localStorage.getItem(PAGE_SIZE_KEY))
+        return Number.isInteger(held) && held > 0 ? held : DEFAULT_PAGE_SIZE
+    } catch {
+        return DEFAULT_PAGE_SIZE
+    }
+}
+
+const rememberPageSize = (size: number) => {
+    try {
+        window.localStorage.setItem(PAGE_SIZE_KEY, String(size))
+    } catch {
+        // Nothing to do: the page still changed size on screen.
+    }
+}
 
 const rememberedPreview = (): boolean => {
     try {
@@ -236,6 +261,7 @@ export const ComponentPanel = ({
     const pending = commanding.pending
     const [period, setPeriod] = useState<number | undefined>(5000)
     const [preview, setPreview] = useState(rememberedPreview)
+    const [pageSize, setPageSize] = useState(rememberedPageSize)
     /**
      * The component's own source, with its values beside the lines that declare them.
      *
@@ -465,6 +491,21 @@ export const ComponentPanel = ({
     const rowQuestion: RowQuestion = (resource, id) => ({ target: peer, namespace, method: 'getOne', resource, params: { id } })
 
     /**
+     * Every leaf beneath a branch, where the resource says it can answer for a subtree.
+     *
+     * `getList` and not a verb of its own, because what is wanted under a branch is a list - paged,
+     * and in time filtered and ordered - and all of that is `getList`'s already. The peer does the
+     * collecting; this only asks.
+     */
+    const scopedQuestion: ScopedQuestion = (resource, under, page, size) => ({
+        target: peer,
+        namespace,
+        method: 'getList',
+        resource,
+        params: { pagination: { page, pageSize: size }, ...(under !== undefined ? { under } : {}) }
+    })
+
+    /**
      * State only: props are the host's inputs and are not the caller's to set. Depth is no longer
      * the limit it was - a declaration can name `zones.top.setpoint` - so a path renders with an
      * editor exactly when some method claims it, and without one when none does, which is the
@@ -620,6 +661,12 @@ export const ComponentPanel = ({
                                 onPreview={(on) => {
                                     setPreview(on)
                                     rememberPreview(on)
+                                }}
+                                scopedQuestion={scopedQuestion}
+                                pageSize={pageSize}
+                                onPageSize={(size) => {
+                                    setPageSize(size)
+                                    rememberPageSize(size)
                                 }} objectAccess={objectAccess} cache={data} pageQuestion={pageQuestion} period={period} actionsFor={(path) => actionsFor(component, path, methods)} onAction={(action, id, resource) => void runAction(action, id, resource)} />
                         )}
                     </div>

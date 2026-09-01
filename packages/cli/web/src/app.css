@@ -2240,3 +2240,12 @@ textarea.control {
     justify-content: flex-end;
     margin-bottom: 6px;
 }
+
+/* The table's pager, under the rows it pages rather than in a header away from them. */
+.table-pager {
+    display: flex;
+    justify-content: flex-end;
+    align-items: center;
+    gap: 6px;
+    margin-top: 6px;
+}
