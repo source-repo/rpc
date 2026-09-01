@@ -2216,3 +2216,27 @@ textarea.control {
     gap: 8px;
     margin-bottom: 2px;
 }
+
+/* The preview switch, sized like the controls beside it rather than like body text. */
+.preview-pick {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 11px;
+    color: var(--muted);
+    cursor: pointer;
+    white-space: nowrap;
+}
+
+.preview-pick input {
+    accent-color: var(--accent);
+    margin: 0;
+    cursor: pointer;
+}
+
+/* Controls over the panes, at the right edge of the data they govern. */
+.pane-controls {
+    display: flex;
+    justify-content: flex-end;
+    margin-bottom: 6px;
+}

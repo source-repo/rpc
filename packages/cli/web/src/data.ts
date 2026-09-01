@@ -34,14 +34,27 @@ export const useRpcData = <T extends RpcDataAnswer = RpcGetListResult>(
     question: RpcQuestion,
     periodMs: number | undefined
 ): RpcDataState<T> => {
-    const [watch, setWatch] = useState<RpcDataWatch<T> | null>(null)
+    const [held, setHeld] = useState<{ watch: RpcDataWatch<T>; identity: string } | null>(null)
     // What identifies the question, through the library's own encoder rather than a second one: two
     // renders that build the same options object in a different order must not open two watches.
     const identity = canonicalText([question.target, question.namespace, question.method, question.resource, question.params ?? {}])
 
+    /**
+     * The watch, but only while it is the watch for the question being asked *now*.
+     *
+     * Opening one is an effect, so for a render or two after the question changes this hook still
+     * holds the previous one - and answering from it means handing back the last question's data as
+     * though it were this question's, with `fetching` already false because that one had finished.
+     *
+     * A pane that draws it flickers. Anything that *acts* on it does something wrong: the branch
+     * table opened the first row of the branch somebody had just navigated away from, under the new
+     * branch's key, and then would not open the right one because it believed it already had.
+     */
+    const watch = held?.identity === identity ? held.watch : null
+
     useEffect(() => {
         const opened = cache.watch<T>(question, { periodMs, activity })
-        setWatch(opened)
+        setHeld({ watch: opened, identity })
         return () => opened.close()
         // `identity` rather than `question` itself, which is a fresh object on every render: watching
         // the object would reopen the watch - and re-ask the peer - once per keystroke in the filter

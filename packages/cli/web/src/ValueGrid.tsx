@@ -274,6 +274,8 @@ export const ValueGrid = ({
     rowQuestion,
     objectAccess,
     period,
+    preview = true,
+    onPreview,
     actionsFor,
     onAction,
     pageSize = 50
@@ -294,6 +296,9 @@ export const ValueGrid = ({
     /** How to open an object a row names, and follow its links. Absent leaves rows inert. */
     objectAccess?: ObjectAccess
     period: number | undefined
+    /** Whether a picked row opens beside the table. A global preference, held by the host. */
+    preview?: boolean
+    onPreview?: (on: boolean) => void
     /** What may be done to a row of the resource at this path, if anything. */
     actionsFor: (path: string[]) => DescribedAction[] | undefined
     onAction?: (action: DescribedAction, id: string, resource: readonly string[]) => void
@@ -385,6 +390,17 @@ export const ValueGrid = ({
                             and a toggle between them. It did not earn the control: a leaf in a tree
                             is a row nobody can read across, and everything the second arrangement
                             was for turned out to be this one with a different pane in focus. */}
+                        {/* Above the data and to the right: it is about the panes below it rather
+                            than about the component, and it belongs where a control over a table
+                            belongs rather than in a header row shared with the link and the clock. */}
+                        {onPreview && (
+                            <div className="pane-controls">
+                                <label className="preview-pick" title="show the picked row beside the table">
+                                    <input type="checkbox" checked={preview} onChange={(event) => onPreview(event.target.checked)} />
+                                    preview
+                                </label>
+                            </div>
+                        )}
                         <div className="tree-and-object">
                         <ResourceTree
                             resource={tree}
@@ -436,12 +452,15 @@ export const ValueGrid = ({
                                 actions={actionsFor(tree.path as string[])}
                                 onAction={onAction}
                             />
-                        {objectAccess && where && <ObjectPanel target={where.target} access={objectAccess} where={where} onWhere={setWhere} />}
+                        {/* The row is still picked when the panel is off - it is marked, and an
+                            action still knows which row it is about. What is turned off is the
+                            width it takes, which is the whole reason somebody turns it off. */}
+                        {preview && objectAccess && where && <ObjectPanel target={where.target} access={objectAccess} where={where} onWhere={setWhere} />}
                         {/* Only where the resource said it answers for one row. A panel offered
                             against a resource that does not serve `getOne` would open on a refusal,
                             which is a worse answer than no button at all - the verb list is there
                             precisely so a viewer offers what is served and nothing else. */}
-                        {opensRows && opened !== undefined && (
+                        {preview && opensRows && opened !== undefined && (
                             <RecordPanel cache={cache} question={rowQuestion(tree.path, opened)} id={opened} period={period} columns={columns} onClose={() => setOpened(undefined)} />
                         )}
                         </div>

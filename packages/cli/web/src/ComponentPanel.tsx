@@ -47,6 +47,36 @@ import type { DescribedAction, DescribedComponent, DescribedMethod, TypeNode } f
  * changes a value, not that the value is a writable field. See notes/setting-state-from-a-console.md.
  */
 
+/**
+ * Whether a picked row opens a panel beside the table, for every component at once.
+ *
+ * Global rather than per resource, because it is a way of working rather than a fact about one
+ * node: somebody comparing rows across a plant wants the width, and somebody reading wants the
+ * panel, and neither changes their mind on walking from one component to the next.
+ *
+ * Wrapped, because `localStorage` throws outright in a private window and in a browser set to block
+ * site data - a pane that would not render because it could not remember a preference is a worse
+ * failure than one that forgets. Defaults to showing, which is the answer somebody who has never
+ * touched it is expecting.
+ */
+const PREVIEW_KEY = 'msgrpc.preview'
+
+const rememberedPreview = (): boolean => {
+    try {
+        return window.localStorage.getItem(PREVIEW_KEY) !== 'off'
+    } catch {
+        return true
+    }
+}
+
+const rememberPreview = (on: boolean) => {
+    try {
+        window.localStorage.setItem(PREVIEW_KEY, on ? 'on' : 'off')
+    } catch {
+        // Nothing to do and nothing worth saying: the pane still changed on screen.
+    }
+}
+
 type Store = RpcComponentStore<RpcComponentData, RpcComponentData>
 
 /** Just what the source view asks for, so the panel needs no generic over the diagnostics class. */
@@ -205,6 +235,7 @@ export const ComponentPanel = ({
     const commanding = useCommanding()
     const pending = commanding.pending
     const [period, setPeriod] = useState<number | undefined>(5000)
+    const [preview, setPreview] = useState(rememberedPreview)
     /**
      * The component's own source, with its values beside the lines that declare them.
      *
@@ -585,7 +616,11 @@ export const ComponentPanel = ({
                             // channel of its own and can show nothing the grid could not.
                             <SourceView document={listing.document} bindings={listing.bindings} source={source} stale={stale} refusal={listing.refusal} />
                         ) : (
-                            <ValueGrid component={component} types={types} scope={scope} source={source} edit={edit} branchQuestion={branchQuestion} rowQuestion={rowQuestion} objectAccess={objectAccess} cache={data} pageQuestion={pageQuestion} period={period} actionsFor={(path) => actionsFor(component, path, methods)} onAction={(action, id, resource) => void runAction(action, id, resource)} />
+                            <ValueGrid component={component} types={types} scope={scope} source={source} edit={edit} branchQuestion={branchQuestion} rowQuestion={rowQuestion} preview={preview}
+                                onPreview={(on) => {
+                                    setPreview(on)
+                                    rememberPreview(on)
+                                }} objectAccess={objectAccess} cache={data} pageQuestion={pageQuestion} period={period} actionsFor={(path) => actionsFor(component, path, methods)} onAction={(action, id, resource) => void runAction(action, id, resource)} />
                         )}
                     </div>
                 </div>

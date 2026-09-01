@@ -323,27 +323,6 @@ const BranchRows = ({
     const { data, error, fetching } = useRpcData(cache, question, period)
     const branch = data as Branch | undefined
 
-    /**
-     * Open what the branch said to open, once, and only into an empty seat.
-     *
-     * A folder of documentation whose first business is its `README` is what this is for, and the
-     * node is what knows that - the console has no idea which of a hundred filing conventions it is
-     * looking at. Taken only when nothing is open, because arriving in a folder and having the
-     * document you were reading replaced is worse than one more click; and only for an id this
-     * branch actually answered with, because advice that arrived from a peer is input.
-     */
-    const suggested = branch?.defaultChild
-    const taken = useRef<string | undefined>(undefined)
-    useEffect(() => {
-        if (!suggested || selected !== undefined || taken.current === suggested) return
-        const at = branch?.ids.indexOf(suggested) ?? -1
-        if (at < 0) return
-        taken.current = suggested
-        const ref = refOf(branch?.data[at])
-        if (ref && onSelect) onSelect(ref, suggested)
-        else if (onPickRow) onPickRow(suggested)
-    }, [suggested, selected, branch, onSelect, onPickRow])
-
     if (error) return <p className="tree-note error" style={{ paddingLeft: `${depth * 1.1}rem` }}>{String(error)}</p>
     if (!branch) return fetching ? <p className="tree-note muted" style={{ paddingLeft: `${depth * 1.1}rem` }}>reading…</p> : null
     if (!branch.ids.length) return <p className="tree-note muted" style={{ paddingLeft: `${depth * 1.1}rem` }}>nothing here</p>
@@ -446,6 +425,45 @@ export const BranchTable = ({
     const { data, error, fetching } = useRpcData(cache, question, period)
     const branch = data as Branch | undefined
 
+    /**
+     * Open one on arrival: what the branch named, or failing that the first row.
+     *
+     * Two reasons, and the second is the one that decided it. A folder of documentation whose first
+     * business is its `README` is what `defaultChild` is for, and the node is what knows that - the
+     * console has no idea which of a hundred filing conventions it is looking at. Where a branch
+     * names nothing, the first row is still better than an empty panel beside a full table: it puts
+     * something in the third pane, and it shows a reader that a row is a thing you can pick, which
+     * a table of unmarked rows does not say anywhere.
+     *
+     * Only into an empty seat, and only once per branch. Arriving somewhere and having the document
+     * you were reading replaced is worse than one more click, and a suggestion re-applied on every
+     * refresh would drag a reader back to the top of a list they had moved down.
+     *
+     * And only for an id this branch actually answered with, because `defaultChild` arrived from a
+     * peer and advice from a peer is input.
+     */
+    // A level of nothing but branches is scope, and the table says so instead of drawing rows - so
+    // there is nothing here to open. Computed before the effect rather than after the early return
+    // below, because hooks run either way: without this the panel opened the first *branch* while
+    // the table beside it was saying to pick one.
+    const allBranches = !!branch && branch.hasChildren?.length === branch.ids.length && branch.hasChildren.every(Boolean)
+    const suggested = branch && !allBranches ? (branch.defaultChild ?? branch.ids[0]) : undefined
+    const opening = `${parentId ?? ''}\u0000${suggested ?? ''}`
+    const taken = useRef<string | undefined>(undefined)
+    useEffect(() => {
+        // Not while the next branch is on its way. For a moment after a branch is picked, `parentId`
+        // is the new one and `branch` is still the old one's rows - and opening the first of those
+        // under the new key reopened the row somebody had just navigated away from, into a panel
+        // beside a table that was saying to pick a branch.
+        if (fetching || !branch || !suggested || selected !== undefined || taken.current === opening) return
+        const at = branch.ids.indexOf(suggested)
+        if (at < 0) return
+        taken.current = opening
+        const reference = refOf(branch.data[at])
+        if (reference && onSelect) onSelect(reference, suggested)
+        else if (onPickRow) onPickRow(suggested)
+    }, [fetching, branch, suggested, opening, selected, onSelect, onPickRow])
+
     if (error) return <p className="tree-note error">{String(error)}</p>
     if (!branch) return fetching ? <p className="tree-note muted">reading…</p> : null
     if (!branch.ids.length) return <p className="tree-note muted">nothing here</p>
@@ -463,8 +481,7 @@ export const BranchTable = ({
      * right way to read them, and the table says so instead of drawing an empty grid. Where any row
      * is a leaf, the level holds rows and is tabulated.
      */
-    if (branch.hasChildren?.length === branch.ids.length && branch.hasChildren.every(Boolean))
-        return <p className="tree-note muted">pick a branch on the left to list what is in it</p>
+    if (allBranches) return <p className="tree-note muted">pick a branch on the left to list what is in it</p>
 
     const shown = (page + 1) * pageSize
     // A column for the label even when the resource named none: a table of ids and nothing else is
