@@ -624,7 +624,13 @@ const pathInType = (path: readonly string[], type: TypeNode | undefined, types: 
     if (type.kind === 'array') return pathInType(path, type.items, types, depth + 1)
     if (type.kind !== 'object') return false
     const field = type.fields[path[0]]
-    return field ? pathInType(path.slice(1), field.type, types, depth + 1) : false
+    if (field) return pathInType(path.slice(1), field.type, types, depth + 1)
+    // A row that admits fields it did not name cannot be said to be missing one. An aspect provider
+    // is the case: an occurrence carries whatever fields the arrangement puts on it - a value, a
+    // node class, a path - and those vary per provider, so the row declares the five it always has
+    // and `additional` for the rest. Without this the columns it advertises are each reported as a
+    // mistake, which is the opposite of what the warning is for.
+    return type.additional === true
 }
 
 /** Said once per resource and path, since describe() reads resources fresh every time it is asked. */

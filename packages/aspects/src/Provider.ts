@@ -229,7 +229,14 @@ export abstract class AspectProvider<Props extends Record<string, unknown>, Stat
                     kind: { type: { kind: 'string' as const } },
                     relation: { type: { kind: 'string' as const }, optional: true },
                     id: { type: { kind: 'string' as const } }
-                }
+                },
+                // The five above are every occurrence's; an occurrence's `fields` are the
+                // arrangement's, and they are flattened into the row beside them. A value, a node
+                // class, the path that reached it - which ones exist is a fact about the provider
+                // rather than about this contract, so the row says there are more rather than
+                // pretending to name them. Without it every column such a provider advertises is
+                // reported as naming a field the row does not have.
+                additional: true
             }
         }))
     }

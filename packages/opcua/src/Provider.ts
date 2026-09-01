@@ -178,7 +178,11 @@ export class OpcUaAspectProvider extends AspectProvider<OpcUaProviderProps, OpcU
                 // read: a row saying `Running` and `Variable` answers a question nobody asked. It is
                 // absent on an Object and on a Variable that could not be read, and a column with
                 // gaps in it is still the right column.
-                defaultColumns: ['title', 'value', 'nodeClass']
+                //
+                // `path` first, because a list scoped to a branch is drawn from everything beneath
+                // it: `Running` appears once per device and the name alone cannot tell them apart.
+                // It is the column that says which row is which, so it is the one to read first.
+                defaultColumns: ['path', 'title', 'value', 'nodeClass']
             },
             // The arrangements the deployment supplied. They are offered whether or not an index
             // has been built - a viewer should be able to see that a functional aspect exists and
@@ -191,7 +195,10 @@ export class OpcUaAspectProvider extends AspectProvider<OpcUaProviderProps, OpcU
                 ...(aspect.semantics ? { semantics: aspect.semantics } : {}),
                 revision: String(this.indexes.get(aspect.id)?.nodes ?? 0),
                 preferredPresentation: 'tree' as const,
-                defaultColumns: aspect.defaultColumns ?? ['title', 'nodeClass']
+                // The address-space path rather than a `path`, and under that name because in a
+                // derived arrangement it is the *other* hierarchy: what says which physical node a
+                // row grouped by function or location actually is.
+                defaultColumns: aspect.defaultColumns ?? ['addressSpacePath', 'title', 'nodeClass']
             }))
         ]
     }
@@ -570,7 +577,16 @@ export class OpcUaAspectProvider extends AspectProvider<OpcUaProviderProps, OpcU
         let spent = 0
         let cut = false
 
-        const walk = async (occurrenceId: string | undefined, node: string): Promise<void> => {
+        /**
+         * `path` is where the walk currently is, **relative to the scope**, and that is deliberate.
+         *
+         * A page of leaves gathered from under one branch draws them from many places: scoping a
+         * line lists `Running` once per device, and without saying where each came from the column
+         * is four identical rows. What distinguishes them is the part of the path *below* the
+         * branch - the branch itself is on the left, on every row, and repeating it in a column
+         * would be the one segment that never varies.
+         */
+        const walk = async (occurrenceId: string | undefined, node: string, path: readonly string[]): Promise<void> => {
             if (found.length >= wanted || cut) return
             if (spent >= budget) {
                 cut = true
@@ -582,7 +598,7 @@ export class OpcUaAspectProvider extends AspectProvider<OpcUaProviderProps, OpcU
                 if (found.length >= wanted || cut) return
                 const childOccurrence = occurrenceId ? `${occurrenceId}/${reference.session}` : reference.session
                 if (isGrouping(reference.nodeClass)) {
-                    await walk(childOccurrence, reference.session)
+                    await walk(childOccurrence, reference.session, [...path, reference.title])
                     continue
                 }
                 const leaf: Occurrence = {
@@ -593,7 +609,9 @@ export class OpcUaAspectProvider extends AspectProvider<OpcUaProviderProps, OpcU
                     relation: reference.reference,
                     hasChildren: false,
                     grouping: false,
-                    fields: { nodeClass: reference.nodeClass, nodeId: reference.portable }
+                    // Absent rather than empty for a leaf sitting directly in the scoped branch:
+                    // there is no path below it, and a blank cell says that better than ` / ` does.
+                    fields: { nodeClass: reference.nodeClass, nodeId: reference.portable, ...(path.length ? { path: path.join(' / ') } : {}) }
                 }
                 // Tested here rather than after the page is cut, which is the difference between a
                 // filter and a sieve: a condition matching nothing must cost the walk and not the
@@ -604,7 +622,7 @@ export class OpcUaAspectProvider extends AspectProvider<OpcUaProviderProps, OpcU
             }
         }
 
-        await walk(under, under ? this.nodeOf(under) : OBJECTS_FOLDER)
+        await walk(under, under ? this.nodeOf(under) : OBJECTS_FOLDER, [])
         const window = found.slice(page.from, page.from + page.size)
         const values = await this.valuesFor(window.map((one) => ({ session: this.nodeOf(one.occurrenceId), nodeClass: 'Variable' })))
         return {

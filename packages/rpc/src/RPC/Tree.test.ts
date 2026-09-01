@@ -148,6 +148,40 @@ class Renamed extends RpcComponent<{ title: string }, { rows: number }> {
     }
 }
 
+/**
+ * A row that says it carries more than it names, which is what an aspect provider's row is.
+ *
+ * The occurrence has five fields of its own and then whatever the arrangement puts on it - a value,
+ * a node class, the path that reached it - and those are the provider's rather than the contract's.
+ */
+@rpcNamespace('open')
+class Open extends RpcComponent<{ title: string }, { rows: number }> {
+    constructor() {
+        super({ title: 'Open' }, { rows: 0 })
+    }
+
+    @rpc({ semantics: 'query', effect: 'observe' })
+    ping(): string {
+        return 'here'
+    }
+
+    dataResources(): readonly RpcDataResource[] {
+        return [
+            {
+                path: ['rows'],
+                verbs: ['getChildren'],
+                shape: 'tree',
+                presentation: { defaultColumns: ['title', 'path', 'value'] },
+                row: { kind: 'object', fields: { id: { type: { kind: 'string' } }, title: { type: { kind: 'string' } } }, additional: true }
+            }
+        ]
+    }
+
+    dataRequest(): RpcGetChildrenResult {
+        return { data: [], ids: [], hasChildren: [], total: 0, epoch: run, revision: 1 }
+    }
+}
+
 const linked = async (t: { teardown: (fn: () => Promise<void>) => void }, port: number, instance: object, namespace: string) => {
     const server = new RpcServer({ name: peer(`host${port}`), transports: [{ port, host: '127.0.0.1' }], exposeIntrospection: true })
     server.exposeClassInstance(instance, namespace)
@@ -264,6 +298,28 @@ test.serial('a default column the row type does not have is ignored, and said so
     t.truthy(complaint, 'the mismatch is reported rather than swallowed')
     t.regex(String(complaint), /'headline'/, 'and names the column, which is what somebody has to go and fix')
     t.regex(String(complaint), /still selectable/, 'while saying the rest of the row is unaffected')
+})
+
+test.serial('a row that admits fields it did not name is not missing them', async (t) => {
+    // The aspect providers' case, and before this every column they advertise was reported as a
+    // mistake: an occurrence's fields are the arrangement's, so the row names the five it always
+    // has and `additional` for the rest. A warning that fires on correct declarations is one people
+    // learn to scroll past, which costs the case it was written for.
+    const said: string[] = []
+    const warn = console.warn
+    console.warn = (...args: unknown[]) => said.push(args.join(' '))
+    try {
+        const { client } = await linked(t, 4980, new Open(), 'open')
+        const introspection = await client.proxy<{ describe(): Promise<{ namespaces: unknown[] }> }>('msgrpc')
+        await introspection.describe()
+    } finally {
+        console.warn = warn
+    }
+
+    t.false(
+        said.some((line) => line.includes('presentation.defaultColumns')),
+        'nothing to complain about: the row said there would be more'
+    )
 })
 
 test.serial('a default column that is really there says nothing at all', async (t) => {
