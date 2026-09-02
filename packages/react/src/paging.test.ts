@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest'
-import { pageControls } from './paging'
+import { pageControls } from './paging.js'
 
 /**
  * Paging a resource that could not afford to count itself.

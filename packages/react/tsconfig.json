@@ -1,0 +1,37 @@
+{
+    "compilerOptions": {
+        "target": "ES2022",
+        // DOM, because these are components. The rules underneath them are not, and the split is
+        // the point of the package - but a package that draws has to be able to say `HTMLElement`.
+        "lib": ["ES2022", "DOM"],
+        "module": "NodeNext",
+        "moduleResolution": "NodeNext",
+        "jsx": "react-jsx",
+        // Resolved as a browser would, because that is what this package is. `@source-repo/rpc`
+        // publishes a browser entry with the pieces that only mean something in one - the page
+        // visibility signal a watched collection uses to stop asking while nobody is looking - and
+        // without this condition the types resolve to the Node entry, which does not have them.
+        "customConditions": ["browser"],
+
+        "rootDir": "./src",
+        "outDir": "./dist",
+        "declaration": true,
+        "declarationMap": true,
+        "sourceMap": true,
+
+        "strict": true,
+        "noImplicitOverride": true,
+        "noFallthroughCasesInSwitch": true,
+        "noUnusedLocals": false,
+        "noUnusedParameters": false,
+
+        "esModuleInterop": true,
+        "skipLibCheck": true,
+        "forceConsistentCasingInFileNames": true
+    },
+    "include": ["src"],
+    // Checked separately, against the library entry point they actually load, and with the Node
+    // types they actually use - see tsconfig.test.json. Keeping them out here is what stops a
+    // component quietly importing `node:fs` and typechecking.
+    "exclude": ["src/**/*.test.ts", "src/**/*.test.tsx"]
+}

@@ -44,6 +44,19 @@ export default tseslint.config(
      */
     {
         files: ['packages/*/src/**/*.ts'],
+        /**
+         * `@source-repo/react`'s tests belong to a project this cannot see.
+         *
+         * Its components are checked against the library's browser entry and its tests against the
+         * Node one - `panel.test.ts` stands up a real RpcServer - so they live in `tsconfig.test.json`
+         * and are excluded from `tsconfig.json`. The project service finds the nearest
+         * `tsconfig.json` and nothing else, so a typed rule here has no types for them.
+         *
+         * The console's web tests were never in this block at all, since `packages/cli/web/src` does
+         * not match the glob above - so this leaves them treated the same way rather than newly
+         * differently, and `tsc -p tsconfig.test.json` still checks both.
+         */
+        ignores: ['packages/react/src/**/*.test.ts', 'packages/react/src/**/*.test.tsx'],
         languageOptions: {
             parserOptions: { projectService: true, tsconfigRootDir: import.meta.dirname }
         },

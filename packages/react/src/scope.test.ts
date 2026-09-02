@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { actionsFor, actionsOn, leavesUnder, scopeTree, treeResourceAt, typeAt, type ScopeNode } from './scope'
-import type { DescribedComponent, TypeNode } from './types'
+import { actionsFor, actionsOn, leavesUnder, scopeTree, treeResourceAt, typeAt, type ScopeNode } from './scope.js'
+import type { DescribedComponent, TypeNode } from './types.js'
 
 /**
  * The scope walk, tested against contracts rather than against data - which is the whole point of

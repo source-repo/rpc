@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { navigable } from './navigable'
+import { navigable } from './navigable.js'
 
 /**
  * One object of an aspect provider, opened.

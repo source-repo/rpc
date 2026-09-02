@@ -12,19 +12,10 @@ import {
     type RpcWriteOutcome
 } from '@source-repo/rpc'
 import type { RpcDataCache, RpcQuestion } from '@source-repo/query'
-import { Uncertain, useCommanding } from './command'
+import { ActionForm, actionsFor, canUpdate, editableFields, leavesUnder, RecordForm, scopeTree, staticSource, storeSource, Uncertain, useCommanding, ValueGrid, writableFor, writeNamespace, type BranchQuestion, type DescribedAction, type DescribedComponent, type DescribedMethod, type EditAffordance, type Link, type ObjectAccess, type PageQuestion, type Ref, type RowQuestion, type ScopedQuestion, type TypeNode, type Where, type WriteOutcome } from '@source-repo/react'
 import { SourceView, type SourceDocument } from './SourceView'
 import { overlayRefusal, type RpcSourceBinding, type RpcSourceCatalogue, type RpcActiveSourceIdentity } from '@source-repo/diagnostics/catalogue'
-import { staticSource, storeSource, type EditAffordance } from './ValueTree'
 import { ScopeTree } from './ScopeTree'
-import { ValueGrid, type PageQuestion } from './ValueGrid'
-import { ActionForm } from './ActionForm'
-import { RecordForm, type WriteOutcome } from './RecordForm'
-import { canUpdate, editableFields, writableFor, writeNamespace } from './writes'
-import type { BranchQuestion, RowQuestion, ScopedQuestion } from './ResourceTree'
-import type { ObjectAccess, Link, Ref, Where } from './ObjectPanel'
-import { actionsFor, leavesUnder, scopeTree } from './scope'
-import type { DescribedAction, DescribedComponent, DescribedMethod, TypeNode } from './types'
 
 /**
  * An observable component, rendered from the library's own store and against its own contract.

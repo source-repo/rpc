@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { compileFilter } from './filter'
+import { compileFilter } from './filter.js'
 
 /**
  * The search box, which is the only part of the query grammar an operator ever touches.

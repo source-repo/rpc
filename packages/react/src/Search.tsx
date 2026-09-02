@@ -1,10 +1,10 @@
 import { useMemo, useState } from 'react'
 import type { RpcDataCache, RpcQuestion } from '@source-repo/query'
 import type { RpcFilter, RpcGetListResult } from '@source-repo/rpc'
-import { useRpcData } from './data'
-import { useDebounced } from './timing'
-import { hitAddress, searchable, searchFilter, type Searchable } from './searching'
-import type { ServerDescription } from './types'
+import { useRpcData } from './data.js'
+import { useDebounced } from './timing.js'
+import { hitAddress, searchable, searchFilter, type Searchable } from './searching.js'
+import type { ServerDescription } from './types.js'
 
 /**
  * One box, every resource of this peer that can answer.

@@ -8,7 +8,11 @@
     // export cleanly and then fails in the page.
     "extends": "./tsconfig.json",
     "compilerOptions": {
-        "customConditions": []
+        "customConditions": [],
+        // Named rather than left to discovery. These run under Node and read the filesystem, and
+        // which `@types` a project picks up on its own depends on where the installer happened to
+        // hoist them - which changes when a workspace is added, and did.
+        "types": ["node"]
     },
     "exclude": [],
     "include": ["src/**/*.test.ts"]

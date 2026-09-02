@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { ConsoleService, TappedFrame } from './types'
+import { ConsoleService, TappedFrame } from '@source-repo/react'
 
 /**
  * What the network is carrying between other peers - the traffic this console is not part of, which

@@ -1,12 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { RpcDataCache, RpcQuestion } from '@source-repo/query'
 import type { RpcFilter } from '@source-repo/rpc'
-import { useRpcData } from './data'
-import type { Ref } from './ObjectPanel'
-import type { DescribedAction, DescribedResource } from './types'
-import { pageControls } from './paging'
-import { actionsOn } from './scope'
-import { Pager } from './Pager'
+import { useRpcData } from './data.js'
+import type { Ref } from './ObjectPanel.js'
+import type { DescribedAction, DescribedResource } from './types.js'
+import { pageControls } from './paging.js'
+import { actionsOn } from './scope.js'
+import { Pager } from './Pager.js'
 
 /**
  * A resource declared `shape: 'tree'`, browsed one branch at a time.

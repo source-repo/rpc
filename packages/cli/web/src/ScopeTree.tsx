@@ -1,4 +1,4 @@
-import type { ScopeNode } from './scope'
+import type { ScopeNode } from '@source-repo/react'
 
 /**
  * The left pane: scope, drawn entirely from the contract.

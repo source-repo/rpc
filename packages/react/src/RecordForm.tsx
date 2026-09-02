@@ -1,6 +1,6 @@
 import { useState } from 'react'
-import { ArgumentField, FieldState, toValue } from './ArgumentField'
-import type { ServerDescription, TypeNode } from './types'
+import { ArgumentField, FieldState, toValue } from './ArgumentField.js'
+import type { ServerDescription, TypeNode } from './types.js'
 
 /**
  * One row, changed.

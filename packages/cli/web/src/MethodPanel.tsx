@@ -1,8 +1,6 @@
 import { useState } from 'react'
-import { ArgumentField, FieldState, initialText, toValue } from './ArgumentField'
-import { Uncertain, useCommanding } from './command'
+import { ArgumentField, ConsoleService, DescribedMethod, FieldState, initialText, isOptional, requiredPart, ServerDescription, toValue, typeText, Uncertain, useCommanding } from '@source-repo/react'
 import type { RpcMethodSemantics, RpcOperations } from '@source-repo/rpc'
-import { ConsoleService, DescribedMethod, ServerDescription, isOptional, requiredPart, typeText } from './types'
 
 /** How many times the repeat button calls. Enough for a p50 to mean something, few enough to wait for. */
 const REPEAT = 20

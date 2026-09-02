@@ -1,6 +1,6 @@
 import { groupFields, type RpcGetOneResult, type RpcPresentationSection } from '@source-repo/rpc'
 import type { RpcDataCache, RpcQuestion } from '@source-repo/query'
-import { useRpcData } from './data'
+import { useRpcData } from './data.js'
 
 /**
  * One row, opened.

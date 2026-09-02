@@ -1,4 +1,4 @@
-import type { PeerChange } from './types'
+import type { PeerChange } from '@source-repo/react'
 import { displayNameForId } from './displayName'
 
 /**

@@ -1,5 +1,5 @@
 import { expect, test } from 'vitest'
-import { navigable } from './navigable'
+import { navigable } from './navigable.js'
 
 /**
  * The gate on addresses that arrive from a peer.

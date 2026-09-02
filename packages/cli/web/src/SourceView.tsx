@@ -1,6 +1,6 @@
 import { useMemo } from 'react'
 import type { RpcSourceBinding } from '@source-repo/diagnostics/catalogue'
-import type { ValueSource } from './ValueTree'
+import type { ValueSource } from '@source-repo/react'
 
 /**
  * The component's own source, with its live values beside the lines that declare them.

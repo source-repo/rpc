@@ -1,5 +1,5 @@
 import type { RpcFilter } from '@source-repo/rpc'
-import type { DescribedResource, ServerDescription } from './types'
+import type { DescribedResource, ServerDescription } from './types.js'
 
 /**
  * Looking for something across everything one peer serves.

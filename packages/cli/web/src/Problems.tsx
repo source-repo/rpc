@@ -1,4 +1,4 @@
-import { NetworkProblem } from './types'
+import { NetworkProblem } from '@source-repo/react'
 
 /**
  * What has gone wrong on the console's links.

@@ -1,0 +1,17 @@
+{
+    // The components are checked against the library's **browser** entry, which is what a page
+    // loads; the tests are checked against its **Node** one, which is what vitest loads - and
+    // `panel.test.ts` stands up a real RpcServer on a port, so the difference is real rather than
+    // administrative. The console draws the same distinction for the same reason, and one config
+    // for both meant checking the components against an entry point they never run.
+    "extends": "./tsconfig.json",
+    "compilerOptions": {
+        "customConditions": [],
+        // Named rather than left to discovery. These run under Node and read the filesystem, and
+        // which `@types` a project picks up on its own depends on where the installer happened to
+        // hoist them - which changes when a workspace is added, and did.
+        "types": ["node"]
+    },
+    "exclude": [],
+    "include": ["src/**/*.test.ts", "src/**/*.test.tsx"]
+}

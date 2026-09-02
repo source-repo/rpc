@@ -1,7 +1,7 @@
 import { useMemo } from 'react'
 import type { RpcDataCache, RpcQuestion } from '@source-repo/query'
-import { useRpcData } from './data'
-import type { DescribedResource } from './types'
+import { useRpcData } from './data.js'
+import type { DescribedResource } from './types.js'
 
 /**
  * What the ids in a page of rows actually refer to.

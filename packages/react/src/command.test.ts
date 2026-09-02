@@ -1,6 +1,6 @@
 import { afterEach, expect, test } from 'vitest'
 import { webcrypto } from 'node:crypto'
-import { mint } from './command'
+import { mint } from './command.js'
 
 /**
  * That a command can be given a key at the address the console is actually served from.

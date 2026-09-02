@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
-import { canUpdate, editableFields, writableFor, writeNamespace } from './writes'
+import { canUpdate, editableFields, writableFor, writeNamespace } from './writes.js'
 import type { RpcWritableResource } from '@source-repo/rpc'
-import { isOptional, requiredPart, type TypeNode } from './types'
+import { isOptional, requiredPart, type TypeNode } from './types.js'
 
 const customers: RpcWritableResource = {
     resource: 'customers',

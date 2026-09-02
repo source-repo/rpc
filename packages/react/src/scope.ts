@@ -1,4 +1,4 @@
-import type { DescribedAction, DescribedComponent, DescribedMethod, TypeNode } from './types'
+import type { DescribedAction, DescribedComponent, DescribedMethod, TypeNode } from './types.js'
 
 /**
  * What is a container and what is a value, decided once from the contract and nothing else.

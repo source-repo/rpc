@@ -1,4 +1,4 @@
-import type { DescribedNamespace, PeerStructure } from './types'
+import type { DescribedNamespace, PeerStructure } from '@source-repo/react'
 
 const acronyms: { [word: string]: string } = {
     ai: 'AI',

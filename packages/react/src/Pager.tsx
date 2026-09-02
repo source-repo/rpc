@@ -1,4 +1,4 @@
-import type { PageControls } from './paging'
+import type { PageControls } from './paging.js'
 
 /**
  * Where you are in a set, and how to move.

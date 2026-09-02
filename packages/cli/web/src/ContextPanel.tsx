@@ -1,7 +1,6 @@
 import { RefObject, useCallback, useEffect, useState, useSyncExternalStore } from 'react'
 import { defineRpcContext, type RpcContextAxis, type RpcContextStore, type RpcServer } from '@source-repo/rpc'
-import { ValueTree, staticSource } from './ValueTree'
-import type { DescribedRef } from './types'
+import { staticSource, ValueTree, type DescribedRef } from '@source-repo/react'
 
 /**
  * The ambient data a node inherits, as that node's own host resolves it.

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { hitAddress, searchable, searchFilter } from './searching'
-import type { ServerDescription } from './types'
+import { hitAddress, searchable, searchFilter } from './searching.js'
+import type { ServerDescription } from './types.js'
 
 const described = {
     name: 'devserver',

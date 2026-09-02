@@ -1,6 +1,6 @@
 import { useCallback, useMemo, useState, useSyncExternalStore } from 'react'
-import { typeText, type TypeNode } from './types'
-import { isProcessValueType } from './scope'
+import { typeText, type TypeNode } from './types.js'
+import { isProcessValueType } from './scope.js'
 
 /**
  * A value drawn against the interface that was published with it, one row at a time.

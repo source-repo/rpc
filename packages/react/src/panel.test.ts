@@ -1,8 +1,8 @@
 import { afterAll, expect, test } from 'vitest'
 import { matchesFilter, rpcComponent, RpcClient, RpcComponent, RpcServer, type RpcGetListParams, type RpcGetListResult } from '@source-repo/rpc'
-import { leavesUnder } from './scope'
-import { compileFilter } from './filter'
-import type { DescribedComponent, TypeNode } from './types'
+import { leavesUnder } from './scope.js'
+import { compileFilter } from './filter.js'
+import type { DescribedComponent, TypeNode } from './types.js'
 
 /**
  * What the panel asks the network for, against a network that answers.

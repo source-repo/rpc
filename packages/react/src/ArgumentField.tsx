@@ -1,4 +1,4 @@
-import { TypeNode, ServerDescription, isOptional, requiredPart, resolve, typeText } from './types'
+import { TypeNode, ServerDescription, isOptional, requiredPart, resolve, typeText } from './types.js'
 
 /**
  * One input per argument, chosen from the argument's own type, rather than one JSON array for the

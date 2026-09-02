@@ -1,7 +1,7 @@
 import { useState } from 'react'
-import { ArgumentField, FieldState, initialText, toValue } from './ArgumentField'
-import { isOptional, type ServerDescription } from './types'
-import type { DescribedAction, DescribedMethod } from './types'
+import { ArgumentField, FieldState, initialText, toValue } from './ArgumentField.js'
+import { isOptional, type ServerDescription } from './types.js'
+import type { DescribedAction, DescribedMethod } from './types.js'
 
 /**
  * A row action that needs saying more than which row.

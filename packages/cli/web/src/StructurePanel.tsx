@@ -1,4 +1,4 @@
-import type { DescribedNamespace, DescribedRef, ServerDescription } from './types'
+import type { DescribedNamespace, DescribedRef, ServerDescription } from '@source-repo/react'
 import { namespaceDisplayName } from './displayName'
 
 /**
