@@ -435,6 +435,21 @@ export interface RpcDataAction {
      * `confirm` follows one field up.
      */
     readonly appliesTo?: 'leaves' | 'branches' | 'all'
+    /**
+     * Which *kinds* of row this is about, where a resource's rows are not one kind of thing.
+     *
+     * `appliesTo` answers a question about position - is this row a place or a thing - and that is
+     * not the same question as what the thing *is*. An OPC UA address space lists Variables and
+     * Methods side by side and both are leaves: `write` is about the first and would throw on the
+     * second, and a button that throws is one an operator finds by pressing it.
+     *
+     * Matched against the row's own `kind`, which is where a provider already says what a row is.
+     * Absent means every row `appliesTo` allows, which is what a resource of one kind wants and
+     * changes nothing for the resources that had no `kind` to begin with. Declared but with no
+     * `kind` on the row, the action is **not** offered - the safe half, for the same reason
+     * `appliesTo` defaults to leaves.
+     */
+    readonly kinds?: readonly string[]
 }
 
 export interface RpcDataPresentationHint {
@@ -485,8 +500,20 @@ export interface RpcDataResource {
     /**
      * What can be done to a row, as methods this component already declares.
      *
-     * Each is called with the row's id and nothing else - `retryDeadLetter(taskId)` is the shape
-     * every real case has so far, and anything richer is a form rather than an action.
+     * **The row fills the method's first parameter, and the rest are asked for.** `retryDeadLetter(
+     * taskId)` therefore runs on a press, and `write(nodeId, value)` opens a form for `value` with
+     * `nodeId` already filled in and shown - one rule, and the second case is the first with more
+     * of the signature left to supply.
+     *
+     * Nothing here says how many arguments a method takes or what they are, because `describe()`
+     * published that before this field existed. That is the line this whole declaration is drawn
+     * on: it carries the one fact a viewer cannot work out - which method is about which row - and
+     * reads everything else off the contract, so a method that gains a parameter gains a field in
+     * the form and needs nothing changed here.
+     *
+     * A method whose first parameter is not the row is not an action; it is a method, and the
+     * console already offers every one of those. Nothing can check that claim from the outside,
+     * which is why the form shows the bound argument rather than sending it out of sight.
      */
     readonly actions?: readonly RpcDataAction[]
 }

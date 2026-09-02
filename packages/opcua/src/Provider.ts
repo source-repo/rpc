@@ -1,6 +1,6 @@
-import { matchesFilter, rpc, rpcNamespace, type RpcFilter, type RpcRef } from '@source-repo/rpc'
+import { matchesFilter, rpc, rpcNamespace, type RpcDataAction, type RpcFilter, type RpcRef } from '@source-repo/rpc'
 import { AspectProvider, type AspectDescriptor, type AspectRef, type Branch, type ObjectBinding, type ObjectDetail, type Occurrence } from '@source-repo/aspects'
-import { AttributeIds, BrowseDirection, NodeClass, OPCUAClient, type ClientSession, type OPCUAClientOptions } from 'node-opcua-client'
+import { AttributeIds, BrowseDirection, DataType, NodeClass, OPCUAClient, StatusCodes, type ClientSession, type OPCUAClientOptions } from 'node-opcua-client'
 import { fromSessionNodeId, portableNodeIdFromText, portableNodeIdToText, toSessionNodeId } from './Identity.js'
 import { buildDerived, derivedRoot, type DerivedAspect, type DerivedIndex, type IndexedNode } from './Derived.js'
 
@@ -135,6 +135,55 @@ const isObjectsFolder = (nodeId: string): boolean => nodeId === OBJECTS_FOLDER |
  */
 const isGrouping = (nodeClass: string): boolean => nodeClass === 'Object' || nodeClass === 'ObjectType' || nodeClass === 'View'
 
+/**
+ * The builtin DataType a node declares, or `undefined` where it declares something richer.
+ *
+ * OPC UA's builtin types *are* the low numeric identifiers in namespace 0 - `Boolean` is `i=1`,
+ * `Double` is `i=11`, `String` is `i=12` - so a datatype in that range needs no lookup. Anything
+ * else is an enumeration, a structure or a subtype somebody defined, and answering `undefined` here
+ * is what makes the refusal above possible rather than a wrong write.
+ */
+/**
+ * The one thing that can be done to a row of an OPC UA arrangement, whichever arrangement it is.
+ *
+ * `kinds` and not only the leaves default: an address space lists Variables and Methods side by
+ * side and both are leaves, so without it the button would appear on `GetMonitoredItems` and throw.
+ * No `confirm`, because the form *is* the confirmation - somebody types a value, sees the node it
+ * is bound to, and presses. A modal on top of that asks the same question twice, and a question
+ * asked twice is one people learn to click through.
+ */
+const WRITE: readonly RpcDataAction[] = [{ method: 'write', label: 'write', kinds: ['opcua.variable'] }]
+
+const builtinOf = (dataType: unknown): DataType | undefined => {
+    const id = dataType as { namespace?: number; value?: unknown; identifierType?: unknown } | undefined
+    if (!id || id.namespace !== 0 || typeof id.value !== 'number') return undefined
+    return id.value >= DataType.Boolean && id.value <= DataType.DiagnosticInfo ? (id.value as DataType) : undefined
+}
+
+/**
+ * One line of text as the value a node's own datatype calls for.
+ *
+ * Strict on purpose. `Number('')` is 0 and `Boolean('false')` is true, and both of those are how a
+ * mistyped setpoint reaches a plant looking like a decision. What is not a number is refused by
+ * name, and a Boolean takes the words a person actually types.
+ */
+const coerce = (text: string, type: DataType | undefined, nodeId: string): boolean | number | string => {
+    if (type === undefined) throw new Error(`${nodeId} does not hold a builtin type, so it cannot be written from text`)
+    if (type === DataType.String || type === DataType.LocalizedText || type === DataType.ByteString) return text
+    if (type === DataType.Boolean) {
+        const word = text.trim().toLowerCase()
+        if (word === 'true' || word === '1') return true
+        if (word === 'false' || word === '0') return false
+        throw new Error(`expected true or false for ${nodeId}, not '${text}'`)
+    }
+    const number = Number(text.trim())
+    if (text.trim() === '' || Number.isNaN(number)) throw new Error(`expected a number for ${nodeId}, not '${text}'`)
+    // Integer types take integers. A server rounding 7.5 to 8 on an Int16 is a server deciding what
+    // somebody meant, and it is cheaper to say so here than to explain the 8 afterwards.
+    if (type !== DataType.Float && type !== DataType.Double && !Number.isInteger(number)) throw new Error(`${nodeId} holds a whole number, and ${text} is not one`)
+    return number
+}
+
 @rpcNamespace('opcua')
 export class OpcUaAspectProvider extends AspectProvider<OpcUaProviderProps, OpcUaProviderState> {
     private readonly options: OpcUaProviderOptions
@@ -182,7 +231,8 @@ export class OpcUaAspectProvider extends AspectProvider<OpcUaProviderProps, OpcU
                 // `path` first, because a list scoped to a branch is drawn from everything beneath
                 // it: `Running` appears once per device and the name alone cannot tell them apart.
                 // It is the column that says which row is which, so it is the one to read first.
-                defaultColumns: ['path', 'title', 'value', 'nodeClass']
+                defaultColumns: ['path', 'title', 'value', 'nodeClass'],
+                actions: WRITE
             },
             // The arrangements the deployment supplied. They are offered whether or not an index
             // has been built - a viewer should be able to see that a functional aspect exists and
@@ -198,7 +248,10 @@ export class OpcUaAspectProvider extends AspectProvider<OpcUaProviderProps, OpcU
                 // The address-space path rather than a `path`, and under that name because in a
                 // derived arrangement it is the *other* hierarchy: what says which physical node a
                 // row grouped by function or location actually is.
-                defaultColumns: aspect.defaultColumns ?? ['addressSpacePath', 'title', 'nodeClass']
+                defaultColumns: aspect.defaultColumns ?? ['addressSpacePath', 'title', 'nodeClass'],
+                // The same rows seen a different way, so the same thing can be done to them. An
+                // arrangement is a claim about where a node appears, never about what it is.
+                actions: WRITE
             }))
         ]
     }
@@ -412,6 +465,52 @@ export class OpcUaAspectProvider extends AspectProvider<OpcUaProviderProps, OpcU
         return [chain.slice(from < 0 ? 0 : from + 1).join('/')].filter(Boolean)
     }
 
+    /**
+     * One Variable, written from text.
+     *
+     * **Text, and the server's own DataType decides what it means.** A console has a box somebody
+     * types into; the node says whether that is a Double, a Boolean or a String, and this converts
+     * using what the server declared rather than what the string looks like. Guessing from the text
+     * is how `0` becomes a number on a Boolean node and `1.0` becomes a String on a Double one -
+     * and a plant is the worst place to find out which.
+     *
+     * Refused rather than approximated where the datatype is not one of the builtins: an
+     * enumeration, a structure or an array is a value with a shape, and a shape cannot be recovered
+     * from a line of text without inventing the missing half. The refusal names the datatype, which
+     * is what somebody needs in order to do it another way.
+     *
+     * Idempotent, and that is a statement about writing rather than a convenience: writing 42 twice
+     * leaves the node holding 42, so a retry after a link drop is safe and the library may make one.
+     * `authorize()` rules on this like any other method - the row action beside it in `aspects()`
+     * adds no permission, it only says which rows the method is about.
+     */
+    @rpc({ semantics: 'idempotent-command', effect: 'operate' })
+    async write(nodeId: string, value: string): Promise<void> {
+        const session = this.connected()
+        const portable = portableNodeIdFromText(nodeId)
+        if (!portable) throw new Error(`not a node id: ${nodeId}`)
+        const node = toSessionNodeId(portable, this.namespaces)
+        if (!node) throw new Error(`no namespace on this server for ${nodeId}`)
+
+        const [nodeClass, dataType] = await session.read([
+            { nodeId: node, attributeId: AttributeIds.NodeClass },
+            { nodeId: node, attributeId: AttributeIds.DataType }
+        ])
+        const kind = NodeClass[Number(nodeClass.value.value)] ?? 'Unspecified'
+        if (kind !== 'Variable') throw new Error(`${nodeId} is a ${String(kind)}, and only a Variable has a value to write`)
+
+        const builtin = builtinOf(dataType.value.value)
+        const status = await session.write({
+            nodeId: node,
+            attributeId: AttributeIds.Value,
+            value: { value: { dataType: builtin, value: coerce(value, builtin, nodeId) } }
+        })
+        // The server's own word for what happened, rather than a success this peer invented. A write
+        // that was refused - not writable, out of range, wrong type after all - comes back as a
+        // status code and nothing else says so.
+        if (status !== StatusCodes.Good) throw new Error(`the server refused the write to ${nodeId}: ${status.toString()}`)
+    }
+
     /** One node, read: the attributes that describe it, as an object rather than a placement. */
     async open(target: AspectRef): Promise<ObjectDetail | undefined> {
         const session = this.connected()
@@ -467,8 +566,9 @@ export class OpcUaAspectProvider extends AspectProvider<OpcUaProviderProps, OpcU
      *
      * `write` is reported through `accessLevel` rather than as a second binding with a role of its
      * own. Writing a UA variable is reaching the same interface with a different verb, and a
-     * separate binding would read as a separate way in - and this package does not write anyway,
-     * which is exactly why it must not imply that it does. A binding describes; it grants nothing.
+     * separate binding would read as a separate way in. That this package now *has* a `write`
+     * changes none of it: `accessLevel` says what the server allows, `authorize()` says what this
+     * peer allows, and neither of them is this list. A binding describes; it grants nothing.
      */
     private bindingsFor(id: string, nodeClass: string, accessLevel: number): ObjectBinding[] {
         const target = { type: 'external' as const, system: 'opcua', id, endpoint: this.props.endpointUrl }

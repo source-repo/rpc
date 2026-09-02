@@ -358,6 +358,55 @@ h1 {
     border-top: 1px solid var(--line);
 }
 
+/* ---- a row action that needs asking ------------------------------------- */
+
+/* Deliberately quiet: it appears under a table somebody is reading, and a panel that announced
+   itself would pull the eye off the row the form is about. The accent edge is the same one a
+   selected row carries, because it is the same statement - this is the thing in hand. */
+.action-form {
+    margin-top: 10px;
+    padding: 10px 12px;
+    border: 1px solid var(--line);
+    border-left: 2px solid var(--accent);
+    border-radius: 4px;
+    background: var(--panel);
+}
+
+.action-form-head {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    margin-bottom: 6px;
+}
+
+/* Last, and pushed away from the signature it follows. */
+.action-form-head .toggle {
+    margin-left: auto;
+}
+
+/* The argument the row fills. Read-only rather than absent, so a method whose first parameter is
+   not really the row is visible before it is called rather than after. */
+.action-bound {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: 4px 10px;
+    margin: 0 0 4px;
+    padding: 6px 0;
+    border-bottom: 1px dashed rgba(38, 46, 58, 0.7);
+}
+
+.action-bound dd {
+    margin: 0;
+    overflow-wrap: anywhere;
+    min-width: 0;
+}
+
+.action-form-foot {
+    display: flex;
+    justify-content: flex-end;
+    margin-top: 10px;
+}
+
 /* ---- argument fields ---------------------------------------------------- */
 
 .field {

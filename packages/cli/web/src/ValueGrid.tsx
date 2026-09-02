@@ -8,6 +8,7 @@ import { pageControls } from './paging'
 import { useRpcData } from './data'
 import { BranchTable, ResourceTree, type BranchQuestion, type RowQuestion, type ScopedQuestion } from './ResourceTree'
 import { Pager } from './Pager'
+import { actionsOn } from './scope'
 import { RecordPanel } from './RecordPanel'
 import { ObjectPanel, type ObjectAccess, type Ref, type Where } from './ObjectPanel'
 import { useDebounced, useWaitedSeconds } from './timing'
@@ -89,7 +90,7 @@ const Collection = ({
     /** What the component says may be done to a row of this resource, already checked to exist. */
     actions?: DescribedAction[]
     /** The resource travels with the call: where the button lives is what the method touched. */
-    onAction?: (action: DescribedAction, id: string, resource: readonly string[]) => void
+    onAction?: (action: DescribedAction, id: string, resource: readonly string[], label?: string) => void
 }) => {
     const [page, setPage] = useState(0)
     const [sort, setSort] = useState<RpcSort | undefined>()
@@ -151,8 +152,8 @@ const Collection = ({
     const controls = pageControls(page, pageSize, data, filter !== undefined)
 
     // Every row of a list is a leaf, so an action about leaves is about all of them; an action
-    // declared for branches has nothing here to be about.
-    const offered = (actions ?? []).filter((action) => (action.appliesTo ?? 'leaves') !== 'branches')
+    // declared for branches has nothing here to be about. Which *kinds* it is about is a fact about
+    // each row, so it is asked per row below rather than once here.
 
     return (
         <div className="collection">
@@ -226,23 +227,26 @@ const Collection = ({
             )}
             {/* A list's rows have no children, so they are all leaves - which is why the default
                 shows them and only an explicit `branches` does not. */}
-            {data?.ids.map((id) => (
-                <div className="collection-row" key={id}>
-                    <ValueTree name={`${label}.${id}`} source={source} type={values} types={types} path={[...leaf.path, id]} edit={edit} depth={1} />
-                    {/* Named calls, not verbs of ours: what is committed is the component's own
-                        method, and the button exists because the component said that method is
-                        about this row. Same rule as an editor drawn from `sets`, one level up. */}
-                    {offered.length ? (
-                        <span className="row-actions">
-                            {offered.map((action) => (
-                                <button key={action.method} className="toggle" title={`calls ${action.method}(${id})`} onClick={() => onAction?.(action, id, leaf.path)}>
-                                    {action.label ?? action.method}
-                                </button>
-                            ))}
-                        </span>
-                    ) : null}
-                </div>
-            ))}
+            {data?.ids.map((id, index) => {
+                const offered = actionsOn(actions, { branch: false, kind: (data.data?.[index] as { kind?: unknown } | undefined)?.kind })
+                return (
+                    <div className="collection-row" key={id}>
+                        <ValueTree name={`${label}.${id}`} source={source} type={values} types={types} path={[...leaf.path, id]} edit={edit} depth={1} />
+                        {/* Named calls, not verbs of ours: what is committed is the component's own
+                            method, and the button exists because the component said that method is
+                            about this row. Same rule as an editor drawn from `sets`, one level up. */}
+                        {offered.length ? (
+                            <span className="row-actions">
+                                {offered.map((action) => (
+                                    <button key={action.method} className="toggle" title={`calls ${action.method}(${id})`} onClick={() => onAction?.(action, id, leaf.path)}>
+                                        {action.label ?? action.method}
+                                    </button>
+                                ))}
+                            </span>
+                        ) : null}
+                    </div>
+                )
+            })}
             {/* Three different nothings, and an operator has to be able to tell them apart: a
                 collection with no entries, a search that matched none of them, and a page that ran
                 off the end of a set which shrank while it was being read. */}
@@ -295,7 +299,7 @@ export const ValueGrid = ({
     onPageSize?: (size: number) => void
     /** What may be done to a row of the resource at this path, if anything. */
     actionsFor: (path: string[]) => DescribedAction[] | undefined
-    onAction?: (action: DescribedAction, id: string, resource: readonly string[]) => void
+    onAction?: (action: DescribedAction, id: string, resource: readonly string[], label?: string) => void
     pageSize?: number
 }) => {
     // Decided before anything else in this pane, because a tree is not a page of the same thing: it

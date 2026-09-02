@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { actionsFor, leavesUnder, scopeTree, treeResourceAt, typeAt, type ScopeNode } from './scope'
+import { actionsFor, actionsOn, leavesUnder, scopeTree, treeResourceAt, typeAt, type ScopeNode } from './scope'
 import type { DescribedComponent, TypeNode } from './types'
 
 /**
@@ -210,6 +210,32 @@ describe('what may be done to a row', () => {
 
     it("carries the author's own judgement about which are final", () => {
         expect(actionsFor(component, ['deadLetters'], methods)?.[1].confirm).toBe(true)
+    })
+
+    describe('which rows a button belongs on', () => {
+        const write = { method: 'write', kinds: ['opcua.variable'] }
+        const reset = { method: 'resetPort' }
+        const archive = { method: 'archive', appliesTo: 'branches' as const }
+        const all = [write, reset, archive]
+
+        it('asks about position and about kind, which are different questions', () => {
+            // An address space lists Variables and Methods and both are leaves. `appliesTo` cannot
+            // tell them apart, which is the whole reason the second test exists.
+            expect(actionsOn(all, { branch: false, kind: 'opcua.variable' }).map((a) => a.method)).toEqual(['write', 'resetPort'])
+            expect(actionsOn(all, { branch: false, kind: 'opcua.method' }).map((a) => a.method)).toEqual(['resetPort'])
+            expect(actionsOn(all, { branch: true, kind: 'opcua.object' }).map((a) => a.method)).toEqual(['archive'])
+        })
+
+        it('does not offer a kinded action to a row with no kind at all', () => {
+            // The safe half. A row that cannot be shown to be one of the kinds named is not shown
+            // to be the wrong one either, and a button that throws is the failure worth avoiding.
+            expect(actionsOn(all, { branch: false }).map((a) => a.method)).toEqual(['resetPort'])
+            expect(actionsOn(all, { branch: false, kind: 42 }).map((a) => a.method)).toEqual(['resetPort'])
+        })
+
+        it('is quiet about a resource that declared none', () => {
+            expect(actionsOn(undefined, { branch: false, kind: 'opcua.variable' })).toEqual([])
+        })
     })
 
     it('has nothing to say about a resource it does not name, or a path that is not one', () => {

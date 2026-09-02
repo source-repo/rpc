@@ -17,6 +17,11 @@
         "noUnusedLocals": false,
         "noUnusedParameters": false,
 
+        // So the extracted contract can be imported and shipped beside the code it describes. The
+        // provider's own methods are what a console draws a form from, and without the contract
+        // `describe()` publishes their names and not their arguments.
+        "resolveJsonModule": true,
+
         "esModuleInterop": true,
         "skipLibCheck": true,
         "forceConsistentCasingInFileNames": true

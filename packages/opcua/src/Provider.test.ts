@@ -1,5 +1,5 @@
 import test from 'ava'
-import { DataType, OPCUAServer, Variant } from 'node-opcua'
+import { DataType, OPCUAServer, StatusCodes, Variant } from 'node-opcua'
 import { IEC81346, isRefusal, type AspectLocation } from '@source-repo/aspects'
 import { OpcUaAspectProvider, portableNodeIdFromText, portableNodeIdToText, toSessionNodeId, type DerivedAspect, type PortableNodeId } from './index.js'
 import { RpcClient, RpcServer } from '@source-repo/rpc'
@@ -40,6 +40,10 @@ test.before(async () => {
         browseName: 'Speed',
         nodeId: `s=Filler01.Speed`,
         dataType: 'Double',
+        // Readable and not writable, which is what a measurement is - and what lets the write tests
+        // below exercise a refusal that comes from the server rather than from this package.
+        accessLevel: 'CurrentRead',
+        userAccessLevel: 'CurrentRead',
         value: { get: () => new Variant({ dataType: DataType.Double, value: 42 }) }
     })
     namespace.addVariable({
@@ -49,6 +53,25 @@ test.before(async () => {
         dataType: 'Boolean',
         value: { get: () => new Variant({ dataType: DataType.Boolean, value: true }) }
     })
+
+    // A value the server actually holds, so a write has somewhere to land. Everything above is a
+    // getter, which a server rightly refuses to write - and refusing is its own test below.
+    let setpoint = 50
+    namespace.addVariable({
+        componentOf: filler,
+        browseName: 'Setpoint',
+        nodeId: `s=Filler01.Setpoint`,
+        dataType: 'Double',
+        minimumSamplingInterval: 1000,
+        value: {
+            get: () => new Variant({ dataType: DataType.Double, value: setpoint }),
+            set: (variant: Variant) => {
+                setpoint = Number(variant.value)
+                return StatusCodes.Good
+            }
+        }
+    })
+    namespace.addMethod(filler, { browseName: 'Recalibrate', nodeId: `s=Filler01.Recalibrate`, inputArguments: [], outputArguments: [] })
 
     await server.start()
     endpointUrl = server.getEndpointUrl()!
@@ -117,7 +140,7 @@ test.serial('a branch is browsed when it is opened, and not before', async (t) =
 
     const filler = rows(inside)[0]
     const variables = await branch(opcua, filler.occurrenceId)
-    t.deepEqual(rows(variables).map((row) => row.title).sort(), ['Running', 'Speed'])
+    t.deepEqual(rows(variables).map((row) => row.title).sort(), ['Recalibrate', 'Running', 'Setpoint', 'Speed'])
 })
 
 test.serial('a node is identified by its namespace URI, never by the index', async (t) => {
@@ -407,8 +430,11 @@ test.serial('every leaf beneath a node arrives without the caller walking', asyn
     t.deepEqual(direct.map((row) => row.title), ['Filler01'], 'a branch at a time reaches the device and stops')
 
     const deep = rows(await beneath(opcua, line1.occurrenceId))
-    t.deepEqual(deep.map((row) => row.title).sort(), ['Running', 'Speed'], 'and the leaves under it arrive whole')
-    t.true(deep.every((row) => row.nodeClass === 'Variable'), 'leaves only - the device is scope, not a row')
+    t.deepEqual(deep.map((row) => row.title).sort(), ['Recalibrate', 'Running', 'Setpoint', 'Speed'], 'and the leaves under it arrive whole')
+    t.false(deep.some((row) => row.title === 'Filler01'), 'leaves only - the device is scope, not a row')
+    // Not all one kind, which is the fact `kinds` on an action exists for: a Method is as much a
+    // leaf as a Variable is, and `write` is about one of them.
+    t.deepEqual([...new Set(deep.map((row) => row.nodeClass))].sort(), ['Method', 'Variable'])
 })
 
 test.serial('a page is the bound, and a short page says there is more', async (t) => {
@@ -454,4 +480,58 @@ test.serial('a filter is applied by the provider, as the walk goes', async (t) =
         `only the matches came back: ${running.map((row) => row.title).join(', ')}`
     )
     t.true(running.length < all.length, 'and fewer of them than the unfiltered walk found')
+})
+
+/** Every leaf under Filler01, reached the way a viewer reaches it: by the occurrence it browsed. */
+const underFiller = async (opcua: OpcUaAspectProvider) => {
+    const line1 = rows(await branch(opcua)).find((row) => row.title === 'Line1')!
+    const filler = rows(await branch(opcua, line1.occurrenceId)).find((row) => row.title === 'Filler01')!
+    return rows(await beneath(opcua, filler.occurrenceId)) as unknown as { title: string; nodeId: string; value?: string }[]
+}
+
+test.serial('a variable is written from text, using the datatype the server declares', async (t) => {
+    const opcua = await connected(t)
+    const before = (await underFiller(opcua)).find((row) => row.title === 'Setpoint')!
+
+    await opcua.write(before.nodeId, '73.5')
+    const after = (await underFiller(opcua)).find((row) => row.title === 'Setpoint')!
+    t.is(after.value, '73.5', 'the node holds what was sent, as a number rather than the text of one')
+})
+
+test.serial('what cannot be a value of that type is refused by name, not rounded into one', async (t) => {
+    const opcua = await connected(t)
+    const leaves = await underFiller(opcua)
+    const setpoint = leaves.find((row) => row.title === 'Setpoint')!.nodeId
+    const running = leaves.find((row) => row.title === 'Running')!.nodeId
+
+    // `Number('')` is 0 and `Boolean('maybe')` is true. Both are how a mistyped setpoint reaches a
+    // plant looking like a decision, which is why neither is allowed to happen quietly.
+    await t.throwsAsync(opcua.write(setpoint, 'fast'), { message: /expected a number/ })
+    await t.throwsAsync(opcua.write(setpoint, ''), { message: /expected a number/ })
+    await t.throwsAsync(opcua.write(running, 'maybe'), { message: /expected true or false/ })
+    await t.notThrowsAsync(opcua.write(running, 'true'), 'the words a person actually types are accepted')
+})
+
+test.serial('only a Variable has a value to write, and the server has the last word anyway', async (t) => {
+    const opcua = await connected(t)
+    const leaves = await underFiller(opcua)
+    const method = leaves.find((row) => row.title === 'Recalibrate')!.nodeId
+    const speed = leaves.find((row) => row.title === 'Speed')!.nodeId
+
+    await t.throwsAsync(opcua.write(method, '1'), { message: /is a Method/ }, 'refused here, before a round trip that would fail anyway')
+    // A getter with no setter. The refusal is the server's, and this peer reports it rather than
+    // reporting a success it did not get - which is the whole reason the status code is checked.
+    await t.throwsAsync(opcua.write(speed, '1'), { message: /the server refused/ })
+    await t.throwsAsync(opcua.write('not a node id', '1'), { message: /not a node id/ })
+})
+
+test.serial('write is offered on the variables of every arrangement, and on nothing else', async (t) => {
+    const opcua = await connected(t)
+    const [addressSpace] = opcua.dataResources()
+
+    t.deepEqual(
+        addressSpace.actions?.map((action) => ({ method: action.method, kinds: action.kinds })),
+        [{ method: 'write', kinds: ['opcua.variable'] }],
+        'declared for the kind it is about: an address space lists Methods beside Variables and both are leaves'
+    )
 })

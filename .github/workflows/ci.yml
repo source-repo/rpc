@@ -164,8 +164,15 @@ jobs:
 
             # The contracts in the repository are extracted from source and committed. This is what
             # catches a service whose shape changed without `npm run contract` being run after it.
+            #
+            # Two workspaces now, and the second is the reason a library ships one at all: a console
+            # draws a field per argument from the published signature, so a method that gained a
+            # parameter without the contract being re-extracted is a form that quietly stops asking
+            # for it.
             - name: Check the committed contracts
-              run: npm run check:contract --workspace=@source-repo/rpc-cli
+              run: |
+                  npm run check:contract --workspace=@source-repo/rpc-cli
+                  npm run check:contract --workspace=@source-repo/opcua
 
             # Here as well as in docs.yml, which gates the deploy: that workflow runs on main and
             # only when a path it watches changed, so this is the one that fails a pull request

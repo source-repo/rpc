@@ -1,0 +1,9 @@
+{
+    // The namespace this package serves, so a deployment can hand a console the signatures of the
+    // methods it exposes. Without a contract `describe()` publishes `write(…)` - the name and
+    // nothing else - and a viewer that wanted to draw a field per argument has nothing to draw
+    // from. The provider only, not the helpers around it: `Identity` and `Derived` are how this
+    // package works rather than what it offers over the wire.
+    "extends": "./tsconfig.json",
+    "include": ["src/Provider.ts"]
+}

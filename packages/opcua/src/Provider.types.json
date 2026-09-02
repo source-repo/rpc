@@ -1,0 +1,57 @@
+{
+  "schema": 1,
+  "namespaces": {
+    "opcua": {
+      "methods": {
+        "index": {
+          "params": [],
+          "returns": {
+            "kind": "number"
+          },
+          "semantics": "idempotent-command",
+          "effect": "operate"
+        },
+        "connect": {
+          "params": [],
+          "returns": {
+            "kind": "number"
+          },
+          "semantics": "idempotent-command",
+          "effect": "operate"
+        },
+        "disconnect": {
+          "params": [],
+          "semantics": "idempotent-command",
+          "effect": "operate"
+        },
+        "browseCount": {
+          "params": [],
+          "returns": {
+            "kind": "number"
+          },
+          "semantics": "query",
+          "effect": "observe"
+        },
+        "write": {
+          "params": [
+            {
+              "kind": "string"
+            },
+            {
+              "kind": "string"
+            }
+          ],
+          "paramNames": [
+            "nodeId",
+            "value"
+          ],
+          "semantics": "idempotent-command",
+          "effect": "operate"
+        }
+      },
+      "capabilities": [
+        "@source-repo/aspects/AspectSource"
+      ]
+    }
+  }
+}

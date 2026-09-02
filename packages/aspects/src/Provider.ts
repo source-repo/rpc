@@ -221,6 +221,10 @@ export abstract class AspectProvider<Props extends Record<string, unknown>, Stat
             // viewer offers from, so declaring one that would refuse is worse than not having it.
             verbs: this.leaves ? (['getChildren', 'getList'] as const) : (['getChildren'] as const),
             presentation: { defaultColumns: aspect.defaultColumns ?? ['title', 'kind'] },
+            // Passed through rather than interpreted. The aspect names methods of the provider it
+            // belongs to, and this class knows nothing about them beyond that they will be filtered
+            // against what `describe()` publishes like any other action.
+            ...(aspect.actions?.length ? { actions: aspect.actions } : {}),
             row: {
                 kind: 'object' as const,
                 fields: {

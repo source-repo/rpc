@@ -27,7 +27,17 @@ class Plant extends AspectProvider<{ label: string }, { items: number }> {
 
     aspects(): readonly AspectDescriptor[] {
         return [
-            { id: 'functional', label: 'By loop', revision: '1', default: true, semantics: IEC81346.function },
+            {
+                id: 'functional',
+                label: 'By loop',
+                revision: '1',
+                default: true,
+                semantics: IEC81346.function,
+                // A method of this provider, said to be about a row of this arrangement. The base
+                // class carries it and interprets nothing: whether the method exists is settled by
+                // `describe()`, and whether it may run is settled by `authorize()`.
+                actions: [{ method: 'calibrate', label: 'calibrate', kinds: ['plant.instrument'] }]
+            },
             { id: 'location', label: 'By room', revision: '1', semantics: IEC81346.location }
         ]
     }
@@ -97,6 +107,11 @@ test('each aspect is published as a tree resource, without the provider serving 
     )
     t.true(resources.every((resource) => resource.shape === 'tree' && resource.verbs.includes('getChildren')))
     t.deepEqual(resources[0].label, 'By loop')
+
+    // Per aspect, because an arrangement is a claim about what its rows are - and an aspect that
+    // says nothing gets no actions rather than the other one's.
+    t.deepEqual(resources[0].actions, [{ method: 'calibrate', label: 'calibrate', kinds: ['plant.instrument'] }])
+    t.is(resources[1].actions, undefined)
 })
 
 test('a branch answers occurrences, keyed by placement rather than by object', async (t) => {

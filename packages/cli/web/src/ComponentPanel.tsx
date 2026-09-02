@@ -7,6 +7,7 @@ import { overlayRefusal, type RpcSourceBinding, type RpcSourceCatalogue, type Rp
 import { staticSource, storeSource, type EditAffordance } from './ValueTree'
 import { ScopeTree } from './ScopeTree'
 import { ValueGrid, type PageQuestion } from './ValueGrid'
+import { ActionForm } from './ActionForm'
 import type { BranchQuestion, RowQuestion, ScopedQuestion } from './ResourceTree'
 import type { ObjectAccess, Link, Ref, Where } from './ObjectPanel'
 import { actionsFor, leavesUnder, scopeTree } from './scope'
@@ -252,6 +253,11 @@ export const ComponentPanel = ({
     const [error, setError] = useState<string | null>(null)
     const [busy, setBusy] = useState(false)
     const [failed, setFailed] = useState<{ path: string; message: string } | undefined>()
+    /** The action waiting on somebody: what it is about, and what to call the row while asking. */
+    const [asking, setAsking] = useState<{ action: DescribedAction; id: string; resource: readonly string[]; label?: string } | undefined>()
+    const [sending, setSending] = useState(false)
+    /** What the peer said when it would not do it, which is the only report that it did not. */
+    const [refused, setRefused] = useState<string | undefined>()
     /**
      * Every command this panel sends, and the key that makes a second attempt at one the *same*
      * command rather than another one. Shared by the editors and the row actions, because an
@@ -379,20 +385,55 @@ export const ComponentPanel = ({
      * collection in the pane a different question after any successful call - one round trip per
      * collection, on the link least able to spare it, for a command that touched one row.
      */
-    const runAction = async (action: DescribedAction, id: string, resource: readonly string[]) => {
+    const runAction = async (action: DescribedAction, id: string, resource: readonly string[], rest: readonly unknown[] = [], label?: string) => {
         const link = server.current
         if (!link) return
-        // The author says which of its methods are final; a console guessing from the word
-        // "discard" would be guessing about a plant.
-        if (action.confirm && !window.confirm(`${action.method}(${id})?`)) return
         setFailed(undefined)
+        setRefused(undefined)
+        setSending(true)
+        let refusal: string | undefined
         await commanding
             .run(id, async (idempotencyKey) => {
                 const proxy = await link.proxy<Record<string, (...args: unknown[]) => Promise<unknown>>>(namespace, peer)
-                await proxy.$with(commandOptions(idempotencyKey, methods.find((one) => one.name === action.method)?.semantics))[action.method](id)
+                await proxy.$with(commandOptions(idempotencyKey, methods.find((one) => one.name === action.method)?.semantics))[action.method](id, ...rest)
                 data.settled({ target: peer, namespace, resource })
             })
-            .catch((e) => setFailed({ path: id, message: (e as { message?: string }).message ?? String(e) }))
+            .catch((e) => {
+                refusal = (e as { message?: string }).message ?? String(e)
+                setFailed({ path: id, message: refusal })
+                setRefused(refusal)
+            })
+        setSending(false)
+        /**
+         * A refusal keeps the panel, and opens one where there was none.
+         *
+         * `setFailed` alone is not enough and looked like it was: it is drawn by the value tree
+         * against a path, and a row's id is not one - so a `write` the server refused closed the
+         * form and said nothing at all, which is the worst thing this screen can do. The panel is
+         * where the action was answered, so it is where the answer belongs, and leaving it open
+         * leaves the arguments in it: pressing again is another attempt at the same command,
+         * under the same idempotency key, rather than a fresh one.
+         */
+        if (refusal) return setAsking({ action, id, resource, label })
+        setAsking(undefined)
+    }
+
+    /**
+     * Pressed. Either it goes, or it opens the form first.
+     *
+     * Two reasons to open one and they are the same panel: a method that needs more than the row,
+     * and an action whose author said to ask first. `confirm` used to be `window.confirm`, which
+     * contradicted the rule stated one file over - the trust model grants UI to the console and
+     * never to a dialog the browser draws over it, and a blocking dialog freezes every live pane
+     * behind it. A panel that names the method, shows the row it is bound to and has one button is
+     * the same question asked in the console's own chrome.
+     */
+    const pressAction = (action: DescribedAction, id: string, resource: readonly string[], label?: string) => {
+        const method = methods.find((one) => one.name === action.method)
+        setRefused(undefined)
+        const asks = (method?.params?.length ?? 0) > 1 || action.confirm === true
+        if (asks) return setAsking({ action, id, resource, label })
+        void runAction(action, id, resource, [], label)
     }
 
     /**
@@ -667,7 +708,23 @@ export const ComponentPanel = ({
                                 onPageSize={(size) => {
                                     setPageSize(size)
                                     rememberPageSize(size)
-                                }} objectAccess={objectAccess} cache={data} pageQuestion={pageQuestion} period={period} actionsFor={(path) => actionsFor(component, path, methods)} onAction={(action, id, resource) => void runAction(action, id, resource)} />
+                                }} objectAccess={objectAccess} cache={data} pageQuestion={pageQuestion} period={period} actionsFor={(path) => actionsFor(component, path, methods)} onAction={(action, id, resource, label) => pressAction(action, id, resource, label)} />
+                        )}
+                        {/* Under the rows rather than over them: the table is what somebody is
+                            reading while they decide, and a form that covered it would hide the
+                            row it is about. */}
+                        {asking && (
+                            <ActionForm
+                                action={asking.action}
+                                method={methods.find((one) => one.name === asking.action.method)}
+                                subject={asking.id}
+                                subjectLabel={asking.label}
+                                types={types}
+                                busy={sending}
+                                refused={refused}
+                                onRun={(rest) => void runAction(asking.action, asking.id, asking.resource, rest, asking.label)}
+                                onCancel={() => setAsking(undefined)}
+                            />
                         )}
                     </div>
                 </div>

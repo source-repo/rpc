@@ -4,6 +4,7 @@ import { useRpcData } from './data'
 import type { Ref } from './ObjectPanel'
 import type { DescribedAction, DescribedResource } from './types'
 import { pageControls } from './paging'
+import { actionsOn } from './scope'
 import { Pager } from './Pager'
 
 /**
@@ -156,7 +157,7 @@ const Node = ({
     branchesOnly?: boolean
     /** What may be done to a row of this resource, as methods the component already declares. */
     actions?: DescribedAction[]
-    onAction?: (action: DescribedAction, id: string, resource: readonly string[]) => void
+    onAction?: (action: DescribedAction, id: string, resource: readonly string[], label?: string) => void
 }) => {
     const [open, setOpen] = useState(false)
     /**
@@ -194,7 +195,7 @@ const Node = ({
      * on the wire. A row with children is a branch; one without is a leaf; and an action says which
      * it is about, or says nothing and means leaves.
      */
-    const offered = (actions ?? []).filter((action) => (action.appliesTo ?? 'leaves') === 'all' || (action.appliesTo ?? 'leaves') === (expandable ? 'branches' : 'leaves'))
+    const offered = actionsOn(actions, { branch: expandable, kind: field(row, 'kind') })
     const label = labelOf(row, id, columns)
     const details = detailsOf(row, columns, label)
 
@@ -254,7 +255,7 @@ const Node = ({
                 {offered.length ? (
                     <span className="row-actions">
                         {offered.map((action) => (
-                            <button key={action.method} className="toggle" title={`calls ${action.method}(${subject})`} onClick={() => onAction?.(action, subject, resource)}>
+                            <button key={action.method} className="toggle" title={`calls ${action.method}(${subject})`} onClick={() => onAction?.(action, subject, resource, label)}>
                                 {action.label ?? action.method}
                             </button>
                         ))}
@@ -342,7 +343,7 @@ const BranchRows = ({
     branchesOnly?: boolean
     /** What may be done to a row of this resource, as methods the component already declares. */
     actions?: DescribedAction[]
-    onAction?: (action: DescribedAction, id: string, resource: readonly string[]) => void
+    onAction?: (action: DescribedAction, id: string, resource: readonly string[], label?: string) => void
     /** Whether this drew any rows, so a parent can stop offering to open what opens onto nothing. */
     onDrew?: (any: boolean) => void
 }) => {
@@ -457,7 +458,7 @@ export const BranchTable = ({
     onSelect?: (ref: Ref, id: string) => void
     onPickRow?: (id: string) => void
     actions?: DescribedAction[]
-    onAction?: (action: DescribedAction, id: string, resource: readonly string[]) => void
+    onAction?: (action: DescribedAction, id: string, resource: readonly string[], label?: string) => void
 }) => {
     const [page, setPage] = useState(0)
     // A subtree where the resource answers for one, a level where it does not.
@@ -567,7 +568,7 @@ export const BranchTable = ({
                             const subject = reference?.id ?? id
                             // Everything here is a leaf by construction now, so an action for branches
                             // has nothing in this table to be about - it belongs on a tree row.
-                            const offered = (actions ?? []).filter((action) => (action.appliesTo ?? 'leaves') !== 'branches')
+                            const offered = actionsOn(actions, { branch: false, kind: field(row, 'kind') })
                             return (
                                 <tr
                                     key={id}
@@ -598,7 +599,7 @@ export const BranchTable = ({
                                                     // also open the row behind it.
                                                     onClick={(event) => {
                                                         event.stopPropagation()
-                                                        onAction?.(action, subject, resource)
+                                                        onAction?.(action, subject, resource, labelOf(row, id, columns))
                                                     }}
                                                 >
                                                     {action.label ?? action.method}
@@ -668,7 +669,7 @@ export const ResourceTree = ({
     branchesOnly?: boolean
     /** What may be done to a row of this resource, as methods the component already declares. */
     actions?: DescribedAction[]
-    onAction?: (action: DescribedAction, id: string, resource: readonly string[]) => void
+    onAction?: (action: DescribedAction, id: string, resource: readonly string[], label?: string) => void
 }) => {
     const columns = resource.presentation?.defaultColumns ?? []
     return (

@@ -62,6 +62,8 @@ export interface DescribedAction {
     confirm?: boolean
     /** Which rows it is about. Absent means leaves, which is every row of a flat list. */
     appliesTo?: 'leaves' | 'branches' | 'all'
+    /** Which kinds of row it is about, matched against the row's own `kind`. Absent means any. */
+    kinds?: string[]
 }
 
 /** One collection a component serves that its contract cannot describe: a table, a queue, a store. */

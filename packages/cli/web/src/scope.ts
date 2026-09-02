@@ -220,6 +220,28 @@ export const typeAt = (component: DescribedComponent, path: string[], types?: Ty
  * capability - it says which existing method is about which row - so an action naming a method that
  * does not exist is not a half-working feature, it is a statement that was never true.
  */
+/**
+ * Which of a resource's actions belong on *this* row.
+ *
+ * Two questions and they are not the same one. `appliesTo` is about position - a rack's cabinets are
+ * branches and its ports are leaves, and `resetPort` is about the ports. `kinds` is about what the
+ * thing is - an address space lists Variables and Methods and both are leaves, and `write` is about
+ * the first. A row failing either test is not offered the button, which is the whole point: the
+ * alternative is a command an operator discovers is wrong by pressing it.
+ *
+ * One function rather than the three copies of the position test this replaces, because a rule
+ * applied in three places is a rule that will be right in two of them.
+ */
+export const actionsOn = (actions: readonly DescribedAction[] | undefined, row: { branch: boolean; kind?: unknown }): DescribedAction[] =>
+    (actions ?? []).filter((action) => {
+        const where = action.appliesTo ?? 'leaves'
+        if (where !== 'all' && where !== (row.branch ? 'branches' : 'leaves')) return false
+        // Declared but unmatchable is a no rather than a yes: a row with no kind cannot be shown to
+        // be one of the kinds named, and the safe half of that is not offering the command.
+        if (action.kinds?.length) return typeof row.kind === 'string' && action.kinds.includes(row.kind)
+        return true
+    })
+
 export const actionsFor = (component: DescribedComponent, path: string[], methods: readonly DescribedMethod[]): DescribedAction[] | undefined => {
     const resource = component.resources?.find((declared) => declared.path.length === path.length && declared.path.every((segment, at) => segment === path[at]))
     return resource?.actions?.filter((action) => methods.some((method) => method.name === action.method))

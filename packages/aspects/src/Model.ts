@@ -1,4 +1,4 @@
-import type { RpcEffect, RpcRef } from '@source-repo/rpc'
+import type { RpcDataAction, RpcEffect, RpcRef } from '@source-repo/rpc'
 // Type-only, and circular with `Link.ts` on purpose: an object carries its links and a link names
 // an object, which is one idea in two files rather than two ideas.
 import type { AspectLink } from './Link.js'
@@ -260,6 +260,20 @@ export interface AspectDescriptor {
      * back to something plain.
      */
     readonly defaultColumns?: readonly string[]
+    /**
+     * What can be done to an occurrence of this aspect, as methods the provider already declares.
+     *
+     * Per aspect rather than per provider, because an arrangement is a claim about what its rows
+     * are: an address space lists nodes somebody may write to, and an aspect built by scanning
+     * documents for topics lists the same document under three topics, where a delete means
+     * something a viewer should think about twice.
+     *
+     * The type is the library's, not a parallel one. What a row action is - which method, what to
+     * put on the button, whether to ask first, which rows it is about - is settled in
+     * `RpcDataAction`, and an aspect saying it differently would be a second vocabulary for one
+     * question.
+     */
+    readonly actions?: readonly RpcDataAction[]
 }
 
 /**
