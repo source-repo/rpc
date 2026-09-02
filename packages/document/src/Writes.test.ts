@@ -91,7 +91,7 @@ const read = (row: RpcRowRead) => {
 
 /** A catalogue built by hand, so what `resolveWrites` does can be asked without a database. */
 const catalogueOf = (...names: readonly string[]): DocumentCatalogue => {
-    const collections: CollectionInfo[] = names.map((name) => ({ name, idKind: 'number', shape: 'sampled', sampled: 4 }))
+    const collections: CollectionInfo[] = names.map((name) => ({ name, idKind: 'number', shape: 'sampled', sampled: 4, references: [] }))
     return { collections, byName: new Map(collections.map((one) => [one.name, one])) }
 }
 

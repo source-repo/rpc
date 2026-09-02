@@ -234,7 +234,35 @@ export const mysqlFlavour: SqlFlavour = {
         return column.nullable ? [sql`(${id(column.name)} is null) ${direction(order)}`, term] : [term]
     },
     primaryKey: (db, table, schema) => informationSchemaKey(db, table, schema, sql`database()`),
-    foreignKeys: (db, table, schema) => informationSchemaForeignKeys(db, table, schema, sql`database()`),
+    foreignKeys: async (db, table, schema) => {
+        /**
+         * MySQL's own columns rather than the standard join, and it is not a shortcut.
+         *
+         * The portable way to reach the referenced side is `referential_constraints` ->
+         * `unique_constraint_name` -> `key_column_usage`, and on MySQL that name is `PRIMARY` for
+         * every table with a primary key. Joining on it therefore matches every table's key at
+         * once, and the query answers with whichever row came back first - a reference pointing
+         * confidently at the wrong table. Caught by the conformance suite the moment all three
+         * engines were asked the same question.
+         *
+         * MySQL puts `referenced_table_name` and `referenced_column_name` on `key_column_usage`
+         * itself, which says exactly what is wanted and which Postgres leaves null - so the two
+         * genuinely need different queries rather than one with a dialect flag.
+         */
+        const within = schema === undefined ? sql`database()` : sql`${schema}`
+        const found = await sql<{ constraint: string; column: string; targetTable: string; targetColumn: string }>`
+            select constraint_name as \`constraint\`,
+                   column_name as \`column\`,
+                   referenced_table_name as targetTable,
+                   referenced_column_name as targetColumn
+            from information_schema.key_column_usage
+            where table_name = ${table}
+                and table_schema = ${within}
+                and referenced_table_name is not null
+            order by constraint_name, ordinal_position
+        `.execute(db)
+        return found.rows
+    },
     rowLock: 'for-update',
     insert: (db, table, values) => insertThenRead(db, table, values)
 }

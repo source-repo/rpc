@@ -1,6 +1,8 @@
 import {
     CUSTOMERS,
     DATA_QUESTIONS,
+    ORDER_REFERENCE,
+    referencesResolve,
     ORDERS,
     rowsAgainstDeclaration,
     SITES,
@@ -79,7 +81,7 @@ const BACKENDS: readonly Backend[] = [
         open: () => new Kysely<RelationalDatabase>({ dialect: new NodeSqliteDialect({ filename: ':memory:' }) }),
         ddl: [
             `create table ${TABLE.customers} (id integer primary key, name text not null, city text, active boolean, balance real)`,
-            `create table ${TABLE.orders} (id integer primary key, customer_id integer not null, total real)`,
+            `create table ${TABLE.orders} (id integer primary key, customer_id integer not null references ${TABLE.customers}(id), total real)`,
             `create table ${TABLE.sites} (site_id text primary key, label text)`,
             `create table ${WRITTEN.customers} (id integer primary key, name text not null, city text, active boolean, balance real)`,
             `create table ${WRITTEN.sites} (site_id text primary key, label text)`
@@ -92,7 +94,7 @@ const BACKENDS: readonly Backend[] = [
         open: () => new Kysely<RelationalDatabase>({ dialect: new PostgresDialect({ pool: new pg.Pool({ connectionString: POSTGRES_URL, max: 4 }) }) }),
         ddl: [
             `create table ${TABLE.customers} (id integer primary key, name text not null, city text, active boolean, balance double precision)`,
-            `create table ${TABLE.orders} (id integer primary key, customer_id integer not null, total double precision)`,
+            `create table ${TABLE.orders} (id integer primary key, customer_id integer not null references ${TABLE.customers}(id), total double precision)`,
             `create table ${TABLE.sites} (site_id text primary key, label text)`,
             `create table ${WRITTEN.customers} (id integer primary key, name text not null, city text, active boolean, balance double precision)`,
             `create table ${WRITTEN.sites} (site_id text primary key, label text)`
@@ -105,7 +107,7 @@ const BACKENDS: readonly Backend[] = [
         open: () => new Kysely<RelationalDatabase>({ dialect: new MysqlDialect({ pool: createPool({ uri: MYSQL_URL, connectionLimit: 4 }) }) }),
         ddl: [
             `create table ${TABLE.customers} (id int primary key, name varchar(80) not null, city varchar(80), active boolean, balance double)`,
-            `create table ${TABLE.orders} (id int primary key, customer_id int not null, total double)`,
+            `create table ${TABLE.orders} (id int primary key, customer_id int not null, total double, foreign key (customer_id) references ${TABLE.customers}(id))`,
             `create table ${TABLE.sites} (site_id varchar(40) primary key, label varchar(80))`,
             `create table ${WRITTEN.customers} (id int primary key, name varchar(80) not null, city varchar(80), active boolean, balance double)`,
             `create table ${WRITTEN.sites} (site_id varchar(40) primary key, label varchar(80))`
@@ -234,6 +236,23 @@ test('every backend answers the same question the same way', async (t) => {
             const declared = service.dataResources().find((resource) => resource.path[0] === TABLE[question.collection])?.row
             t.is(rowsAgainstDeclaration(answer.data, declared), undefined, `${backend.name}: the rows of ${question.asks} match the published shape`)
         }
+})
+
+test('a declared reference resolves, on every engine that declares one', async (t) => {
+    for (const { backend, service } of t.context.live) {
+        const orders = service.dataResources().find((resource) => resource.path[0] === TABLE.orders)
+        const declared = orders?.references?.find((reference) => reference.field === ORDER_REFERENCE.field)
+        t.truthy(declared, `${backend.name}: the foreign key on ${TABLE.orders} is published as a reference`)
+        t.deepEqual([...(declared?.target ?? [])], [TABLE[ORDER_REFERENCE.target]], `${backend.name}: and it names the resource the key points at`)
+
+        // The promise itself, checked against the data rather than against the declaration: take
+        // the ids out of a page and ask the target for them. A reference that resolves to nothing
+        // is drawn as a blank by every viewer, which is the silent failure this exists to catch.
+        const page = (await service.dataRequest('getList', [TABLE.orders], {} as RpcGetListParams)) as RpcGetListResult
+        const ids = [...new Set(page.data.map((row) => String((row as Record<string, unknown>)[ORDER_REFERENCE.field])))]
+        const targets = (await service.dataRequest('getMany', [TABLE[ORDER_REFERENCE.target]], { ids } as never)) as RpcGetListResult
+        t.is(referencesResolve(ORDER_REFERENCE.field, page.data, targets.ids), undefined, `${backend.name}: every id it holds names a row of ${TABLE[ORDER_REFERENCE.target]}`)
+    }
 })
 
 test('the row a backend publishes is the row it answers with', async (t) => {

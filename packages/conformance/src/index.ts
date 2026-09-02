@@ -214,6 +214,51 @@ export const rowsAgainstDeclaration = (rows: readonly unknown[], declared: TypeN
 }
 
 /**
+ * What a declared reference has to mean, wherever it is declared.
+ *
+ * `RpcDataReference` makes one promise and it is exact: **the field holds the target's row id**, so
+ * a caller may take the values out of a page and hand them to `getMany` on the target. Everything a
+ * viewer does with a reference stands on that - drawing the name instead of the number, batching
+ * fifty rows into one round trip, offering to open the thing referred to - and all of it fails the
+ * same silent way if the promise does not hold: ids that resolve to nothing, drawn as blanks.
+ *
+ * The promise is the same sentence over SQL, where it is derived from a foreign key the database
+ * declares, and over a document store, where nothing declares it and a deployment says so by hand.
+ * That is exactly the pair this package exists for: one word, two implementations, and no way to
+ * notice them parting company except by asking both.
+ *
+ * Given the rows of a page and what `getMany` answered for the ids in them, this returns the first
+ * disagreement or undefined. It checks the promise rather than the plumbing - an id that named no
+ * row is the failure, and it does not care how either store found the ones that did.
+ */
+export const referencesResolve = (
+    field: string,
+    rows: readonly unknown[],
+    answered: readonly string[]
+): string | undefined => {
+    const wanted = new Set<string>()
+    for (const row of rows) {
+        const value = row && typeof row === 'object' ? (row as Record<string, unknown>)[field] : undefined
+        // A null reference is a row that refers to nothing, which is ordinary and not a failure.
+        // Everything else is an id, whatever the store spells it as - a SQL key is usually a number
+        // and a Mongo one is a string, and `getMany` takes the string either way.
+        if (value !== null && value !== undefined) wanted.add(String(value))
+    }
+    const found = new Set(answered.map(String))
+    for (const id of [...wanted].sort()) if (!found.has(id)) return `'${field}' holds ${id}, which the target has no row for`
+    return undefined
+}
+
+/**
+ * The reference every backend must publish for the orders fixture, and why it is that one.
+ *
+ * `orders.customer_id` names a customer, which is the only relationship in these rows - and it is
+ * deliberately a **number** pointing at a numeric key, because that is where the two stores differ
+ * most in how they hold it and least in what it means.
+ */
+export const ORDER_REFERENCE = { field: 'customer_id', target: 'customers' } as const
+
+/**
  * The write side of the same claim, and the reason it belongs here rather than in either node.
  *
  * Reading the same rows the same way was the first half; **changing them under the same

@@ -37,6 +37,8 @@ export interface CollectionInfo {
     readonly row?: TypeNode
     /** How many documents were read to infer the shape. Zero where a validator supplied it. */
     readonly sampled: number
+    /** Which fields name a document of another served collection, as the deployment declared them. */
+    readonly references: readonly { readonly field: string; readonly target: string }[]
 }
 
 export interface DocumentCatalogue {
@@ -59,6 +61,22 @@ export interface DocumentCatalogueOptions {
      * way.
      */
     readonly sample?: number
+    /**
+     * Which fields hold the id of a document in another collection, by collection name.
+     *
+     * **Declared, because a document store has nothing to derive it from.** A SQL node reads
+     * foreign keys the database itself declares and publishes references from them; Mongo has no
+     * such statement to read, and the alternative to being told is guessing from a field's *name* -
+     * `customer_id` looks like a reference and `order_id` in a collection of orders does not, and a
+     * viewer drawing a name from the wrong collection is wrong in a way nobody can see.
+     *
+     * The promise a reference makes is the same either way and it is exact: the field holds the
+     * target's row id, so `getMany` on the target answers for it. Whoever declares one here is
+     * making that promise on the store's behalf - which is why it is a deployment's statement
+     * rather than a sample's inference. A target this catalogue does not serve is dropped, and the
+     * library says so at describe time.
+     */
+    readonly references?: { readonly [collection: string]: readonly { readonly field: string; readonly target: string }[] }
 }
 
 const DEFAULT_SAMPLE = 20
@@ -94,11 +112,22 @@ export const readCatalogue = async (db: Db, options: DocumentCatalogueOptions = 
             idKind: idKindOf(sample),
             shape: validator ? 'validator' : sample.length ? 'sampled' : 'unknown',
             row: validator ? fromJsonSchema(validator) : sample.length ? fromSample(sample) : undefined,
-            sampled: validator ? 0 : sample.length
+            sampled: validator ? 0 : sample.length,
+            // Filled below: a reference can only be resolved once every collection that survived is
+            // known, and the target of one may not have been reached yet.
+            references: []
         })
     }
 
-    return { collections, byName: new Map(collections.map((collection) => [collection.name, collection])) }
+    const byName = new Map(collections.map((collection) => [collection.name, collection]))
+    // Dropped rather than published pointing at nothing: a target this catalogue does not serve is
+    // a link a viewer would follow to a resource that is not there, and the library reports that at
+    // describe time. Filtering here means it never gets that far.
+    const served = collections.map((collection) => ({
+        ...collection,
+        references: (options.references?.[collection.name] ?? []).filter((reference) => byName.has(reference.target))
+    }))
+    return { collections: served, byName: new Map(served.map((collection) => [collection.name, collection])) }
 }
 
 /**
@@ -288,7 +317,11 @@ export const resourceOf = (collection: CollectionInfo): RpcDataResource => ({
     path: [collection.name],
     verbs: VERBS,
     shape: 'list',
-    ...(collection.row ? { row: collection.row } : {})
+    ...(collection.row ? { row: collection.row } : {}),
+    // Declared by the deployment rather than derived from the store, which is the one way this
+    // differs from the SQL node - and it is a difference in where the knowledge comes from, never
+    // in what the reference means. `packages/conformance` asks both the same question about it.
+    ...(collection.references.length ? { references: collection.references.map((reference) => ({ field: reference.field, target: [reference.target] })) } : {})
 })
 
 /**

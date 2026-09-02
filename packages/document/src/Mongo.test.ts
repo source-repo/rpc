@@ -1,4 +1,14 @@
-import { DATA_QUESTIONS, rowsAgainstDeclaration, stampedFields, WRITE_PERMISSIONS, WRITE_QUESTIONS, type ConformanceCollection, type WriteEnds } from '@source-repo/conformance'
+import {
+    DATA_QUESTIONS,
+    ORDER_REFERENCE,
+    referencesResolve,
+    rowsAgainstDeclaration,
+    stampedFields,
+    WRITE_PERMISSIONS,
+    WRITE_QUESTIONS,
+    type ConformanceCollection,
+    type WriteEnds
+} from '@source-repo/conformance'
 import { rowStamp, RpcResourceStamps, type RpcGetListParams, type RpcGetListResult, type RpcGetManyResult, type RpcWritePermissions } from '@source-repo/rpc'
 import anyTest, { type TestFn } from 'ava'
 import { randomUUID } from 'node:crypto'
@@ -42,7 +52,11 @@ const test = anyTest as TestFn<Context>
 test.before(async (t) => {
     try {
         const held = await fixture(run)
-        const service = new DocumentService({ db: held.db })
+        // The relationship the shared rows have always had, declared - because nothing in a document
+        // store declares it and a viewer following one has to be told. The SQL node derives the same
+        // statement from a foreign key; what it *means* is settled in `packages/conformance`, which
+        // asks both.
+        const service = new DocumentService({ db: held.db, catalogue: { references: { orders: [{ field: ORDER_REFERENCE.field, target: ORDER_REFERENCE.target }] } } })
         await service.refresh()
         t.context = { held, service, skipped: false }
     } catch (failure) {
@@ -67,6 +81,35 @@ const without = (t: { context: Context; pass: (message?: string) => void }) => {
 
 const list = (service: DocumentService, collection: string, params: RpcGetListParams = {}) =>
     service.dataRequest('getList', [collection], params) as Promise<RpcGetListResult>
+
+test('a declared reference resolves, and means what it means over SQL', async (t) => {
+    if (without(t)) return
+    const { service } = t.context as Required<Context>
+
+    const orders = service.dataResources().find((resource) => resource.path[0] === 'orders')
+    const declared = orders?.references?.find((reference) => reference.field === ORDER_REFERENCE.field)
+    t.truthy(declared, 'what the deployment declared is what the resource publishes')
+    t.deepEqual([...(declared?.target ?? [])], [ORDER_REFERENCE.target])
+
+    // The same check the SQL suite makes, against data rather than against the declaration: take
+    // the ids out of a page and ask the target for them. Over Mongo the id is `_id` and over SQL it
+    // is a column, which is exactly the difference that could make one word mean two things.
+    const page = await list(service, 'orders')
+    const ids = [...new Set(page.data.map((row) => String((row as Record<string, unknown>)[ORDER_REFERENCE.field])))]
+    const targets = (await service.dataRequest('getMany', [ORDER_REFERENCE.target], { ids } as never)) as RpcGetManyResult
+    t.is(referencesResolve(ORDER_REFERENCE.field, page.data, targets.ids), undefined, 'every id it holds names a document of customers')
+})
+
+test('a reference to a collection this node does not serve is not published', async (t) => {
+    if (without(t)) return
+    const { held } = t.context as Required<Context>
+
+    // Dropped rather than published pointing at nothing, which is the one way a declared reference
+    // can be wrong that a derived one cannot: a foreign key names a table the database has.
+    const narrow = new DocumentService({ db: held.db, catalogue: { references: { orders: [{ field: 'customer_id', target: 'nowhere' }] } } })
+    await narrow.refresh()
+    t.is(narrow.dataResources().find((resource) => resource.path[0] === 'orders')?.references, undefined)
+})
 
 test('it answers the shared conformance questions the way every other backend does', async (t) => {
     if (without(t)) return
