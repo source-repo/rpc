@@ -358,6 +358,14 @@ h1 {
     border-top: 1px solid var(--line);
 }
 
+/* What a row refers to, named. Quiet and beside the row rather than in it: the id is already
+   there, and this is the sentence it stands for. */
+.row-reference {
+    margin-left: 10px;
+    font-size: 12px;
+    white-space: nowrap;
+}
+
 /* A named group of a row's fields. The heading is small and quiet: it is a label on a relationship
    the node stated, not a section of a document. */
 .field-group + .field-group {

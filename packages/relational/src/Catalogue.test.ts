@@ -1,7 +1,9 @@
 import test from 'ava'
+import { Kysely, sql } from 'kysely'
 import { classify, readCatalogue, resourceOf } from './Catalogue.js'
 import { fixture } from './Fixture.js'
-import { flavours } from './Flavour.js'
+import { flavours, type RelationalDatabase } from './Flavour.js'
+import { NodeSqliteDialect } from './NodeSqlite.js'
 
 /**
  * What the database says it holds, and what this node will admit to serving.
@@ -99,4 +101,75 @@ test('type names reduce to kinds across dialect spellings', (t) => {
     t.is(classify('geography(Point,4326)'), 'unknown', 'and not a number, though "point" contains "int"')
     t.is(classify('interval'), 'unknown', 'a duration is not a number off the wire')
     t.is(classify('bit varying'), 'unknown')
+})
+
+/**
+ * A schema whose foreign keys are each a different answer, built here rather than added to the
+ * shared fixture so that forty-three assertions about that one do not move to test this.
+ */
+const referring = async () => {
+    const db = new Kysely<RelationalDatabase>({ dialect: new NodeSqliteDialect({ filename: ':memory:' }) })
+    await sql`create table customers (id integer primary key, name text not null unique)`.execute(db)
+    await sql`create table notes (body text)`.execute(db)
+    await sql`create table tags (customer_id integer not null, tag text not null, primary key (customer_id, tag))`.execute(db)
+    await sql`create table orders (
+        id integer primary key,
+        customer_id integer not null references customers(id),
+        parent_id integer references orders(id),
+        by_name text references customers(name),
+        note_body text references notes(body),
+        tag_customer integer,
+        tag_name text,
+        foreign key (tag_customer, tag_name) references tags(customer_id, tag)
+    )`.execute(db)
+    return db
+}
+
+test('a foreign key becomes a reference only where it can keep the promise one makes', async (t) => {
+    const catalogue = await readCatalogue(await referring(), flavours.sqlite)
+    const orders = catalogue.byName.get('orders')!
+
+    t.deepEqual(
+        [...orders.references].sort((a, b) => a.field.localeCompare(b.field)),
+        [
+            // A tree in a table is an ordinary shape, and following one is meaningful.
+            { field: 'customer_id', target: 'customers' },
+            { field: 'parent_id', target: 'orders' }
+        ],
+        'the single-column keys pointing at a served table\'s id, and those only'
+    )
+
+    // Each of the four that were dropped, named, because "it did not appear" is the same symptom
+    // for all of them and they are dropped for different reasons.
+    const fields = orders.references.map((reference) => reference.field)
+    t.false(fields.includes('by_name'), 'a key pointing at a unique column that is not the id: getMany takes ids')
+    t.false(fields.includes('note_body'), 'a key pointing at a table with no key, which this catalogue does not serve')
+    t.false(fields.includes('tag_customer'), 'half of a composite key, which is not a field holding an id')
+    t.false(fields.includes('tag_name'))
+
+    // And the resource carries them in the shape the contract declares, addressed the way `$data`
+    // addresses a resource rather than the way SQL names a table.
+    const resource = resourceOf(orders)
+    t.deepEqual(resource.references?.find((reference) => reference.field === 'customer_id'), { field: 'customer_id', target: ['customers'] })
+    t.is(resourceOf(catalogue.byName.get('customers')!).references, undefined, 'a table that refers to nothing declares nothing')
+})
+
+test('a table can be told which column names a row, and is not guessed at', async (t) => {
+    const db = await referring()
+    const named = await readCatalogue(db, flavours.sqlite, { names: { customers: 'name' } })
+    t.is(resourceOf(named.byName.get('customers')!).presentation?.representation, 'name')
+    t.is(resourceOf(named.byName.get('orders')!).presentation?.representation, undefined, 'and a table nobody spoke for says nothing')
+
+    // A column the table does not have is dropped, not honoured approximately - a representation
+    // naming nothing would put an empty sentence wherever a name was promised.
+    const said: string[] = []
+    const warn = console.warn
+    console.warn = (...args: unknown[]) => said.push(args.join(' '))
+    try {
+        const wrong = await readCatalogue(await referring(), flavours.sqlite, { names: { customers: 'nickname' } })
+        t.is(resourceOf(wrong.byName.get('customers')!).presentation?.representation, undefined)
+    } finally {
+        console.warn = warn
+    }
+    t.regex(String(said.find((line) => line.includes('nickname'))), /named by their id instead/)
 })

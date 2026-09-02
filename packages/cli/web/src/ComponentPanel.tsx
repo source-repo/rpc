@@ -1,6 +1,6 @@
 import { RefObject, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { rpcComponent, type RpcCallOptions, type RpcComponentData, type RpcComponentLike, type RpcComponentStore, type RpcMethodSemantics, type RpcServer } from '@source-repo/rpc'
-import type { RpcDataCache } from '@source-repo/query'
+import type { RpcDataCache, RpcQuestion } from '@source-repo/query'
 import { Uncertain, useCommanding } from './command'
 import { SourceView, type SourceDocument } from './SourceView'
 import { overlayRefusal, type RpcSourceBinding, type RpcSourceCatalogue, type RpcActiveSourceIdentity } from '@source-repo/diagnostics/catalogue'
@@ -538,6 +538,21 @@ export const ComponentPanel = ({
      * and in time filtered and ordered - and all of that is `getList`'s already. The peer does the
      * collecting; this only asks.
      */
+    /**
+     * A set of ids of one resource, asked for at once.
+     *
+     * Built here for the reason every other question is: what a peer is called and how it is reached
+     * belongs to whoever holds the link. Sorted ids make two pages naming the same rows one question
+     * rather than two, which is the difference between a cache hit and a round trip.
+     */
+    const manyQuestion = (resource: readonly string[], ids: readonly string[]): RpcQuestion => ({
+        target: peer,
+        namespace,
+        method: 'getMany',
+        resource,
+        params: { ids: [...ids] }
+    })
+
     const scopedQuestion: ScopedQuestion = (resource, under, page, size, filter) => ({
         target: peer,
         namespace,
@@ -708,7 +723,7 @@ export const ComponentPanel = ({
                                 onPageSize={(size) => {
                                     setPageSize(size)
                                     rememberPageSize(size)
-                                }} objectAccess={objectAccess} cache={data} pageQuestion={pageQuestion} period={period} actionsFor={(path) => actionsFor(component, path, methods)} onAction={(action, id, resource, label) => pressAction(action, id, resource, label)} />
+                                }} objectAccess={objectAccess} cache={data} pageQuestion={pageQuestion} period={period} actionsFor={(path) => actionsFor(component, path, methods)} manyQuestion={manyQuestion} resourceAt={(path) => component.resources?.find((declared) => declared.path.length === path.length && declared.path.every((segment, at) => segment === path[at]))} onAction={(action, id, resource, label) => pressAction(action, id, resource, label)} />
                         )}
                         {/* Under the rows rather than over them: the table is what somebody is
                             reading while they decide, and a form that covered it would hide the

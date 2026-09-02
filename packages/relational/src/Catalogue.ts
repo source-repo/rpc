@@ -1,6 +1,6 @@
 import type { RpcDataMethod, RpcDataResource, TypeNode } from '@source-repo/rpc'
 import type { Kysely } from 'kysely'
-import type { RelationalDatabase, SqlFlavour } from './Flavour.js'
+import type { ForeignKeyPart, RelationalDatabase, SqlFlavour } from './Flavour.js'
 
 /**
  * What the database says it holds, read once and kept, because everything else here needs it.
@@ -59,6 +59,15 @@ export interface TableInfo {
     readonly key: readonly string[]
     /** The id column, present only where the key is exactly one column. */
     readonly id?: ColumnInfo
+    /**
+     * Which columns hold another served table's id, resolved against what this catalogue serves.
+     *
+     * Only the keys that can be stated truthfully survive - see `referencesOf` for the four that
+     * cannot - so this is a list a viewer may follow rather than a copy of the schema's own.
+     */
+    readonly references: readonly { readonly field: string; readonly target: string }[]
+    /** The column a person would recognise a row by, where the deployment declared one. */
+    readonly names?: string
 }
 
 /** A table that exists and is not served, and why - so its absence is reported rather than silent. */
@@ -97,6 +106,21 @@ export interface CatalogueOptions {
      * another, and nothing downstream can detect it.
      */
     readonly ids?: { readonly [table: string]: string }
+    /**
+     * Which column names a row of a table, by name - what a viewer shows instead of the id.
+     *
+     * Declared rather than guessed, and the guess was tempting: the first text column that is not
+     * the key is right surprisingly often. It is also wrong in exactly the places that matter - a
+     * `notes` column that happens to come first, a `status` before a `name`, a table whose useful
+     * label is its third column - and a wrong one is not a rendering glitch either. It puts the
+     * wrong sentence beside a row and beside every reference pointing at it, and a reader has no
+     * way to tell it is wrong. The database does not know which column a person would recognise;
+     * whoever deploys the node does.
+     *
+     * A column that is not the table's is dropped and said out loud, like a declared id that is not
+     * one of its columns.
+     */
+    readonly names?: { readonly [table: string]: string }
 }
 
 /**
@@ -114,6 +138,8 @@ export const readCatalogue = async (
     const metadata = await db.introspection.getTables()
     const tables: TableInfo[] = []
     const unserved: UnservedTable[] = []
+    /** What each table's constraints said, kept until every table is known and they can be resolved. */
+    const parts = new Map<string, readonly ForeignKeyPart[]>()
 
     for (const found of metadata) {
         if (options.schema !== undefined && found.schema !== undefined && found.schema !== options.schema) continue
@@ -135,6 +161,7 @@ export const readCatalogue = async (
         )
         const byName = new Map(columns.map((column) => [column.name, column]))
         const declared = options.ids?.[found.name]
+        const named = options.names?.[found.name]
         if (declared !== undefined && !byName.has(declared)) {
             unserved.push({ name: found.name, reason: `its id was declared as ${declared}, which is not one of its columns` })
             continue
@@ -184,11 +211,25 @@ export const readCatalogue = async (
             columns: withId,
             byName: new Map(withId.map((column) => [column.name, column])),
             key,
-            id
+            id,
+            // Dropped rather than honoured approximately, the same way a declared id that is not a
+            // column is: a representation naming nothing would put an empty sentence where a name
+            // was promised, on this table and on every reference pointing at it.
+            ...(named !== undefined && byName.has(named) ? { names: named } : {}),
+            // Filled below: a reference can only be resolved once it is known which tables survived
+            // this loop, and the target of one may be a table that has not been reached yet.
+            references: []
         })
+        if (named !== undefined && !byName.has(named))
+            console.warn(`source-rpc: ${found.name} was given '${named}' as the column that names a row, which it does not have. Rows will be named by their id instead.`)
+        // A view has no constraints to report, and asking would spend a query to be told nothing -
+        // the same reason its key is not asked for above.
+        if (!found.isView) parts.set(found.name, await flavour.foreignKeys(db, found.name, options.schema ?? found.schema))
     }
 
-    return { tables, unserved, byName: new Map(tables.map((table) => [table.name, table])) }
+    const byName = new Map(tables.map((table) => [table.name, table]))
+    const served = tables.map((table) => ({ ...table, references: referencesOf(parts.get(table.name) ?? [], byName) }))
+    return { tables: served, unserved, byName: new Map(served.map((table) => [table.name, table])) }
 }
 
 /**
@@ -293,6 +334,42 @@ export const wireRow = (table: TableInfo, row: Record<string, unknown>): Record<
  * id under another name. The verb earns its place where a resource's detail is *richer* than its
  * rows - twenty fields behind the four worth tabulating - which is not the shape a table has.
  */
+/**
+ * Which of a table's foreign keys can be published as references, and which cannot.
+ *
+ * A reference this package declares is a promise that `getMany` on the target will answer for the
+ * value in that column. Four kinds of key cannot keep it, and each is dropped in silence rather
+ * than approximated, because a reference that resolves to nothing is worse for a reader than a
+ * plain column of ids:
+ *
+ * - **Composite.** Two columns naming two columns is not a field holding an id, and the contract
+ *   has no shape for it. It waits for the same thing a composite primary key waits for.
+ * - **A target this catalogue does not serve.** The table may be filtered out by `tables`, or
+ *   unserved for having no single-column key. Either way there is nothing to follow it to.
+ * - **A target column that is not the target's id.** `getMany` takes ids, so a key pointing at some
+ *   other unique column is a lookup nothing here can perform - which is exactly why `RpcDataReference`
+ *   has no `targetField`.
+ * - **A self-reference**, which is kept rather than dropped: a tree in a table is an ordinary shape
+ *   and following one is meaningful. It is named here only because it looks like a mistake.
+ */
+export const referencesOf = (parts: readonly ForeignKeyPart[], byName: ReadonlyMap<string, TableInfo>): readonly { field: string; target: string }[] => {
+    const constraints = new Map<string, ForeignKeyPart[]>()
+    for (const part of parts) constraints.set(part.constraint, [...(constraints.get(part.constraint) ?? []), part])
+
+    const references: { field: string; target: string }[] = []
+    for (const columns of constraints.values()) {
+        if (columns.length !== 1) continue
+        const [only] = columns
+        const target = byName.get(only.targetTable)
+        if (!target?.id) continue
+        // SQLite reports no target column when the constraint named none, which it reads as the
+        // target's primary key - so an empty one is that key rather than a key that failed to match.
+        if (only.targetColumn !== '' && only.targetColumn !== target.id.name) continue
+        references.push({ field: only.column, target: target.name })
+    }
+    return references
+}
+
 const VERBS: readonly RpcDataMethod[] = ['getList', 'getMany', 'getManyReference']
 
 /**
@@ -307,8 +384,12 @@ export const resourceOf = (table: TableInfo): RpcDataResource => ({
     path: [table.name],
     verbs: VERBS,
     shape: 'list',
+    ...(table.names ? { presentation: { representation: table.names } } : {}),
     row: {
         kind: 'object',
         fields: Object.fromEntries(table.columns.map((column) => [column.name, { type: typeOfColumn(column) }]))
-    }
+    },
+    // The same argument as the row type, one relationship up: the database already knows that
+    // `orders.customer_id` is a `customers`, so nothing here is written twice and nothing drifts.
+    ...(table.references.length ? { references: table.references.map((reference) => ({ field: reference.field, target: [reference.target] })) } : {})
 })

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
-import { RpcServer, TransportEvent, type RpcGetListParams, type RpcGetOneParams, type RpcGetOneResult, type RpcGetListResult, type RpcSchema } from '@source-repo/rpc'
+import { RpcServer, TransportEvent, type RpcGetListParams, type RpcGetManyParams, type RpcGetOneParams, type RpcGetOneResult, type RpcGetListResult, type RpcGetManyResult, type RpcSchema } from '@source-repo/rpc'
 import { RpcDataCache, rpcOnlineFrom } from '@source-repo/query'
 import { RpcOperations } from '@source-repo/rpc'
 import { pageName } from './peerName'
@@ -75,19 +75,21 @@ const useConsole = () => {
                 ask: async ({ target, namespace, method, resource, params }) => {
                     const link = peer.current
                     if (!link) throw new Error('no link')
-                    // Three verbs, and the list is still an allow-list rather than a pass-through.
-                    // `getList` is a page of a collection, `getChildren` is one branch of a tree and
-                    // `getOne` is a single row opened on its own; the console can draw all three.
-                    // The others stay refused out loud, because serving a `getMany` as a `getList`
-                    // would answer the wrong question with a straight face - and the verb is passed
-                    // through rather than re-stated, so a question asking for a branch cannot be
-                    // answered with a page.
-                    if (method !== 'getList' && method !== 'getChildren' && method !== 'getOne') throw new Error(`the console asks for lists, tree branches and single rows; ${method} is not wired here`)
+    // Four verbs, and the list is still an allow-list rather than a pass-through. `getList` is a
+                    // page of a collection, `getChildren` is one branch of a tree, `getOne` is a single row
+                    // opened on its own, and `getMany` is the ids a page of rows referred to - which is what
+                    // makes fifty referenced customers one round trip instead of fifty. `getManyReference`
+                    // stays out until something draws the reverse side. The others stay refused out loud,
+                    // because serving a `getMany` as a `getList` would answer the wrong question with a
+                    // straight face - and the verb is passed through rather than re-stated, so a question
+                    // asking for a branch cannot be answered with a page.
+                    if (method !== 'getList' && method !== 'getChildren' && method !== 'getOne' && method !== 'getMany')
+                        throw new Error(`the console asks for lists, tree branches, single rows and batches of ids; ${method} is not wired here`)
                     const proxy = await link.proxy<DataProxy>(namespace, target)
                     // Declared, because it is true and because it is what keeps the operations tray
                     // readable: `$data` reads and answers, so a page of rows is not a row an
                     // operator has to look at twice. The claim travels nowhere and decides nothing.
-                    return proxy.$with({ semantics: 'query' }).$data(method, resource, params as RpcGetListParams | RpcGetOneParams)
+                    return proxy.$with({ semantics: 'query' }).$data(method, resource, params as RpcGetListParams | RpcGetOneParams | RpcGetManyParams)
                 }
             }),
         []
@@ -255,10 +257,10 @@ const download = (rows: unknown[], filename: string) => {
  */
 type DataProxy = {
     $data(
-        method: 'getList' | 'getChildren' | 'getOne',
+        method: 'getList' | 'getChildren' | 'getOne' | 'getMany',
         resource: readonly string[],
-        params?: RpcGetListParams | RpcGetOneParams
-    ): Promise<RpcGetListResult | RpcGetOneResult>
+        params?: RpcGetListParams | RpcGetOneParams | RpcGetManyParams
+    ): Promise<RpcGetListResult | RpcGetOneResult | RpcGetManyResult>
 }
 
 /** Which of the side panel's three views is showing. */

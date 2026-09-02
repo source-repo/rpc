@@ -467,6 +467,32 @@ export interface RpcPresentationSection {
     readonly fields: readonly string[]
 }
 
+/**
+ * One field of a row that names a row of another resource.
+ *
+ * The fact a viewer cannot work out and a store already knows: `customerId` is not merely a string,
+ * it is a `customers`. From it a viewer draws the customer's name instead of `38271`, makes it
+ * openable, batches fifty of them into one `getMany` rather than fifty round trips, and offers the
+ * reverse side through `getManyReference` - and MCP reads the same declaration to navigate without
+ * a graph protocol underneath it.
+ *
+ * ## Why there is no `targetField`
+ *
+ * Because `getMany` takes ids. A reference whose field held some *other* column of the target would
+ * need a lookup this contract cannot express, and declaring it before that exists would be a
+ * promise no provider could keep - the shape of an unbuilt feature, advertised. A key that is not
+ * the target's row id waits until there is a verb that can follow it.
+ *
+ * So the rule is exact: **`field` holds the target's row id**. A provider that cannot say that
+ * truthfully declares nothing, which is always available and always honest.
+ */
+export interface RpcDataReference {
+    /** The field of this row that holds the id. A path, checked against the row like the hints are. */
+    readonly field: string
+    /** The resource whose row that id names, by the path `$data` addresses it with. */
+    readonly target: RpcResource
+}
+
 export interface RpcDataPresentationHint {
     /**
      * Dot paths into the declared row type, in the order they should first appear.
@@ -633,6 +659,14 @@ export interface RpcDataResource {
      * which is why the form shows the bound argument rather than sending it out of sight.
      */
     readonly actions?: readonly RpcDataAction[]
+    /**
+     * Which of this row's fields name rows of other resources.
+     *
+     * Adds no capability, exactly as `actions` adds none: `getMany` and `getManyReference` have been
+     * served since resources existed and were reachable by anybody who already knew what referred to
+     * what. This carries the knowing.
+     */
+    readonly references?: readonly RpcDataReference[]
 }
 
 /**
@@ -795,7 +829,34 @@ const warnedColumns = new Set<string>()
 export const describedResources = (instance: unknown, owner: string, types?: RpcSchema['types']): readonly RpcDataResource[] => {
     const resources = (instance as RpcDataResources).dataResources()
     for (const resource of resources) checkPresentation(owner, resource, types)
+    checkReferences(owner, resources, types)
     return resources
+}
+
+/**
+ * A reference has two halves that can be wrong, and they are wrong in different ways.
+ *
+ * A field the row does not have is the same mistake a presentation hint makes, and costs the same:
+ * nothing is drawn. A **target nobody serves** is worse and is worth its own sentence - the row
+ * carries the id, the id is right, and a viewer following it asks a resource that is not there. It
+ * is checkable here and nowhere else, because this is the one place every resource of a component
+ * is in hand at once.
+ */
+const checkReferences = (owner: string, resources: readonly RpcDataResource[], types?: RpcSchema['types']): void => {
+    const served = new Set(resources.map((resource) => resource.path.join('.')))
+    for (const resource of resources)
+        for (const reference of resource.references ?? []) {
+            if (resource.row) complain(owner, resource, types, reference.field, 'references', 'The reference is not drawn; the field is still shown as whatever it holds.')
+            const target = reference.target.join('.')
+            if (served.has(target)) continue
+            const key = `${owner}\u0000${resource.path.join('.')}\u0000references\u0000target\u0000${target}`
+            if (warnedColumns.has(key)) continue
+            warnedColumns.add(key)
+            console.warn(
+                `source-rpc: ${owner}.${resource.path.join('.')} says '${reference.field}' refers to '${target}', ` +
+                    'which this component does not serve. The reference is not drawn: a viewer following it would ask for a resource that is not here.'
+            )
+        }
 }
 
 /**

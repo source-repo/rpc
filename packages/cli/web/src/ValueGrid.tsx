@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { matchesFilter, type RpcFilter, type RpcSort } from '@source-repo/rpc'
 import type { RpcDataCache, RpcFreshness, RpcQuestion } from '@source-repo/query'
 import { leavesUnder, treeResourceAt, typeAt, type ScopeLeaf } from './scope'
+import type { DescribedResource } from './types'
 import { staticSource, ValueTree, type EditAffordance, type ValueSource } from './ValueTree'
 import { compileFilter } from './filter'
 import { pageControls } from './paging'
@@ -10,6 +11,7 @@ import { BranchTable, ResourceTree, type BranchQuestion, type RowQuestion, type 
 import { Pager } from './Pager'
 import { actionsOn } from './scope'
 import { RecordPanel } from './RecordPanel'
+import { RowReference } from './references'
 import { ObjectPanel, type ObjectAccess, type Ref, type Where } from './ObjectPanel'
 import { useDebounced, useWaitedSeconds } from './timing'
 import type { DescribedAction, DescribedComponent, TypeNode } from './types'
@@ -75,6 +77,9 @@ const Collection = ({
     edit,
     filter,
     actions,
+    references,
+    resourceAt,
+    manyQuestion,
     onAction
 }: {
     leaf: ScopeLeaf
@@ -89,6 +94,12 @@ const Collection = ({
     filter?: RpcFilter
     /** What the component says may be done to a row of this resource, already checked to exist. */
     actions?: DescribedAction[]
+    /** Which of this row's fields name rows of another resource, as the resource declared them. */
+    references?: readonly { field: string; target: readonly string[] }[]
+    /** The resource a reference points at, for the name it says its rows are called by. */
+    resourceAt?: (path: readonly string[]) => DescribedResource | undefined
+    /** How to ask a resource for a set of ids at once. */
+    manyQuestion: (resource: readonly string[], ids: readonly string[]) => RpcQuestion
     /** The resource travels with the call: where the button lives is what the method touched. */
     onAction?: (action: DescribedAction, id: string, resource: readonly string[], label?: string) => void
 }) => {
@@ -229,9 +240,25 @@ const Collection = ({
                 shows them and only an explicit `branches` does not. */}
             {data?.ids.map((id, index) => {
                 const offered = actionsOn(actions, { branch: false, kind: (data.data?.[index] as { kind?: unknown } | undefined)?.kind })
+                const row = data.data?.[index]
                 return (
                     <div className="collection-row" key={id}>
                         <ValueTree name={`${label}.${id}`} source={source} type={values} types={types} path={[...leaf.path, id]} edit={edit} depth={1} />
+                        {/* What the ids in this row stand for, where the resource said what they
+                            are. Beside the row rather than inside it: the value tree draws props
+                            and state as well, and a reference is a fact about a data resource. */}
+                        {references?.map((reference) => (
+                            <RowReference
+                                key={reference.field}
+                                cache={cache}
+                                rows={data.data ?? []}
+                                row={row}
+                                reference={reference}
+                                target={resourceAt?.(reference.target)}
+                                manyQuestion={manyQuestion}
+                                period={period}
+                            />
+                        ))}
                         {/* Named calls, not verbs of ours: what is committed is the component's own
                             method, and the button exists because the component said that method is
                             about this row. Same rule as an editor drawn from `sets`, one level up. */}
@@ -270,6 +297,8 @@ export const ValueGrid = ({
     preview = true,
     onPreview,
     scopedQuestion,
+    manyQuestion,
+    resourceAt,
     onPageSize,
     actionsFor,
     onAction,
@@ -297,6 +326,15 @@ export const ValueGrid = ({
     /** How to ask for every leaf beneath a branch, where a resource answers for a subtree. */
     scopedQuestion?: ScopedQuestion
     onPageSize?: (size: number) => void
+    /**
+     * How to ask a resource for a set of ids at once.
+     *
+     * `getMany` and not fifty `getOne`s, which is the whole reason the verb exists: a page of rows
+     * carrying customer ids resolves in one round trip.
+     */
+    manyQuestion: (resource: readonly string[], ids: readonly string[]) => RpcQuestion
+    /** A resource of this component by path, for what a reference points at. */
+    resourceAt?: (path: readonly string[]) => DescribedResource | undefined
     /** What may be done to a row of the resource at this path, if anything. */
     actionsFor: (path: string[]) => DescribedAction[] | undefined
     onAction?: (action: DescribedAction, id: string, resource: readonly string[], label?: string) => void
@@ -507,6 +545,9 @@ export const ValueGrid = ({
                     types={types}
                     cache={cache}
                     pageQuestion={pageQuestion}
+                    manyQuestion={manyQuestion}
+                    references={resourceAt?.(leaf.path)?.references}
+                    resourceAt={resourceAt}
                     period={period}
                     pageSize={pageSize}
                     edit={edit}

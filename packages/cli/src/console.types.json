@@ -1608,6 +1608,16 @@
             }
           },
           "optional": true
+        },
+        "references": {
+          "type": {
+            "kind": "array",
+            "items": {
+              "kind": "ref",
+              "name": "RpcDataReference"
+            }
+          },
+          "optional": true
         }
       }
     },
@@ -1750,6 +1760,24 @@
             }
           },
           "optional": true
+        }
+      }
+    },
+    "RpcDataReference": {
+      "kind": "object",
+      "fields": {
+        "field": {
+          "type": {
+            "kind": "string"
+          }
+        },
+        "target": {
+          "type": {
+            "kind": "array",
+            "items": {
+              "kind": "string"
+            }
+          }
         }
       }
     },

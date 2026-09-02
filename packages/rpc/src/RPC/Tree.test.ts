@@ -148,6 +148,40 @@ class Renamed extends RpcComponent<{ title: string }, { rows: number }> {
     }
 }
 
+/** One component whose references are right, and two ways of being wrong. */
+@rpcNamespace('referring')
+class Referring extends RpcComponent<{ title: string }, { rows: number }> {
+    constructor() {
+        super({ title: 'Referring' }, { rows: 0 })
+    }
+
+    @rpc({ semantics: 'query', effect: 'observe' })
+    ping(): string {
+        return 'here'
+    }
+
+    dataResources(): readonly RpcDataResource[] {
+        const row = { kind: 'object' as const, fields: { id: { type: { kind: 'string' as const } }, ownerId: { type: { kind: 'string' as const } } } }
+        return [
+            { path: ['people'], verbs: ['getList', 'getMany'], row },
+            {
+                path: ['orders'],
+                verbs: ['getList'],
+                row,
+                references: [
+                    { field: 'ownerId', target: ['people'] },
+                    { field: 'nosuchfield', target: ['people'] },
+                    { field: 'ownerId', target: ['ghosts'] }
+                ]
+            }
+        ]
+    }
+
+    dataRequest(): RpcGetChildrenResult {
+        return { data: [], ids: [], hasChildren: [], total: 0, epoch: run, revision: 1 }
+    }
+}
+
 /** One resource naming a representation that is there and one that is not. */
 @rpcNamespace('named')
 class Named extends RpcComponent<{ title: string }, { rows: number }> {
@@ -375,6 +409,29 @@ test.serial('a representation that names nothing is reported, and says what it c
     // A field in two groups is a different mistake from a field that is not there, and it is the
     // one a reader would see: the same field twice, with no way to tell which is which.
     t.regex(String(sections.find((line) => line.includes("'title'"))), /only be drawn once/)
+})
+
+test.serial('a reference is checked at both ends, and a target nobody serves is the louder one', async (t) => {
+    const said: string[] = []
+    const warn = console.warn
+    console.warn = (...args: unknown[]) => said.push(args.join(' '))
+    try {
+        const { client } = await linked(t, 4982, new Referring(), 'referring')
+        const introspection = await client.proxy<{ describe(): Promise<{ namespaces: unknown[] }> }>('msgrpc')
+        await introspection.describe()
+    } finally {
+        console.warn = warn
+    }
+
+    // Precisely: the *field* check did not fire for it. The bad-target line below names `ownerId`
+    // too, because that is the field whose target is missing.
+    t.false(said.some((line) => line.includes("names 'ownerId' in presentation.references")), 'a reference whose field and target are both real says nothing')
+    t.regex(String(said.find((line) => line.includes("'nosuchfield'"))), /reference is not drawn/)
+    // The worse of the two, and the one only this check can see: the id is right, the field is
+    // right, and a viewer following it asks a resource nobody is serving.
+    const dead = String(said.find((line) => line.includes("refers to 'ghosts'")))
+    t.regex(dead, /does not serve/)
+    t.regex(dead, /would ask for a resource that is not here/)
 })
 
 test('fields are arranged into the groups the resource declared, and nothing is lost doing it', (t) => {

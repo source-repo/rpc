@@ -69,6 +69,15 @@ export interface SqlFlavour {
      */
     primaryKey(db: Kysely<RelationalDatabase>, table: string, schema?: string): Promise<readonly string[]>
     /**
+     * Which of a table's columns hold another table's key, and which table and column that is.
+     *
+     * The one piece of a relational schema that a generic viewer cannot infer and the database has
+     * always known: `orders.customer_id` is a `customers`. Composite keys come back as several rows
+     * of one constraint, and it is the catalogue rather than a flavour that decides what to do about
+     * that - a flavour answers what the database says.
+     */
+    foreignKeys(db: Kysely<RelationalDatabase>, table: string, schema?: string): Promise<readonly ForeignKeyPart[]>
+    /**
      * Whether a row can be held against other writers for the length of a transaction, and how.
      *
      * The third thing that changes an answer, and it only appears once something writes. A
@@ -162,6 +171,14 @@ export const sqliteFlavour: SqlFlavour = {
         }>`select "name" from pragma_table_info(${table}) where "pk" > 0 order by "pk"`.execute(db)
         return found.rows.map((row) => row.name)
     },
+    foreignKeys: async (db, table) => {
+        // `to` is null where the constraint names no target column, which SQLite reads as "the
+        // target's primary key" - so the catalogue resolves it rather than this dropping the key.
+        const found = await sql<{ id: number; from: string; table: string; to: string | null }>`
+            select "id", "from", "table", "to" from pragma_foreign_key_list(${table}) order by "id", "seq"
+        `.execute(db)
+        return found.rows.map((row) => ({ constraint: `fk:${row.id}`, column: row.from, targetTable: row.table, targetColumn: row.to ?? '' }))
+    },
     rowLock: 'serialised-connection',
     insert: (db, table, values) => insertThenRead(db, table, values)
 }
@@ -180,6 +197,7 @@ export const postgresFlavour: SqlFlavour = {
     // rather than with whatever locale this database happened to be created under.
     orderTerms: (column, order) => [collated(column, order, '"C"')],
     primaryKey: (db, table, schema) => informationSchemaKey(db, table, schema, sql`current_schema()`),
+    foreignKeys: (db, table, schema) => informationSchemaForeignKeys(db, table, schema, sql`current_schema()`),
     rowLock: 'for-update',
     // `returning` names the row in the insert itself, so there is no second statement and no window
     // in which something else could have inserted between the two. A caller-supplied id comes back
@@ -216,6 +234,7 @@ export const mysqlFlavour: SqlFlavour = {
         return column.nullable ? [sql`(${id(column.name)} is null) ${direction(order)}`, term] : [term]
     },
     primaryKey: (db, table, schema) => informationSchemaKey(db, table, schema, sql`database()`),
+    foreignKeys: (db, table, schema) => informationSchemaForeignKeys(db, table, schema, sql`database()`),
     rowLock: 'for-update',
     insert: (db, table, values) => insertThenRead(db, table, values)
 }
@@ -275,6 +294,52 @@ const informationSchemaKey = async (
         order by k.ordinal_position
     `.execute(db)
     return found.rows.map((row) => row.name)
+}
+
+/**
+ * One column of one foreign key constraint, in the order the constraint declares it.
+ *
+ * Per *column* rather than per constraint, because that is the shape all three databases answer in
+ * and joining them back up is one group-by that only the catalogue needs.
+ */
+export interface ForeignKeyPart {
+    /** The constraint this part belongs to, so a composite key can be recognised as one. */
+    readonly constraint: string
+    readonly column: string
+    readonly targetTable: string
+    readonly targetColumn: string
+}
+
+const informationSchemaForeignKeys = async (
+    db: Kysely<RelationalDatabase>,
+    table: string,
+    schema: string | undefined,
+    currentSchema: Expression<string>
+): Promise<readonly ForeignKeyPart[]> => {
+    const within = schema === undefined ? currentSchema : sql`${schema}`
+    // `constraint_column_usage` is the standard join to the *referenced* side, and it is joined on
+    // ordinal position so a composite key's parts line up with the columns they point at rather
+    // than with whichever row came back first.
+    const found = await sql<{ constraint: string; column: string; targetTable: string; targetColumn: string }>`
+        select t.constraint_name as "constraint",
+               k.column_name as "column",
+               r.table_name as "targetTable",
+               r.column_name as "targetColumn"
+        from information_schema.table_constraints t
+        join information_schema.key_column_usage k
+            on k.constraint_name = t.constraint_name and k.table_schema = t.table_schema
+        join information_schema.key_column_usage r
+            on r.constraint_name = (
+                select unique_constraint_name from information_schema.referential_constraints
+                where constraint_name = t.constraint_name and constraint_schema = t.table_schema
+            )
+            and r.ordinal_position = k.ordinal_position
+        where t.constraint_type = 'FOREIGN KEY'
+            and t.table_name = ${table}
+            and t.table_schema = ${within}
+        order by t.constraint_name, k.ordinal_position
+    `.execute(db)
+    return found.rows
 }
 
 /** The flavours this package knows, by the name a caller configures. */

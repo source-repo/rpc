@@ -74,6 +74,8 @@ export interface DescribedResource {
     shape?: 'list' | 'tree'
     label?: string
     actions?: DescribedAction[]
+    /** Which fields name rows of another resource, so a viewer can draw the name and follow it. */
+    references?: { field: string; target: string[] }[]
     /**
      * Which columns to draw first. Advice, not a schema: a path the row does not have is not drawn,
      * and every other field stays readable - this decides what is shown first, never what may be.
