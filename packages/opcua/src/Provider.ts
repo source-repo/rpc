@@ -75,6 +75,15 @@ export interface OpcUaProviderOptions {
     readonly identity?: RpcRef
     readonly childrenProbe?: ChildrenProbe
     /**
+     * Whether to read each Variable's engineering unit alongside its value. On unless turned off.
+     *
+     * Two batched round trips per page - one Browse for the `EngineeringUnits` property and one Read
+     * over the ones that exist - which is the same order as the value read beside it. Off is for a
+     * server whose properties are expensive or whose units nobody wants; a column of numbers with no
+     * units is otherwise what a plant screen shows.
+     */
+    readonly readUnits?: boolean
+    /**
      * How many Browse requests one scoped page may spend before it gives up and says `hasMore`.
      *
      * A subtree listing walks until the page is full and stops, which is bounded by the page and not
@@ -243,7 +252,7 @@ export class OpcUaAspectProvider extends AspectProvider<OpcUaProviderProps, OpcU
                 // `path` first, because a list scoped to a branch is drawn from everything beneath
                 // it: `Running` appears once per device and the name alone cannot tell them apart.
                 // It is the column that says which row is which, so it is the one to read first.
-                defaultColumns: ['path', 'title', 'value', 'nodeClass'],
+                defaultColumns: ['path', 'title', 'value', 'unit', 'nodeClass'],
                 actions: WRITE
             },
             // The arrangements the deployment supplied. They are offered whether or not an index
@@ -433,6 +442,64 @@ export class OpcUaAspectProvider extends AspectProvider<OpcUaProviderProps, OpcU
             if (held?.statusCode?.isGood?.() === false) answers[at] = `(${held.statusCode.name ?? 'bad'})`
             else if (held?.value?.value !== undefined && held.value.value !== null) answers[at] = String(held.value.value)
         }
+        return answers
+    }
+
+    /**
+     * The engineering unit each Variable declares, where it declares one.
+     *
+     * **A unit is a fact about the node, not about the field.** That is why it arrives as a value on
+     * the row rather than as metadata on the row's type: one address space has `degC` on a
+     * temperature and `rpm` on a speed and nothing at all on a boolean, and they are all the same
+     * `value` field of the same declared row. A format on the type could only say something true of
+     * every row at once, and there is nothing true of every row here.
+     *
+     * Two round trips per page, batched the way everything else in this file is: one Browse over
+     * every Variable at once to find the `EngineeringUnits` property, then one Read over the
+     * properties that exist. Not one per row - that is the fan-out this whole design avoids.
+     *
+     * On by default, and `readUnits: false` turns it off. The costlier and correct default is the
+     * same choice `childrenProbe` makes: a column of numbers with no units is a plant screen that
+     * answers a question nobody asked, and the cost is bounded by the page size, which the reader
+     * already controls.
+     */
+    private async unitsFor(nodes: readonly { readonly session: string; readonly nodeClass: string }[]): Promise<(string | undefined)[]> {
+        const none: (string | undefined)[] = nodes.map(() => undefined)
+        if (this.options.readUnits === false) return none
+        const wanted = nodes.map((node, at) => (node.nodeClass === 'Variable' ? at : -1)).filter((at) => at >= 0)
+        if (!wanted.length) return none
+
+        const session = this.connected()
+        const browsed = await session.browse(
+            wanted.map((at) => ({ nodeId: nodes[at].session, browseDirection: BrowseDirection.Forward, referenceTypeId: 'HasProperty', includeSubtypes: true, resultMask: 63 }))
+        )
+        this.browses += 1
+
+        const properties: { at: number; nodeId: string }[] = []
+        browsed.forEach((result, which) => {
+            const found = (result.references ?? []).find((reference) => String(reference.browseName?.name ?? '') === 'EngineeringUnits')
+            if (found) properties.push({ at: wanted[which], nodeId: found.nodeId.toString() })
+        })
+        if (!properties.length) return none
+
+        const read = await session.read(properties.map((one) => ({ nodeId: one.nodeId, attributeId: AttributeIds.Value })))
+        const answers: (string | undefined)[] = [...none]
+        properties.forEach((one, which) => {
+            const held = read[which]
+            if (held?.statusCode?.isGood?.() === false) return
+            /**
+             * `EUInformation`, whose `displayName` is the short form a person reads - `°C` rather
+             * than the UNECE code or the namespace URI beside it.
+             *
+             * A bare string is accepted as well, and that is tolerance rather than sloppiness: the
+             * specification says this property is `EUInformation`, and servers publish a plain
+             * string anyway. Refusing would mean showing no unit at all for a server that plainly
+             * stated one, which serves nobody - and there is nothing to mistake a string for here.
+             */
+            const held2 = held?.value?.value as { displayName?: { text?: string } } | string | undefined
+            const text = typeof held2 === 'string' ? held2 : held2?.displayName?.text
+            if (typeof text === 'string' && text) answers[one.at] = text
+        })
         return answers
     }
 
@@ -747,9 +814,14 @@ export class OpcUaAspectProvider extends AspectProvider<OpcUaProviderProps, OpcU
         // with the message written for an unreadable *tag* - so every method in an address space sat
         // in the list saying `(BadAttributeIdInvalid)`, which reads as a fault on a node that is
         // working perfectly. Only visible once a reader could ask for the methods on their own.
-        const values = await this.valuesFor(window.map((one) => ({ session: this.nodeOf(one.occurrenceId), nodeClass: String(one.fields?.nodeClass ?? 'Variable') })))
+        const reading = window.map((one) => ({ session: this.nodeOf(one.occurrenceId), nodeClass: String(one.fields?.nodeClass ?? 'Variable') }))
+        const [values, units] = await Promise.all([this.valuesFor(reading), this.unitsFor(reading)])
         return {
-            occurrences: window.map((one, at) => (values[at] !== undefined ? { ...one, fields: { ...one.fields, value: values[at] } } : one)),
+            occurrences: window.map((one, at) =>
+                values[at] !== undefined || units[at] !== undefined
+                    ? { ...one, fields: { ...one.fields, ...(values[at] !== undefined ? { value: values[at] } : {}), ...(units[at] !== undefined ? { unit: units[at] } : {}) } }
+                    : one
+            ),
             // More either because the walk filled the page and stopped, or because it ran out of
             // budget with the page unfilled - and a reader is owed the difference between those.
             hasMore: found.length > page.from + page.size || cut

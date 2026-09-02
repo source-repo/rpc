@@ -1,5 +1,5 @@
 import test from 'ava'
-import { DataType, OPCUAServer, StatusCodes, Variant } from 'node-opcua'
+import { DataType, OPCUAServer, StatusCodes, Variant, standardUnits } from 'node-opcua'
 import { IEC81346, isRefusal, type AspectLocation } from '@source-repo/aspects'
 import { OpcUaAspectProvider, portableNodeIdFromText, portableNodeIdToText, toSessionNodeId, type DerivedAspect, type PortableNodeId } from './index.js'
 import { RpcClient, RpcServer } from '@source-repo/rpc'
@@ -35,7 +35,7 @@ test.before(async () => {
     const line1 = namespace.addFolder(objects, { browseName: 'Line1', nodeId: `s=Line1` })
     namespace.addFolder(objects, { browseName: 'Line2', nodeId: `s=Line2` })
     const filler = namespace.addObject({ organizedBy: line1, browseName: 'Filler01', nodeId: `s=Filler01` })
-    namespace.addVariable({
+    const speed = namespace.addVariable({
         componentOf: filler,
         browseName: 'Speed',
         nodeId: `s=Filler01.Speed`,
@@ -72,6 +72,20 @@ test.before(async () => {
         }
     })
     namespace.addMethod(filler, { browseName: 'Recalibrate', nodeId: `s=Filler01.Recalibrate`, inputArguments: [], outputArguments: [] })
+
+    // What a real server says a number means. Ordinary on a plant, and the reason a unit cannot be
+    // metadata on the row type: this one is on Speed and there is none on Running, and both are the
+    // same `value` field of the same declared row.
+    namespace.addVariable({
+        // The node itself, not a node id spelled with a namespace index. The index is assigned by
+        // the server - this fixture's is 2, not 1 - so looking it up by string found nothing and
+        // attached the property to nobody, which reads exactly like a server that declares no unit.
+        propertyOf: speed,
+        browseName: 'EngineeringUnits',
+        nodeId: `s=Filler01.Speed.EU`,
+        dataType: 'EUInformation',
+        value: { get: () => new Variant({ dataType: DataType.ExtensionObject, value: standardUnits.degree_celsius }) }
+    })
 
     await server.start()
     endpointUrl = server.getEndpointUrl()!
@@ -534,6 +548,28 @@ test.serial('write is offered on the variables of every arrangement, and on noth
         [{ method: 'write', kinds: ['opcua.variable'] }],
         'declared for the kind it is about: an address space lists Methods beside Variables and both are leaves'
     )
+})
+
+test.serial('a number arrives with the unit its node declares, and a boolean with none', async (t) => {
+    const opcua = await connected(t)
+    const leaves = await underFiller(opcua)
+    const speed = leaves.find((row) => row.title === 'Speed')! as unknown as { unit?: string; value?: string }
+    const running = leaves.find((row) => row.title === 'Running')! as unknown as { unit?: string }
+
+    t.is(speed.unit, '°C', 'read from the EngineeringUnits property, batched with every other Variable on the page')
+    t.is(running.unit, undefined, 'and absent where the node declares none, rather than guessed from the value')
+
+    // The reason this is a field and not a format on the row type: one row has it and its sibling
+    // does not, and they are the same field of the same type.
+    t.truthy(speed.value)
+
+    const quiet = new OpcUaAspectProvider({ endpointUrl, identity: provider, readUnits: false })
+    await quiet.connect()
+    t.teardown(async () => {
+        await quiet.disconnect()
+    })
+    const withoutUnits = await underFiller(quiet)
+    t.is((withoutUnits.find((row) => row.title === 'Speed')! as unknown as { unit?: string }).unit, undefined, 'and the two round trips can be declined')
 })
 
 test.serial('a mixed list can be asked for one kind of thing, in either arrangement', async (t) => {
