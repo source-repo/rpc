@@ -466,3 +466,49 @@ reliable UI/View service
 ```
 
 The immediate implementation should remain experimental until the model has been exercised from at least the console and MCP Apps.
+
+---
+
+## Review
+
+*Appended after the note was read against the repository as it stands at `a9e6ca7`, and after the question it provoked: should a node's UI be part of `describe()`.*
+
+### Where it lands correctly
+
+The rule at its centre - *ViewSpec says what to compose, Source contracts say what those things mean* - is the same split `notes/generic-viewer.md` arrives at from the other direction, and the two were written without reference to each other, which is the best evidence either of them is right.
+
+The trust boundary states it better than that note does: **a component may render a writable value beautifully, but it does not decide that the value is writable.** That sentence should survive into whatever gets built.
+
+And the strongest idea here is the one furthest down: the model can compose the **lens** without ever receiving the data seen through it. Less disclosure, less context, no coupling between a model and live plant values, and the actions in the view remain ordinary operations under ordinary authorization. That property alone would justify the format; it deserves to be the argument rather than a closing observation.
+
+### Should the UI be part of `describe()`
+
+Yes, and it already is. `sets` puts an editor on a field. `actions`, with `appliesTo`, `kinds` and `confirm`, put buttons on rows and decide which rows get them. `shape`, `grouping`, `hasChildren` and `defaultChild` decide how a node is navigated. `defaultColumns` and `representation` decide what a row shows and what it is called. Every one of those is UI, every one is in `describe()`, and not one of them is a layout. The question was never whether a node may describe itself in terms a viewer uses - it is where that stops.
+
+The line is a test rather than a rule:
+
+> If a second, unrelated renderer would use the fact, it is **semantics** and belongs in `describe()`. If only a screen would use it, it is **composition** and belongs in a ViewSpec resource.
+
+Grouping passes it: the CLI groups its questions, MCP asks them in a sensible order, a browser draws an accordion. So `presentation.sections` is describe material, and it is real node knowledge - which four of two hundred fields belong together is not derivable from their types by anybody downstream. Semantic formats pass. References pass. *Gauge, top-left, three hundred pixels, second tab* fails, because nothing but a screen wants it.
+
+Two things follow that are worth stating separately.
+
+**`describe()` is bounded by what a node can speak for.** It describes itself. A view that composes three peers and links to a fourth is not a fact about any one of them, and a node offering one would be speaking for machines it does not own.
+
+**A node-attached default view is self-defeating.** If it is expressible in the node's own semantics it adds nothing that rendering those semantics would not, and if it is not expressible in them it is precisely the layout that must not travel. So the useful version of "nodes should describe themselves in a UI" is *more semantics in describe*, and the version to refuse is *a composition attached to a resource* - which would turn the presentation hint into the layout engine its own comment exists to keep it from becoming.
+
+### What I would change
+
+**Drop `conditional` from the primitives.** That is the seam where a declarative format becomes a programming language: a conditional wants comparisons, comparisons want expressions, expressions want iteration. This repository has already made the call once, for filters, and the reason applies unchanged - a bounded operator vocabulary because the thing evaluating it may be a small plant computer. If conditionality ever earns its place it should reuse `RpcFilter`, not invent a second dialect that means almost the same thing.
+
+**Make the generic fallback required rather than ideal.** The multi-renderer premise fails without it: a custom component with no fallback is a view some renderers cannot draw at all. Required in the manifest, graceful degradation becomes a property of the format instead of a courtesy of whoever wrote the component.
+
+**Say which aspect a binding is in.** `motor-status bound to M104` does not say through which arrangement, and this system's navigation model is that one object appears in several. `follow()` exists precisely to carry a reader's arrangement across a hop. Either a binding carries an aspect or the format says plainly that it does not care and the host decides - left implicit, every renderer resolves it differently and two of them will disagree about what the same saved view meant.
+
+**Give an AI-composed view that carries actions its provenance.** The action stays governed, which is right. But the model also chose which action sits beside which reading, and somebody pressing it is trusting that composition. A view built by a model and carrying actions should say so on its face.
+
+**Authorize a saved view from the start, not "later".** A view names peers, resources and fields; it leaks structure with no data in it at all, and structure on a plant network is reconnaissance of the same order as `describe()` itself, which is why that is opt-in.
+
+### Sequencing
+
+A throwaway spike now is fine and the note is right to want one. Settling the format should wait for references and the record editor, because a view that cannot yet express a reference or a write is a view that gets redesigned the week after they land.
