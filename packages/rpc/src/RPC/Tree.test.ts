@@ -148,6 +148,40 @@ class Renamed extends RpcComponent<{ title: string }, { rows: number }> {
     }
 }
 
+/** One resource naming a representation that is there and one that is not. */
+@rpcNamespace('named')
+class Named extends RpcComponent<{ title: string }, { rows: number }> {
+    constructor() {
+        super({ title: 'Named' }, { rows: 0 })
+    }
+
+    @rpc({ semantics: 'query', effect: 'observe' })
+    ping(): string {
+        return 'here'
+    }
+
+    dataResources(): readonly RpcDataResource[] {
+        return [
+            {
+                path: ['good'],
+                verbs: ['getList'],
+                presentation: { representation: 'title' },
+                row: { kind: 'object', fields: { id: { type: { kind: 'string' } }, title: { type: { kind: 'string' } } } }
+            },
+            {
+                path: ['bad'],
+                verbs: ['getList'],
+                presentation: { representation: 'headline' },
+                row: { kind: 'object', fields: { id: { type: { kind: 'string' } }, title: { type: { kind: 'string' } } } }
+            }
+        ]
+    }
+
+    dataRequest(): RpcGetChildrenResult {
+        return { data: [], ids: [], hasChildren: [], total: 0, epoch: run, revision: 1 }
+    }
+}
+
 /**
  * A row that says it carries more than it names, which is what an aspect provider's row is.
  *
@@ -298,6 +332,27 @@ test.serial('a default column the row type does not have is ignored, and said so
     t.truthy(complaint, 'the mismatch is reported rather than swallowed')
     t.regex(String(complaint), /'headline'/, 'and names the column, which is what somebody has to go and fix')
     t.regex(String(complaint), /still selectable/, 'while saying the rest of the row is unaffected')
+})
+
+test.serial('a representation that names nothing is reported, and says what it costs', async (t) => {
+    // A different consequence from a missing column, so a different sentence: one leaves a table a
+    // column short, the other leaves every confirmation naming a row by its id.
+    const said: string[] = []
+    const warn = console.warn
+    console.warn = (...args: unknown[]) => said.push(args.join(' '))
+    try {
+        const { client } = await linked(t, 4981, new Named(), 'named')
+        const introspection = await client.proxy<{ describe(): Promise<{ namespaces: unknown[] }> }>('msgrpc')
+        await introspection.describe()
+    } finally {
+        console.warn = warn
+    }
+
+    const complaint = said.find((line) => line.includes('presentation.representation'))
+    t.truthy(complaint, 'reported rather than swallowed')
+    t.regex(String(complaint), /'headline'/, 'and names the path somebody has to go and fix')
+    t.regex(String(complaint), /named by their id instead/)
+    t.false(said.some((line) => line.includes("names 'title'")), 'the one that is really there says nothing')
 })
 
 test.serial('a row that admits fields it did not name is not missing them', async (t) => {

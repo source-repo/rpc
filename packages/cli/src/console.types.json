@@ -1647,6 +1647,12 @@
             }
           },
           "optional": true
+        },
+        "representation": {
+          "type": {
+            "kind": "string"
+          },
+          "optional": true
         }
       }
     },

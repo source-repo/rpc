@@ -370,6 +370,7 @@ export const ValueGrid = ({
         setWhere(undefined)
     }, [here])
     const columns = tree?.presentation?.defaultColumns ?? []
+    const representation = tree?.presentation?.representation
 
     // A tree is the whole pane when one is selected. There is nothing else under that scope node -
     // a resource has no typed leaves of its own - so drawing the empty grid furniture around it
@@ -422,6 +423,7 @@ export const ValueGrid = ({
                         <BranchTable
                                 resource={tree.path}
                                 columns={columns}
+                                representation={representation}
                                 parentId={branch}
                                 cache={cache}
                                 branchQuestion={branchQuestion}

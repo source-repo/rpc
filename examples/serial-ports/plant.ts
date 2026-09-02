@@ -342,7 +342,9 @@ class SerialPorts extends RpcComponent<RackProps, RackState> {
                 label: 'Serial ports',
                 // The four worth reading down a column, and `description` deliberately not among
                 // them. Every field stays selectable; this decides only what is shown first.
-                presentation: { defaultColumns: ['port', 'baudrate', 'status', 'errors'] },
+                // The title, so `closePort` asks about `Weighbridge scale` rather than about
+                // `cab-1/hub-2/port-3`, which is where the port sits rather than what it is.
+                presentation: { defaultColumns: ['port', 'baudrate', 'status', 'errors'], representation: 'title' },
                 // Methods this component already has, said to apply to a row. The declaration adds
                 // no capability whatsoever - `resetPort` is an ordinary `@rpc` method, already in
                 // `describe()`, already ruled on. What this carries is the one fact a viewer cannot

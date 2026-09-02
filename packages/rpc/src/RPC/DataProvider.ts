@@ -463,6 +463,27 @@ export interface RpcDataPresentationHint {
      * shown first, never what may be shown.
      */
     readonly defaultColumns?: readonly string[]
+    /**
+     * The one field that says what a row *is*, in a sentence rather than in a table.
+     *
+     * A row has an id because something has to identify it, and an id is almost never what a person
+     * should be shown: `Restart b92c21af?` is a question nobody can answer, and `Restart Boiler feed
+     * pump P-104?` is the same question asked properly. Confirmations, the title over an opened row,
+     * a reference drawn from another resource and a search hit all need the same sentence, so it is
+     * declared once here rather than guessed four times.
+     *
+     * **One path, not a list and not a format string.** A list would be a formatting decision
+     * wearing a data hat - what separates the parts, what happens when the second is absent, whether
+     * the order is significant - and none of those are questions a resource is in a position to
+     * answer for a screen it has never seen. A viewer wanting more than this has the whole row and
+     * the declared columns to build it from. If a real case turns up that one path cannot serve, it
+     * can widen; widening is a smaller act than narrowing.
+     *
+     * Checked against `row` at describe time exactly as `defaultColumns` is, and ignored the same
+     * way when it names nothing: a node that will not start because a field was renamed in a
+     * presentation hint is a worse failure than a viewer falling back to the id.
+     */
+    readonly representation?: string
 }
 
 export interface RpcDataResource {
@@ -682,18 +703,22 @@ export const describedResources = (instance: unknown, owner: string, types?: Rpc
 }
 
 const checkPresentation = (owner: string, resource: RpcDataResource, types?: RpcSchema['types']): void => {
-    const columns = resource.presentation?.defaultColumns
-    if (!columns?.length || !resource.row) return
-    for (const column of columns) {
-        if (pathInType(column.split('.'), resource.row, types)) continue
-        const key = `${owner}\u0000${resource.path.join('.')}\u0000${column}`
-        if (warnedColumns.has(key)) continue
-        warnedColumns.add(key)
-        console.warn(
-            `source-rpc: ${owner}.${resource.path.join('.')} names '${column}' in presentation.defaultColumns, ` +
-                'which its declared row type does not have. The column is ignored; every other field of the row is still selectable.'
-        )
-    }
+    if (!resource.row) return
+    const columns = resource.presentation?.defaultColumns ?? []
+    for (const column of columns) complain(owner, resource, types, column, 'defaultColumns', 'The column is ignored; every other field of the row is still selectable.')
+    const representation = resource.presentation?.representation
+    // The same check and a different consequence, which is why the sentence is passed in: a column
+    // that is not there leaves a table one column short, and a representation that is not there
+    // leaves every confirmation, reference and search hit naming a row by its id.
+    if (representation) complain(owner, resource, types, representation, 'representation', 'Rows will be named by their id instead.')
+}
+
+const complain = (owner: string, resource: RpcDataResource, types: RpcSchema['types'] | undefined, path: string, hint: string, consequence: string): void => {
+    if (pathInType(path.split('.'), resource.row, types)) return
+    const key = `${owner}\u0000${resource.path.join('.')}\u0000${hint}\u0000${path}`
+    if (warnedColumns.has(key)) return
+    warnedColumns.add(key)
+    console.warn(`source-rpc: ${owner}.${resource.path.join('.')} names '${path}' in presentation.${hint}, ` + `which its declared row type does not have. ${consequence}`)
 }
 
 /**

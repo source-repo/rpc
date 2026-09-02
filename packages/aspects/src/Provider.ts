@@ -220,7 +220,11 @@ export abstract class AspectProvider<Props extends Record<string, unknown>, Stat
             // `getList` only where this provider can answer for a subtree. The verb list is what a
             // viewer offers from, so declaring one that would refuse is worse than not having it.
             verbs: this.leaves ? (['getChildren', 'getList'] as const) : (['getChildren'] as const),
-            presentation: { defaultColumns: aspect.defaultColumns ?? ['title', 'kind'] },
+            // Every occurrence has a `title` - it is in the row type above and the model requires it -
+            // so an aspect's rows can always be named properly, and a viewer never has to fall back
+            // to an occurrence id, which for a browse path is a whole path and for a document is a
+            // file name.
+            presentation: { defaultColumns: aspect.defaultColumns ?? ['title', 'kind'], representation: 'title' },
             // Passed through rather than interpreted. The aspect names methods of the provider it
             // belongs to, and this class knows nothing about them beyond that they will be filtered
             // against what `describe()` publishes like any other action.

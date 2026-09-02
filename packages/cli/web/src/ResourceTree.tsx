@@ -77,10 +77,18 @@ const refOf = (row: unknown): Ref | undefined => {
     return ref && typeof ref.id === 'string' && ref.provider ? ref : undefined
 }
 
-/** What to call a row: what the resource says to show first, then the obvious names, then its id. */
-const labelOf = (row: unknown, id: string, columns: readonly string[]): string => {
-    for (const column of [...columns, 'title', 'name', 'label']) {
-        const value = field(row, column)
+/**
+ * What to call a row.
+ *
+ * The declared `representation` first, because it is the resource saying which field names a row
+ * rather than this file guessing - and the guess was wrong in the direction that matters: `title`,
+ * `name` and `label` are the fields an aspect happens to use, and a store-backed row that calls it
+ * something else got its id drawn instead. The chain stays behind it for every resource that has
+ * not declared one, which today is most of them.
+ */
+const labelOf = (row: unknown, id: string, columns: readonly string[], representation?: string): string => {
+    for (const path of [...(representation ? [representation] : []), ...columns, 'title', 'name', 'label']) {
+        const value = field(row, path)
         if (typeof value === 'string' && value) return value
     }
     return id
@@ -110,6 +118,7 @@ const Node = ({
     expandable,
     resource,
     columns,
+    representation,
     cache,
     branchQuestion,
     period,
@@ -127,6 +136,8 @@ const Node = ({
     expandable: boolean
     resource: readonly string[]
     columns: readonly string[]
+    /** The resource's own answer to "what is this row called", where it gave one. */
+    representation?: string
     cache: RpcDataCache
     branchQuestion: BranchQuestion
     period: number | undefined
@@ -196,7 +207,7 @@ const Node = ({
      * it is about, or says nothing and means leaves.
      */
     const offered = actionsOn(actions, { branch: expandable, kind: field(row, 'kind') })
-    const label = labelOf(row, id, columns)
+    const label = labelOf(row, id, columns, representation)
     const details = detailsOf(row, columns, label)
 
     return (
@@ -276,6 +287,7 @@ const Node = ({
                     depth={depth + 1}
                     resource={resource}
                     columns={columns}
+                    representation={representation}
                     cache={cache}
                     branchQuestion={branchQuestion}
                     period={period}
@@ -297,6 +309,7 @@ const BranchRows = ({
     depth,
     resource,
     columns,
+    representation,
     cache,
     branchQuestion,
     period,
@@ -313,6 +326,8 @@ const BranchRows = ({
     depth: number
     resource: readonly string[]
     columns: readonly string[]
+    /** The resource's own answer to "what is this row called", where it gave one. */
+    representation?: string
     cache: RpcDataCache
     branchQuestion: BranchQuestion
     period: number | undefined
@@ -373,6 +388,7 @@ const BranchRows = ({
                     id={id}
                     row={branch.data[index]}
                     depth={depth}
+                    representation={representation}
                     // The flag the peer sent, and nothing inferred: a row it did not speak for gets
                     // no expander rather than one that might open onto nothing.
                     expandable={branch.hasChildren?.[index] === true}
@@ -417,6 +433,7 @@ const BranchRows = ({
 export const BranchTable = ({
     resource,
     columns,
+    representation,
     parentId,
     cache,
     branchQuestion,
@@ -443,6 +460,8 @@ export const BranchTable = ({
      * reader scopes level by level instead of by subtree, and everything else is the same.
      */
     scopedQuestion?: ScopedQuestion
+    /** The resource's own answer to "what is this row called", where it gave one. */
+    representation?: string
     period: number | undefined
     pageSize?: number
     /** Absent leaves the size fixed, which is right where the host decides it. */
@@ -599,7 +618,7 @@ export const BranchTable = ({
                                                     // also open the row behind it.
                                                     onClick={(event) => {
                                                         event.stopPropagation()
-                                                        onAction?.(action, subject, resource, labelOf(row, id, columns))
+                                                        onAction?.(action, subject, resource, labelOf(row, id, columns, representation))
                                                     }}
                                                 >
                                                     {action.label ?? action.method}
@@ -672,13 +691,14 @@ export const ResourceTree = ({
     onAction?: (action: DescribedAction, id: string, resource: readonly string[], label?: string) => void
 }) => {
     const columns = resource.presentation?.defaultColumns ?? []
+    const representation = resource.presentation?.representation
     return (
         <div className="collection">
             <div className="collection-head">
                 <strong>{resource.label ?? resource.path.join('.')}</strong>
                 <span className="muted"> — a branch at a time</span>
             </div>
-            <BranchRows parentId={undefined} depth={0} resource={resource.path} columns={columns} cache={cache} branchQuestion={branchQuestion} period={period} pageSize={pageSize} selected={selected} onSelect={onSelect} onPickRow={onPickRow} branchesOnly={branchesOnly} actions={actions} onAction={onAction} />
+            <BranchRows parentId={undefined} depth={0} resource={resource.path} columns={columns} representation={representation} cache={cache} branchQuestion={branchQuestion} period={period} pageSize={pageSize} selected={selected} onSelect={onSelect} onPickRow={onPickRow} branchesOnly={branchesOnly} actions={actions} onAction={onAction} />
         </div>
     )
 }

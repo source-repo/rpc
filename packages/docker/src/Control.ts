@@ -143,6 +143,9 @@ export class DockerControl extends RpcComponent<{ socketPath: string; manages: n
                 path: ['managed'],
                 label: 'Managed containers',
                 verbs: ['getList', 'getMany'],
+                // `remove` asks first, and what it asks has to name the container somebody meant
+                // rather than the id the row is keyed by.
+                presentation: { representation: 'name' },
                 row: {
                     kind: 'object',
                     fields: { name: { type: { kind: 'string' } }, image: { type: { kind: 'string' } }, state: { type: { kind: 'string' } }, status: { type: { kind: 'string' } } }
