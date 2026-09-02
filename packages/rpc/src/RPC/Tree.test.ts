@@ -1,6 +1,6 @@
 import test from 'ava'
 import { randomUUID } from 'node:crypto'
-import { RpcClient, RpcComponent, RpcServer, rpc, rpcNamespace } from '../index.js'
+import { RpcClient, RpcComponent, RpcServer, groupFields, rpc, rpcNamespace } from '../index.js'
 import type { RpcDataMethod, RpcDataResource, RpcGetChildrenParams, RpcGetChildrenResult, RpcResource } from './DataProvider.js'
 
 /**
@@ -171,7 +171,15 @@ class Named extends RpcComponent<{ title: string }, { rows: number }> {
             {
                 path: ['bad'],
                 verbs: ['getList'],
-                presentation: { representation: 'headline', detail: ['title', 'absent'], edit: ['title', 'nowhere'] },
+                presentation: {
+                    representation: 'headline',
+                    detail: ['title', 'absent'],
+                    edit: ['title', 'nowhere'],
+                    sections: [
+                        { label: 'What it is', fields: ['title', 'missing'] },
+                        { label: 'Again', fields: ['title'] }
+                    ]
+                },
                 row: { kind: 'object', fields: { id: { type: { kind: 'string' } }, title: { type: { kind: 'string' } } } }
             }
         ]
@@ -352,7 +360,7 @@ test.serial('a representation that names nothing is reported, and says what it c
     t.truthy(complaint, 'reported rather than swallowed')
     t.regex(String(complaint), /'headline'/, 'and names the path somebody has to go and fix')
     t.regex(String(complaint), /named by their id instead/)
-    t.false(said.some((line) => line.includes("names 'title'")), 'the one that is really there says nothing')
+    t.false(said.some((line) => line.includes('named.good')), 'the resource whose hints are all real says nothing at all')
 
     // Every hint that names a path is checked the same way, and each says what its own absence
     // costs - a missing column is not a missing editable field, and being told "ignored" for both
@@ -361,6 +369,35 @@ test.serial('a representation that names nothing is reported, and says what it c
     const edit = String(said.find((line) => line.includes('presentation.edit')))
     t.regex(edit, /'nowhere'/)
     t.regex(edit, /settled by the write rules, never here/, 'and says where the authority actually is')
+
+    const sections = said.filter((line) => line.includes('presentation.sections'))
+    t.regex(String(sections.find((line) => line.includes("'missing'"))), /drawn after the groups that are/)
+    // A field in two groups is a different mistake from a field that is not there, and it is the
+    // one a reader would see: the same field twice, with no way to tell which is which.
+    t.regex(String(sections.find((line) => line.includes("'title'"))), /only be drawn once/)
+})
+
+test('fields are arranged into the groups the resource declared, and nothing is lost doing it', (t) => {
+    const sections = [
+        { label: 'What it is', fields: ['title', 'vendor'] },
+        { label: 'How it runs', fields: ['baudrate', 'parity'] }
+    ]
+
+    t.deepEqual(groupFields(['baudrate', 'title', 'errors', 'parity'], sections), [
+        { label: 'What it is', fields: ['title'] },
+        { label: 'How it runs', fields: ['baudrate', 'parity'] },
+        // Last and unlabelled rather than dropped: a grouping hint decides what is beside what, and
+        // letting it decide what may be *seen* would make an omission a way to hide a field.
+        { fields: ['errors'] }
+    ])
+
+    // A group with nothing left in it is not a heading over nothing. An edit form showing three of
+    // twenty fields would otherwise be mostly empty headings.
+    t.deepEqual(groupFields(['errors'], sections), [{ fields: ['errors'] }])
+
+    // No opinion is one group, so a caller never branches on whether the resource had one.
+    t.deepEqual(groupFields(['a', 'b']), [{ fields: ['a', 'b'] }])
+    t.deepEqual(groupFields([], sections), [])
 })
 
 test.serial('a row that admits fields it did not name is not missing them', async (t) => {

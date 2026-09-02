@@ -358,6 +358,20 @@ h1 {
     border-top: 1px solid var(--line);
 }
 
+/* A named group of a row's fields. The heading is small and quiet: it is a label on a relationship
+   the node stated, not a section of a document. */
+.field-group + .field-group {
+    margin-top: 12px;
+}
+
+.field-group-head {
+    margin: 0 0 4px;
+    font-size: 11px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--muted);
+}
+
 /* Which kinds of thing a list holds. Above the rows and outside the scroller, because it decides
    what the rows *are* and must not scroll away from them. */
 .kind-chips {

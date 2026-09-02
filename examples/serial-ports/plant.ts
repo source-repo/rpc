@@ -359,7 +359,20 @@ class SerialPorts extends RpcComponent<RackProps, RackState> {
                      * what the port is called, how fast it runs, and what it is plugged into.
                      */
                     detail: ['title', 'status', 'lastError', 'errors', 'framingErrors', 'parityErrors', 'overruns', 'baudrate', 'parity', 'dataBits', 'stopBits', 'flowControl'],
-                    edit: ['title', 'baudrate', 'devicePath']
+                    edit: ['title', 'baudrate', 'devicePath'],
+                    /**
+                     * How the fields relate, which is a different statement from which of them a
+                     * view is about - and the reason it is one list rather than one per view. The
+                     * reading view groups the twelve it promotes; an edit form groups the three it
+                     * offers; both use these, and neither can disagree with the other about what
+                     * belongs with what.
+                     */
+                    sections: [
+                        { label: 'What it is', fields: ['title', 'description', 'connectedTo'] },
+                        { label: 'How it runs', fields: ['baudrate', 'parity', 'dataBits', 'stopBits', 'flowControl'] },
+                        { label: 'How it is going', fields: ['status', 'lastError', 'errors', 'framingErrors', 'parityErrors', 'overruns', 'bytesIn', 'bytesOut', 'openedAt'] },
+                        { label: 'Where it is', fields: ['id', 'node', 'port', 'devicePath', 'driver'] }
+                    ]
                 },
                 // Methods this component already has, said to apply to a row. The declaration adds
                 // no capability whatsoever - `resetPort` is an ordinary `@rpc` method, already in

@@ -1,4 +1,4 @@
-import type { RpcGetOneResult } from '@source-repo/rpc'
+import { groupFields, type RpcGetOneResult, type RpcPresentationSection } from '@source-repo/rpc'
 import type { RpcDataCache, RpcQuestion } from '@source-repo/query'
 import { useRpcData } from './data'
 
@@ -38,6 +38,7 @@ export const RecordPanel = ({
     period,
     columns,
     detail,
+    sections,
     onClose
 }: {
     cache: RpcDataCache
@@ -67,6 +68,8 @@ export const RecordPanel = ({
      * may be seen, and it decides what is seen *first*.
      */
     detail?: readonly string[]
+    /** How the resource says its fields group, arranged by the library rather than by this file. */
+    sections?: readonly RpcPresentationSection[]
     onClose?: () => void
 }) => {
     const { data, error, fetching } = useRpcData<RpcGetOneResult>(cache, question, period)
@@ -78,9 +81,17 @@ export const RecordPanel = ({
         ? [...promoted.map((name) => all.find(([field]) => field === name)!), ...all.filter(([field]) => !promoted.includes(field))]
         : undefined
     // Where the promoted ones end, so the rest can be shown as the rest. Absent where nothing was
-    // promoted, which is every resource that has not declared a detail set.
-    const rest = promoted.length && fields && promoted.length < fields.length ? promoted.length : undefined
+    // promoted, which is every resource that has not declared a detail set. Not needed once there
+    // are groups: a heading already says where one thing ends and the next begins.
+    const rest = !sections?.length && promoted.length && fields && promoted.length < fields.length ? promoted.length : undefined
     const inTable = new Set(columns ?? [])
+    const held = new Map(fields ?? [])
+    // Arranged by the library's own function, so this panel, the CLI and anything else group a row
+    // the same way - including what happens to a field the resource put in no group.
+    const groups = groupFields(
+        (fields ?? []).map(([name]) => name),
+        sections
+    )
 
     return (
         <div className="record-panel">
@@ -99,16 +110,22 @@ export const RecordPanel = ({
                 the click that opened it - a race nobody can avoid, and not a fault to report as
                 one. Said plainly, so an operator knows to go back rather than to retry. */}
             {data && row === undefined && <p className="muted">there is no longer a row with this id</p>}
-            {fields && (
-                <dl className="object-fields">
-                    {fields.map(([name, value], at) => (
-                        <div className={`object-field${inTable.has(name) ? ' in-table' : ''}${at === rest ? ' rest' : ''}`} key={name}>
-                            <dt className="muted">{name}</dt>
-                            <dd>{shown(value)}</dd>
-                        </div>
-                    ))}
-                </dl>
-            )}
+            {fields &&
+                groups.map((group, at) => (
+                    <div className="field-group" key={group.label ?? `ungrouped-${at}`}>
+                        {/* A group the resource did not name is drawn without a heading rather than
+                            under one this file invented - "Other" is a word the node did not say. */}
+                        {group.label && <h5 className="field-group-head">{group.label}</h5>}
+                        <dl className="object-fields">
+                            {group.fields.map((name, index) => (
+                                <div className={`object-field${inTable.has(name) ? ' in-table' : ''}${!group.label && at === 0 && index === rest ? ' rest' : ''}`} key={name}>
+                                    <dt className="muted">{name}</dt>
+                                    <dd>{shown(held.get(name))}</dd>
+                                </div>
+                            ))}
+                        </dl>
+                    </div>
+                ))}
             {/* A row may be a primitive - a record of numbers is a perfectly good resource - so the
                 panel has to draw one rather than assume every row is an object with fields. */}
             {row !== undefined && !fields && <p className="record-scalar mono">{shown(row)}</p>}

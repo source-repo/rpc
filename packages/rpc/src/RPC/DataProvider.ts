@@ -452,6 +452,21 @@ export interface RpcDataAction {
     readonly kinds?: readonly string[]
 }
 
+/**
+ * A named group of a row's fields.
+ *
+ * `"Architecture"` means something without a screen: the CLI can group the questions it asks, MCP
+ * can ask a related set together, a browser can draw a heading. That is the test for whether
+ * anything belongs in a presentation hint at all, and grouping passes it - unlike a width or a tab
+ * index, which only a screen wants.
+ */
+export interface RpcPresentationSection {
+    /** What to call the group, in a heading, a prompt or a paragraph. */
+    readonly label: string
+    /** The fields in it, in the order to read or ask them. */
+    readonly fields: readonly string[]
+}
+
 export interface RpcDataPresentationHint {
     /**
      * Dot paths into the declared row type, in the order they should first appear.
@@ -513,6 +528,58 @@ export interface RpcDataPresentationHint {
      * good answer and the reason this is optional.
      */
     readonly edit?: readonly string[]
+    /**
+     * How the row's fields group, for any view that draws or asks them in groups.
+     *
+     * **Orthogonal to the sets above, which is why it is a fifth field rather than a shape they
+     * grow.** `detail` and `edit` answer *which* fields a view is about; this answers *how fields
+     * relate*, and the same answer serves both - the reading view groups what it shows, the edit
+     * form groups what it offers, and a group left empty by either is simply not drawn. Folding
+     * grouping into each of them would state the same relationship twice and let the two disagree
+     * about which fields belong together, which is the thing a reader would notice and nobody
+     * would be able to explain.
+     *
+     * A field named in no section is not hidden; it comes last, in an unnamed group. A field named
+     * in two is a mistake, because it would be drawn twice, and it is said out loud at describe
+     * time like every other path here.
+     *
+     * `groupFields` is how a consumer reads this, so the arranging is done once rather than in
+     * every viewer.
+     */
+    readonly sections?: readonly RpcPresentationSection[]
+}
+
+/**
+ * Arrange the fields a view is showing into the groups the resource declared.
+ *
+ * Here rather than in each viewer, because three consumers would otherwise each decide what happens
+ * to a field in no section, or a section none of whose fields are being shown, and a reader moving
+ * between a browser and the CLI would find the same row arranged two ways.
+ *
+ * The rules, and each of them is the safe half:
+ *
+ * - Section order is the resource's; field order within a section is the resource's.
+ * - A field the caller is not showing is not conjured into a group. `edit` and `detail` select;
+ *   this only groups what they selected.
+ * - A section with nothing left in it is dropped, rather than drawn as an empty heading.
+ * - A field in no section comes last, in a group with no label, because dropping it would let a
+ *   grouping hint decide what may be seen - and it decides what is *beside* what.
+ * - No sections at all is one unlabelled group, so a caller never has to branch on whether the
+ *   resource had an opinion.
+ */
+export const groupFields = (fields: readonly string[], sections?: readonly RpcPresentationSection[]): readonly { label?: string; fields: readonly string[] }[] => {
+    if (!sections?.length) return fields.length ? [{ fields }] : []
+    const showing = new Set(fields)
+    const grouped: { label?: string; fields: readonly string[] }[] = []
+    const placed = new Set<string>()
+    for (const section of sections) {
+        const present = section.fields.filter((field) => showing.has(field) && !placed.has(field))
+        for (const field of present) placed.add(field)
+        if (present.length) grouped.push({ label: section.label, fields: present })
+    }
+    const rest = fields.filter((field) => !placed.has(field))
+    if (rest.length) grouped.push({ fields: rest })
+    return grouped
 }
 
 export interface RpcDataResource {
@@ -746,13 +813,23 @@ const checkPresentation = (owner: string, resource: RpcDataResource, types?: Rpc
         ['defaultColumns', hint.defaultColumns ?? [], 'The column is ignored; every other field of the row is still selectable.'],
         ['representation', hint.representation ? [hint.representation] : [], 'Rows will be named by their id instead.'],
         ['detail', hint.detail ?? [], 'The field is not promoted; an opened row still shows everything it carries.'],
-        ['edit', hint.edit ?? [], 'The field is not offered for editing. What may be written is settled by the write rules, never here.']
+        ['edit', hint.edit ?? [], 'The field is not offered for editing. What may be written is settled by the write rules, never here.'],
+        ['sections', (hint.sections ?? []).flatMap((section) => section.fields), 'The field is not grouped; it is drawn after the groups that are.']
     ]
     for (const [where, paths, consequence] of named) for (const path of paths) complain(owner, resource, types, path, where, consequence)
+
+    // A field in two groups is drawn twice, which is a mistake nobody makes on purpose and which
+    // looks from a screen like the peer sending it twice.
+    const placed = new Set<string>()
+    for (const section of hint.sections ?? [])
+        for (const path of section.fields) {
+            if (!placed.has(path)) placed.add(path)
+            else complain(owner, resource, types, path, 'sections', `It is in more than one group, and a field can only be drawn once.`, true)
+        }
 }
 
-const complain = (owner: string, resource: RpcDataResource, types: RpcSchema['types'] | undefined, path: string, hint: string, consequence: string): void => {
-    if (pathInType(path.split('.'), resource.row, types)) return
+const complain = (owner: string, resource: RpcDataResource, types: RpcSchema['types'] | undefined, path: string, hint: string, consequence: string, always = false): void => {
+    if (!always && pathInType(path.split('.'), resource.row, types)) return
     const key = `${owner}\u0000${resource.path.join('.')}\u0000${hint}\u0000${path}`
     if (warnedColumns.has(key)) return
     warnedColumns.add(key)

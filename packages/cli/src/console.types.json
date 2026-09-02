@@ -1671,6 +1671,34 @@
             }
           },
           "optional": true
+        },
+        "sections": {
+          "type": {
+            "kind": "array",
+            "items": {
+              "kind": "ref",
+              "name": "RpcPresentationSection"
+            }
+          },
+          "optional": true
+        }
+      }
+    },
+    "RpcPresentationSection": {
+      "kind": "object",
+      "fields": {
+        "label": {
+          "type": {
+            "kind": "string"
+          }
+        },
+        "fields": {
+          "type": {
+            "kind": "array",
+            "items": {
+              "kind": "string"
+            }
+          }
         }
       }
     },
