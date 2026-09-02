@@ -1751,6 +1751,15 @@
             ]
           },
           "optional": true
+        },
+        "kinds": {
+          "type": {
+            "kind": "array",
+            "items": {
+              "kind": "string"
+            }
+          },
+          "optional": true
         }
       }
     },
