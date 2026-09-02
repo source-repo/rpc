@@ -40,18 +40,6 @@ button {
     cursor: pointer;
 }
 
-.mono,
-code,
-pre,
-time {
-    font-family: var(--mono);
-}
-
-.muted {
-    color: var(--muted);
-    font-size: 12px;
-}
-
 /* ---- layout ------------------------------------------------------------- */
 
 .app {
@@ -130,10 +118,6 @@ aside {
 .chat-send {
     display: flex;
     gap: 6px;
-}
-
-.chat-send .control {
-    flex: 1;
 }
 
 .bad {
@@ -358,248 +342,12 @@ h1 {
     border-top: 1px solid var(--line);
 }
 
-/* ---- looking for something across a peer -------------------------------- */
-
-.search {
-    margin: 0 0 18px;
-}
-
-.search-head {
-    display: flex;
-    align-items: baseline;
-    gap: 8px;
-    flex-wrap: wrap;
-}
-
-.search-head .control {
-    flex: 1 1 22rem;
-    min-width: 0;
-}
-
-.search-group {
-    margin-top: 10px;
-}
-
-.search-where {
-    font-size: 12px;
-    padding-bottom: 2px;
-    border-bottom: 1px solid var(--line);
-}
-
-.search-hits {
-    list-style: none;
-    margin: 4px 0 0;
-    padding: 0;
-    display: flex;
-    flex-wrap: wrap;
-    gap: 4px 14px;
-}
-
-/* One row being changed. The same chrome as the action form, because from a reader's side they are
-   the same gesture - something is about to happen to the row they picked. */
-.record-form {
-    margin-top: 10px;
-    padding: 10px 12px;
-    border: 1px solid var(--line);
-    border-left: 2px solid var(--accent);
-    border-radius: 4px;
-    background: var(--panel);
-}
-
-.record-form .action-form-foot {
-    justify-content: space-between;
-    align-items: baseline;
-}
-
-/* What a row refers to, named. Quiet and beside the row rather than in it: the id is already
-   there, and this is the sentence it stands for. */
-.row-reference {
-    margin-left: 10px;
-    font-size: 12px;
-    white-space: nowrap;
-}
-
-/* A named group of a row's fields. The heading is small and quiet: it is a label on a relationship
-   the node stated, not a section of a document. */
-.field-group + .field-group {
-    margin-top: 12px;
-}
-
-.field-group-head {
-    margin: 0 0 4px;
-    font-size: 11px;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
-    color: var(--muted);
-}
-
-/* Which kinds of thing a list holds. Above the rows and outside the scroller, because it decides
-   what the rows *are* and must not scroll away from them. */
-.kind-chips {
-    display: flex;
-    align-items: baseline;
-    gap: 6px;
-    padding: 0 0 8px;
-    flex-wrap: wrap;
-}
-
-.kind-chips .toggle.on {
-    border-color: var(--accent);
-    color: var(--accent);
-}
-
-/* Where the fields the resource promoted end and the rest of the row begins. A rule rather than a
-   heading, because the rest are not a different kind of thing - they are the same row, further
-   down, and the panel deliberately still shows all of them. */
-.object-field.rest {
-    border-top: 1px solid var(--line);
-    padding-top: 6px;
-    margin-top: 4px;
-}
-
-/* ---- a row action that needs asking ------------------------------------- */
-
-/* Deliberately quiet: it appears under a table somebody is reading, and a panel that announced
-   itself would pull the eye off the row the form is about. The accent edge is the same one a
-   selected row carries, because it is the same statement - this is the thing in hand. */
-.action-form {
-    margin-top: 10px;
-    padding: 10px 12px;
-    border: 1px solid var(--line);
-    border-left: 2px solid var(--accent);
-    border-radius: 4px;
-    background: var(--panel);
-}
-
-.action-form-head {
-    display: flex;
-    align-items: baseline;
-    gap: 8px;
-    margin-bottom: 6px;
-}
-
-/* Last, and pushed away from the signature it follows. */
-.action-form-head .toggle {
-    margin-left: auto;
-}
-
-/* The argument the row fills. Read-only rather than absent, so a method whose first parameter is
-   not really the row is visible before it is called rather than after. */
-.action-bound {
-    display: grid;
-    grid-template-columns: auto minmax(0, 1fr);
-    gap: 4px 10px;
-    margin: 0 0 4px;
-    padding: 6px 0;
-    border-bottom: 1px dashed rgba(38, 46, 58, 0.7);
-}
-
-.action-bound dd {
-    margin: 0;
-    overflow-wrap: anywhere;
-    min-width: 0;
-}
-
-.action-form-foot {
-    display: flex;
-    justify-content: flex-end;
-    margin-top: 10px;
-}
-
-/* ---- argument fields ---------------------------------------------------- */
-
-.field {
-    padding: 10px 0;
-    border-bottom: 1px dashed rgba(38, 46, 58, 0.7);
-}
-
-.field:last-of-type {
-    border-bottom: none;
-}
-
-.field.off .control,
-.field.off .checkbox {
-    opacity: 0.35;
-}
-
-.field-label {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    margin-bottom: 5px;
-}
-
-.field-label .name {
-    font-family: var(--mono);
-    font-size: 13px;
-}
-
-.field-label .type {
-    font-family: var(--mono);
-    font-size: 11px;
-    color: var(--muted);
-}
-
 .include {
     accent-color: var(--accent);
 }
 
-.control {
-    width: 100%;
-    padding: 7px 10px;
-    background: #0b0f14;
-    border: 1px solid var(--line);
-    border-radius: 6px;
-    color: var(--text);
-    font: inherit;
-    font-size: 13px;
-}
-
-textarea.control {
-    resize: vertical;
-}
-
-.control:focus {
-    outline: none;
-    border-color: var(--accent);
-    box-shadow: 0 0 0 2px rgba(78, 161, 255, 0.18);
-}
-
-.checkbox {
-    display: inline-flex;
-    align-items: center;
-    gap: 8px;
-    font-family: var(--mono);
-    font-size: 13px;
-    cursor: pointer;
-}
-
-.checkbox input {
-    accent-color: var(--accent);
-    width: 16px;
-    height: 16px;
-}
-
 .actions {
     margin-top: 12px;
-}
-
-.primary {
-    padding: 7px 18px;
-    border-radius: 6px;
-    background: var(--accent);
-    color: #06121f;
-    font-weight: 600;
-    font-size: 13px;
-}
-
-.primary:hover:not(:disabled) {
-    background: #6fb4ff;
-}
-
-.primary:disabled {
-    opacity: 0.5;
-    cursor: default;
 }
 
 .result {
@@ -650,26 +398,6 @@ textarea.control {
     flex: 1;
     min-width: 0;
     word-break: break-word;
-}
-
-.toggle {
-    padding: 3px 10px;
-    border: 1px solid var(--line);
-    border-radius: 999px;
-    font-size: 11px;
-    font-family: var(--mono);
-    color: var(--muted);
-}
-
-.toggle:hover {
-    border-color: var(--accent);
-    color: var(--text);
-}
-
-.toggle.on {
-    background: var(--accent-dim);
-    border-color: var(--accent);
-    color: #cfe6ff;
 }
 
 .streamed {
@@ -1022,10 +750,6 @@ textarea.control {
     gap: 8px;
 }
 
-.stream .control {
-    margin-bottom: 10px;
-}
-
 /* Who came and went. A peer that flaps is a fault; one that arrived once is a Tuesday. */
 .presence {
     flex: 1 1 auto;
@@ -1245,70 +969,8 @@ textarea.control {
     font-weight: 600;
 }
 
-.value-row {
-    display: flex;
-    align-items: baseline;
-    gap: 10px;
-    padding: 3px 0;
-    border-bottom: 1px solid rgba(38, 46, 58, 0.6);
-    font-size: 13px;
-}
-
-.value-name {
-    color: var(--muted);
-    min-width: 110px;
-}
-
 .value {
     word-break: break-word;
-}
-
-.value .unit {
-    color: var(--muted);
-    font-size: 12px;
-}
-
-.quality {
-    padding: 0 7px;
-    border-radius: 999px;
-    font-size: 11px;
-    font-family: var(--mono);
-    border: 1px solid var(--line);
-    color: var(--muted);
-}
-
-.quality.q-good {
-    border-color: var(--ok);
-    color: var(--ok);
-}
-
-.quality.q-stale,
-.quality.q-uncertain {
-    border-color: var(--warn);
-    color: var(--warn);
-}
-
-.quality.q-bad {
-    border-color: var(--bad);
-    color: var(--bad);
-}
-
-/* When the source read it. Not a grade at all, so it stays in the muted default rather than
-   borrowing any of the three palettes above - a timestamp is information, not a warning. */
-.quality.at {
-    font-variant-numeric: tabular-nums;
-}
-
-/* Forced is not a quality grade, so it does not borrow the stale palette: visibly its own thing. */
-.quality.forced {
-    border-color: #c792ea;
-    color: #c792ea;
-}
-
-.component-error {
-    color: var(--bad);
-    font-size: 12px;
-    margin: 6px 0 0;
 }
 
 /* The semantics grade on a method row, readable before the panel is opened. */
@@ -1489,17 +1151,6 @@ textarea.control {
     border-left: 1px solid rgba(38, 46, 58, 0.9);
 }
 
-.value-node {
-    padding: 2px 0;
-}
-
-.value-name.branch {
-    display: inline-block;
-    padding: 2px 0;
-    color: var(--text);
-    font-size: 12px;
-}
-
 /* The left pane. Narrow and fixed, because it holds the contract's containers and nothing else -
    it does not grow with the data, which is the whole property it is there to have. */
 .scope-pane {
@@ -1536,51 +1187,6 @@ textarea.control {
     color: var(--text);
     background: rgba(78, 161, 255, 0.1);
     box-shadow: inset 2px 0 0 var(--accent);
-}
-
-.value-grid {
-    min-width: 0;
-}
-
-/* One box for the pane rather than one per collection: the subscribed fields and the paged rows
-   are one list to whoever is reading the screen, however differently they are fetched. */
-.grid-head {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    padding-bottom: 4px;
-}
-
-.collection {
-    margin-top: 10px;
-}
-
-.collection-head {
-    display: flex;
-    align-items: baseline;
-    gap: 10px;
-    padding: 2px 0;
-    border-bottom: 1px solid rgba(38, 46, 58, 0.9);
-}
-
-/* Wide enough for `quality:bad`, which is the query the box is really there for. */
-.filter-box {
-    width: 11em;
-    font-size: 12px;
-    padding: 1px 5px;
-}
-
-/* Beside the pager, because the two together are how a set of rows is navigated: which slice, and
-   in what order. Both are the peer's answers rather than rearrangements of what is already here. */
-.sorter {
-    display: flex;
-    align-items: center;
-    gap: 4px;
-    margin-left: auto;
-}
-
-.sorter + .pager {
-    margin-left: 0;
 }
 
 /* The two numbers a stalled pane needs: how long this has been waiting, and how long the peer says
@@ -1726,104 +1332,6 @@ textarea.control {
     font-size: 11px;
 }
 
-/* A command that was sent and never answered.
-   Loud, and deliberately not the same treatment as an error: an error is a fact about the plant and
-   this is the absence of one, so it stays on screen with its own buttons rather than joining the
-   run of red text an operator has learned to skim. */
-.uncertain {
-    display: flex;
-    align-items: center;
-    /* Wrapping, because the sentence is an anonymous flex item between the label and the buttons:
-       without it a narrow pane squeezes "try again" onto two lines rather than moving the row. */
-    flex-wrap: wrap;
-    gap: 8px;
-    margin: 8px 0;
-    padding: 8px 10px;
-    border-left: 3px solid var(--warn);
-    background: color-mix(in srgb, var(--warn) 8%, transparent);
-    font-size: 13px;
-}
-
-.uncertain > .mono {
-    flex: none;
-}
-
-.uncertain button {
-    flex: none;
-    white-space: nowrap;
-}
-
-/* A row and what may be done to it. The buttons follow the editors' rule - present on hover or
-   focus, so a page of fifty rows is not also a wall of fifty pairs of buttons. */
-.collection-row {
-    display: flex;
-    align-items: baseline;
-    gap: 8px;
-}
-
-.collection-row > :first-child {
-    flex: 1;
-    min-width: 0;
-}
-
-.row-actions {
-    display: flex;
-    gap: 4px;
-    opacity: 0;
-    transition: opacity 0.1s;
-}
-
-.collection-row:hover .row-actions,
-.collection-row:focus-within .row-actions {
-    opacity: 1;
-}
-
-.pager {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    margin-left: auto;
-}
-
-.period {
-    background: none;
-    border: 1px solid rgba(38, 46, 58, 0.9);
-    border-radius: 3px;
-    color: var(--muted);
-    font-size: 11px;
-    padding: 1px 4px;
-}
-
-.value-row .toggle.edit {
-    margin-left: auto;
-    opacity: 0;
-    transition: opacity 0.1s;
-}
-
-/* Shown on hover or focus, so a wall of values is not also a wall of buttons - but reachable by
-   keyboard, since :focus-within catches the tab that gets there. */
-.value-row:hover .toggle.edit,
-.value-row:focus-within .toggle.edit {
-    opacity: 1;
-}
-
-.value-edit-form {
-    display: flex;
-    gap: 6px;
-    align-items: center;
-}
-
-.value-edit {
-    background: var(--bg);
-    border: 1px solid var(--accent);
-    border-radius: 4px;
-    color: var(--text);
-    font-family: var(--mono);
-    font-size: 13px;
-    padding: 2px 6px;
-    min-width: 90px;
-}
-
 /* --------------------------------------------------------------- context */
 
 .context {
@@ -1868,10 +1376,6 @@ textarea.control {
     align-items: center;
     gap: 8px;
     flex-wrap: wrap;
-}
-
-.context-token-head .toggle {
-    margin-left: auto;
 }
 
 .context-entry {
@@ -1920,18 +1424,6 @@ textarea.control {
     color: var(--bad);
 }
 
-/* A failed write is reported under its row, not beside it: sharing the line squeezes the value
-   into two characters per line, and the value is what the row is for. */
-.value-row {
-    flex-wrap: wrap;
-}
-
-.value-row .component-error {
-    flex-basis: 100%;
-    margin: 2px 0 0;
-    font-size: 12px;
-}
-
 /* A peer that can do something dangerous says so above everything else. Not a log line and not a
    badge among badges: the question this answers is "is anything unlocked right now", and an answer
    somebody has to go looking for is one nobody finds. */
@@ -1959,203 +1451,6 @@ textarea.control {
 /* Nothing will close this one. Drawn louder than a bounded elevation on purpose. */
 .elevation.unbounded {
     color: var(--bad);
-}
-
-/* A tree resource, browsed a branch at a time. Indentation is inline, from the row's depth, because
-   the depth is data here rather than markup: a branch is fetched when it is opened and its rows do
-   not exist until then, so there is no nesting for a stylesheet to describe. */
-.tree-row {
-    display: flex;
-    align-items: baseline;
-    gap: 0.5rem;
-    padding: 0.15rem 0;
-}
-.tree-toggle {
-    width: 1.2rem;
-    flex: 0 0 1.2rem;
-    background: none;
-    border: none;
-    padding: 0;
-    cursor: pointer;
-    color: inherit;
-    font: inherit;
-    text-align: left;
-}
-.tree-leaf {
-    cursor: default;
-}
-.tree-label {
-    font-weight: 500;
-    /* One line each. A tree is read by scanning down it, and a title that wraps to six lines turns
-       ten rows into a page - the label is an identifier here, not the content.
-       It also wins the space fight against the columns beside it. Those are `nowrap`, so in a
-       narrow pane they took what they wanted and left `S..` where `Speed` should have been - and a
-       tree whose labels are unreadable is not a tree, whatever else is on the row. */
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    flex: 1 1 auto;
-    min-width: 7rem;
-    max-width: 22rem;
-}
-.tree-detail {
-    /* Which means these give way first, down to nothing if the pane is narrow enough. */
-    flex: 0 1 auto;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    min-width: 0;
-}
-.tree-detail {
-    font-size: 0.85em;
-    white-space: nowrap;
-}
-.tree-note {
-    margin: 0.2rem 0;
-    font-size: 0.9em;
-}
-.tree-more {
-    margin: 0.2rem 0;
-    background: none;
-    border: none;
-    padding: 0;
-    cursor: pointer;
-    color: inherit;
-    text-decoration: underline;
-    font: inherit;
-}
-
-/* The tree and the object it opened, side by side. A document is read beside the structure it was
-   found in, because the structure is why the reader is there - taking it away to show the text
-   would answer the question and lose the context that made it worth asking. */
-/* ── One, two or three panes, decided by the room there is ────────────────────────────────────
- *
- * Tree, then the rows of the branch it scopes, then the row that was opened. Three depths of one
- * question - which set, which row, which fields - and where there is width for all three there is
- * no reason to make somebody trade one for another.
- *
- * Wrapped on flex-basis rather than at viewport breakpoints, and that is the point rather than a
- * shortcut: this same component draws inside the console's middle column and again in the full-page
- * observer, which are very different widths at the same window size. A breakpoint on the window
- * would give the narrow one three cramped columns and the wide one an empty third of a screen.
- * Basis-driven wrapping asks how much room *this* pane has, which is the question that was meant.
- */
-.tree-and-object {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 1rem;
-    align-items: flex-start;
-}
-.tree-and-object > .collection {
-    /* Scope: enough to read a branch name, and the first to give up width. */
-    flex: 1 1 15rem;
-    min-width: 0;
-}
-.object-panel {
-    flex: 2 1 22rem;
-    min-width: 0;
-    border-left: 1px solid rgba(127, 127, 127, 0.25);
-    padding-left: 1rem;
-}
-.object-head {
-    margin-bottom: 0.5rem;
-}
-.object-block-kind {
-    font-size: 0.8em;
-}
-.object-text {
-    white-space: pre-wrap;
-    word-break: break-word;
-    margin: 0.2rem 0 0.8rem;
-    font-size: 0.9em;
-}
-.object-note {
-    font-size: 0.9em;
-    opacity: 0.85;
-}
-.object-links {
-    margin-top: 0.5rem;
-}
-.object-link,
-.tree-openable {
-    background: none;
-    border: none;
-    padding: 0;
-    margin-right: 0.6rem;
-    cursor: pointer;
-    color: inherit;
-    font: inherit;
-    text-align: left;
-}
-.object-link {
-    text-decoration: underline;
-}
-/* ── What is selected, said the same way in three places ──────────────────────────────────────
- *
- * A tinted line with an accent edge down its left, for the scope node, the tree row and the table
- * row alike. One language, because to a reader they are one idea - this is the thing being shown -
- * and three different markings for it would read as three different states.
- *
- * The whole line rather than the label, which is what an underline on a word could not do. It
- * matters more since a branch can open a row nobody clicked: a document that appeared because its
- * folder named it needs to say which row it came from, or the reader is looking at something with
- * no idea where it sits.
- */
-.tree-row.on {
-    background: rgba(78, 161, 255, 0.1);
-    box-shadow: inset 2px 0 0 var(--accent);
-}
-
-.tree-selected {
-    color: var(--accent);
-}
-
-/* Fields and bindings on an opened object. A binding is drawn as a statement rather than a control:
-   it says how a thing can be reached, not that this page may reach it, and a button would turn a
-   description into an invitation. */
-.object-fields {
-    margin: 0 0 0.8rem;
-    display: grid;
-    /* `minmax(0, 1fr)` rather than `1fr`, which is `minmax(auto, 1fr)` and therefore refuses to go
-       below the content's minimum. A value with no spaces in it - a URI, a profile list - has a
-       minimum as wide as the string, so the panel grew even while the text was visibly wrapping. */
-    grid-template-columns: auto minmax(0, 1fr);
-    gap: 0.15rem 0.6rem;
-    font-size: 0.9em;
-}
-.object-field {
-    display: contents;
-}
-.object-fields dt {
-    white-space: nowrap;
-}
-.object-fields dd {
-    margin: 0;
-    /* `anywhere` rather than `break-word`, because the latter does not count toward the intrinsic
-       minimum and a long URI would still have claimed the width it could not use. */
-    overflow-wrap: anywhere;
-    min-width: 0;
-}
-.object-bindings {
-    margin-top: 0.6rem;
-    border-top: 1px solid rgba(127, 127, 127, 0.2);
-    padding-top: 0.5rem;
-    font-size: 0.9em;
-}
-.object-binding {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: baseline;
-    gap: 0.5rem;
-    padding: 0.15rem 0;
-}
-.object-binding-kind {
-    font-weight: 500;
-}
-.object-binding-role {
-    border: 1px solid rgba(127, 127, 127, 0.35);
-    border-radius: 0.6rem;
-    padding: 0 0.4rem;
-    font-size: 0.85em;
 }
 
 /* ── The observer on a page of its own ────────────────────────────────────────────────────────
@@ -2348,129 +1643,6 @@ textarea.control {
     border-color: var(--muted);
 }
 
-/* ── One row, opened ──────────────────────────────────────────────────────────────────────────
- *
- * The record panel sits where the object panel does and is sized like it, because to a reader they
- * are the same gesture - open this row - answered by whichever of the two the resource supports.
- */
-.record-panel {
-    flex: 2 1 20rem;
-    min-width: 0;
-    border-left: 1px solid rgba(127, 127, 127, 0.25);
-    padding-left: 1rem;
-}
-
-.record-head {
-    display: flex;
-    align-items: baseline;
-    gap: 8px;
-    margin-bottom: 8px;
-}
-
-.record-id {
-    font-size: 12px;
-    color: var(--text);
-    overflow-wrap: anywhere;
-}
-
-.record-close {
-    margin-left: auto;
-}
-
-.record-scalar {
-    font-size: 12px;
-    margin: 0;
-    overflow-wrap: anywhere;
-}
-
-/* Marked rather than hidden: a reader comparing the panel against the row it came from should find
-   every field in both, so the ones already in the table are dimmed and not removed. */
-.object-field.in-table dt {
-    opacity: 0.65;
-}
-
-.branch-table-wrap {
-    /* The widest appetite of the three: it holds the columns somebody came to compare. */
-    flex: 3 1 24rem;
-    min-width: 0;
-}
-
-/* Sideways here rather than on the wrapper, so a table too wide to fit takes its scrollbar and
-   leaves the pager where it is. */
-.branch-table-scroll {
-    min-width: 0;
-    overflow-x: auto;
-}
-
-.branch-table {
-    border-collapse: collapse;
-    width: 100%;
-    font-size: 11px;
-    /* Digits line up down a column, which is the entire reason this arrangement exists. */
-    font-variant-numeric: tabular-nums;
-}
-
-.branch-table th {
-    text-align: left;
-    font-family: var(--mono);
-    font-size: 10px;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
-    color: var(--muted);
-    font-weight: 600;
-    padding: 0 10px 4px 0;
-    border-bottom: 1px solid var(--line);
-    white-space: nowrap;
-}
-
-.branch-table td {
-    padding: 3px 10px 3px 0;
-    border-bottom: 1px solid rgba(38, 46, 58, 0.55);
-    white-space: nowrap;
-    font-family: var(--mono);
-    /* Capped, and this is what stops one value resizing the console. A UA node's
-       `ServerProfileArray` is several hundred characters on one line; uncapped it made the table
-       fourteen thousand pixels wide and pushed the panel - and the controls above it - to
-       twenty-nine thousand, on a window of thirteen hundred. A column is for comparing values at a
-       glance, so what does not fit is cut here and read in full in the panel, where there is room
-       for it to wrap. The whole string is on the cell's `title` either way. */
-    max-width: 22rem;
-    overflow: hidden;
-    text-overflow: ellipsis;
-}
-
-.branch-table tbody tr {
-    cursor: pointer;
-}
-
-.branch-table tbody tr:hover td {
-    background: rgba(78, 161, 255, 0.06);
-}
-
-.branch-table tbody tr.on td {
-    color: var(--accent);
-    background: rgba(78, 161, 255, 0.1);
-}
-
-/* The edge belongs to the line, so it goes on the first cell rather than the row - a `tr` cannot
-   carry a box-shadow reliably once its cells have backgrounds of their own. */
-.branch-table tbody tr.on td:first-child {
-    box-shadow: inset 2px 0 0 var(--accent);
-}
-
-.branch-table .branch-actions {
-    text-align: right;
-    white-space: nowrap;
-}
-
-.branch-table .branch-actions .toggle {
-    margin-left: 4px;
-}
-
-.branch-actions-head {
-    width: 1%;
-}
-
 /* The scope as a selector: a full-width row above the panes, where a pane would have been a column
    beside them. */
 .scope-pick {
@@ -2479,37 +1651,4 @@ textarea.control {
     align-items: baseline;
     gap: 8px;
     margin-bottom: 2px;
-}
-
-/* The preview switch, sized like the controls beside it rather than like body text. */
-.preview-pick {
-    display: inline-flex;
-    align-items: center;
-    gap: 5px;
-    font-size: 11px;
-    color: var(--muted);
-    cursor: pointer;
-    white-space: nowrap;
-}
-
-.preview-pick input {
-    accent-color: var(--accent);
-    margin: 0;
-    cursor: pointer;
-}
-
-/* Controls over the panes, at the right edge of the data they govern. */
-.pane-controls {
-    display: flex;
-    justify-content: flex-end;
-    margin-bottom: 6px;
-}
-
-/* The table's pager, under the rows it pages rather than in a header away from them. */
-.table-pager {
-    display: flex;
-    justify-content: flex-end;
-    align-items: center;
-    gap: 6px;
-    margin-top: 6px;
 }

@@ -28,10 +28,12 @@
             "types": "./dist/index.d.ts",
             "default": "./dist/index.js"
         },
-        "./package.json": "./package.json"
+        "./package.json": "./package.json",
+        "./styles.css": "./styles.css"
     },
     "files": [
         "dist",
+        "styles.css",
         "!dist/**/*.test.*"
     ],
     "scripts": {
