@@ -77,8 +77,14 @@ jobs:
             # on every run until it did. `ping` is one of the few commands a mongod answers before
             # authentication, which is what lets the health check work against a server that has root
             # credentials configured.
+            # Pinned to the same exact version as docker-compose, and see that file for why it is
+            # pinned downwards: 8.0.28 refuses to start on Linux 6.19 and newer, which today is a
+            # laptop rather than a runner - but a runner that moved would fail here in the one way
+            # this suite must never fail, by skipping every document test while reporting green.
+            # The two definitions are kept identical so that "works in CI" and "works here" cannot
+            # come to mean different servers.
             mongo:
-                image: mongo:8.0
+                image: mongo:8.0.17
                 env:
                     MONGO_INITDB_ROOT_USERNAME: test
                     MONGO_INITDB_ROOT_PASSWORD: test

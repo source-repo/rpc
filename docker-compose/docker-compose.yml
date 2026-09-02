@@ -69,8 +69,19 @@ services:
   # For @source-repo/document. Single-node and no replica set, which is worth knowing rather than
   # discovering: without one there are no transactions and no change streams, and neither is
   # something a read-only document node asks for.
+  # Pinned exactly, and downwards, which is the unusual part and the reason for the paragraph.
+  # `mongo:8.0` floats, and now resolves to 8.0.28 - which refuses to start on Linux 6.19 and newer
+  # with *MongoDB cannot start: ... known incompatibility* (SERVER-121912). On a kernel that new the
+  # container restart-loops, `packages/document` finds no server, and every test in it skips - which
+  # in a summary reads exactly like a package that passed. That is the failure this pin exists to
+  # prevent, and it is why `SOURCE_RPC_REQUIRE_MONGO` is set in CI.
+  #
+  # 8.0.17 predates the guard. It is therefore a deliberate choice to run the combination MongoDB
+  # now declines: acceptable here because this is a throwaway fixture on tmpfs holding nothing
+  # anybody would miss, and not acceptable anywhere data is kept. Moving it forward again is safe
+  # once a release carries a fix rather than a refusal.
   mongo:
-    image: mongo:8.0
+    image: mongo:8.0.17
     container_name: msgrpc-mongo
     restart: unless-stopped
     environment:
