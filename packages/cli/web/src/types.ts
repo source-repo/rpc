@@ -317,13 +317,26 @@ export const typeText = (type: TypeNode | undefined): string => {
     }
 }
 
+/**
+ * Whether one arm of a union is the null in it, in **either** spelling.
+ *
+ * The type language has two, both legitimate and both in use. The extractor writes an optional
+ * parameter as a union with `{ kind: 'literal', value: null }`, and writes a TypeScript `null` type
+ * as `{ kind: 'null' }` - and a provider building a type at runtime reaches for the second: a
+ * nullable SQL column comes back as `string | { kind: 'null' }`.
+ *
+ * Knowing only one of them is not a near miss. A viewer that misses the null draws the whole union,
+ * which falls through every widget to the JSON textarea - so every nullable column of every SQL
+ * table was a box of JSON where a text box belonged.
+ */
+const isNull = (option: TypeNode) => option.kind === 'null' || (option.kind === 'literal' && option.value === null)
+
 /** A parameter is optional when its type admits null, which is how the extractor writes `mode?`. */
-export const isOptional = (type: TypeNode | undefined) =>
-    type?.kind === 'any' || (type?.kind === 'union' && type.options.some((option) => option.kind === 'literal' && option.value === null))
+export const isOptional = (type: TypeNode | undefined) => type?.kind === 'any' || (type?.kind === 'union' && type.options.some(isNull))
 
 /** The type to build a widget for, with the optional-ness stripped off. */
 export const requiredPart = (type: TypeNode | undefined): TypeNode | undefined => {
     if (type?.kind !== 'union') return type
-    const options = type.options.filter((option) => !(option.kind === 'literal' && option.value === null))
+    const options = type.options.filter((option) => !isNull(option))
     return options.length === 1 ? options[0] : { ...type, options }
 }

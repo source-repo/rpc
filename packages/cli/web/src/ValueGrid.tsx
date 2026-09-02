@@ -80,6 +80,7 @@ const Collection = ({
     references,
     resourceAt,
     manyQuestion,
+    onEdit,
     onAction
 }: {
     leaf: ScopeLeaf
@@ -100,6 +101,8 @@ const Collection = ({
     resourceAt?: (path: readonly string[]) => DescribedResource | undefined
     /** How to ask a resource for a set of ids at once. */
     manyQuestion: (resource: readonly string[], ids: readonly string[]) => RpcQuestion
+    /** Offered only where this component's write half says the resource takes an `update`. */
+    onEdit?: (resource: readonly string[], id: string) => void
     /** The resource travels with the call: where the button lives is what the method touched. */
     onAction?: (action: DescribedAction, id: string, resource: readonly string[], label?: string) => void
 }) => {
@@ -262,6 +265,16 @@ const Collection = ({
                         {/* Named calls, not verbs of ours: what is committed is the component's own
                             method, and the button exists because the component said that method is
                             about this row. Same rule as an editor drawn from `sets`, one level up. */}
+                        {/* Before the declared actions, because it is not one: an action is a method
+                            the component named, and this is the write contract every store package
+                            already serves. */}
+                        {onEdit && (
+                            <span className="row-actions">
+                                <button className="toggle" title={`edit ${id}`} onClick={() => onEdit(leaf.path, id)}>
+                                    edit
+                                </button>
+                            </span>
+                        )}
                         {offered.length ? (
                             <span className="row-actions">
                                 {offered.map((action) => (
@@ -298,6 +311,8 @@ export const ValueGrid = ({
     onPreview,
     scopedQuestion,
     manyQuestion,
+    editable,
+    onEdit,
     resourceAt,
     onPageSize,
     actionsFor,
@@ -333,6 +348,10 @@ export const ValueGrid = ({
      * carrying customer ids resolves in one round trip.
      */
     manyQuestion: (resource: readonly string[], ids: readonly string[]) => RpcQuestion
+    /** Whether this component's write half accepts an `update` for the resource at this path. */
+    editable?: (path: readonly string[]) => boolean
+    /** Open the editor for one row. Absent leaves every row read-only, which is the default. */
+    onEdit?: (resource: readonly string[], id: string) => void
     /** A resource of this component by path, for what a reference points at. */
     resourceAt?: (path: readonly string[]) => DescribedResource | undefined
     /** What may be done to a row of the resource at this path, if anything. */
@@ -548,6 +567,7 @@ export const ValueGrid = ({
                     manyQuestion={manyQuestion}
                     references={resourceAt?.(leaf.path)?.references}
                     resourceAt={resourceAt}
+                    onEdit={editable?.(leaf.path) ? onEdit : undefined}
                     period={period}
                     pageSize={pageSize}
                     edit={edit}

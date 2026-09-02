@@ -358,6 +358,22 @@ h1 {
     border-top: 1px solid var(--line);
 }
 
+/* One row being changed. The same chrome as the action form, because from a reader's side they are
+   the same gesture - something is about to happen to the row they picked. */
+.record-form {
+    margin-top: 10px;
+    padding: 10px 12px;
+    border: 1px solid var(--line);
+    border-left: 2px solid var(--accent);
+    border-radius: 4px;
+    background: var(--panel);
+}
+
+.record-form .action-form-foot {
+    justify-content: space-between;
+    align-items: baseline;
+}
+
 /* What a row refers to, named. Quiet and beside the row rather than in it: the id is already
    there, and this is the sentence it stands for. */
 .row-reference {

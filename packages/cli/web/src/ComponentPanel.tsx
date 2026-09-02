@@ -1,5 +1,16 @@
 import { RefObject, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
-import { rpcComponent, type RpcCallOptions, type RpcComponentData, type RpcComponentLike, type RpcComponentStore, type RpcMethodSemantics, type RpcServer } from '@source-repo/rpc'
+import {
+    rpcComponent,
+    type RpcCallOptions,
+    type RpcComponentData,
+    type RpcComponentLike,
+    type RpcComponentStore,
+    type RpcMethodSemantics,
+    type RpcRowRead,
+    type RpcServer,
+    type RpcWritableResource,
+    type RpcWriteOutcome
+} from '@source-repo/rpc'
 import type { RpcDataCache, RpcQuestion } from '@source-repo/query'
 import { Uncertain, useCommanding } from './command'
 import { SourceView, type SourceDocument } from './SourceView'
@@ -8,6 +19,8 @@ import { staticSource, storeSource, type EditAffordance } from './ValueTree'
 import { ScopeTree } from './ScopeTree'
 import { ValueGrid, type PageQuestion } from './ValueGrid'
 import { ActionForm } from './ActionForm'
+import { RecordForm, type WriteOutcome } from './RecordForm'
+import { canUpdate, editableFields, writableFor, writeNamespace } from './writes'
 import type { BranchQuestion, RowQuestion, ScopedQuestion } from './ResourceTree'
 import type { ObjectAccess, Link, Ref, Where } from './ObjectPanel'
 import { actionsFor, leavesUnder, scopeTree } from './scope'
@@ -258,6 +271,18 @@ export const ComponentPanel = ({
     const [sending, setSending] = useState(false)
     /** What the peer said when it would not do it, which is the only report that it did not. */
     const [refused, setRefused] = useState<string | undefined>()
+    /**
+     * What this component's write half will accept, or nothing where it has none.
+     *
+     * Asked once per component rather than watched, because a write *rule* is a deployment's
+     * decision and does not change while somebody is looking at a row - unlike the row itself. A
+     * namespace that is not there is the ordinary case and not a failure: most components have no
+     * write half, and the refusal is swallowed on purpose.
+     */
+    const [writable, setWritable] = useState<readonly RpcWritableResource[] | undefined>()
+    /** The row being changed: what was read, and the stamp that names the state it was read in. */
+    const [editing, setEditing] = useState<{ resource: readonly string[]; id: string; row: Record<string, unknown>; stamp: string; name?: string } | undefined>()
+    const [wrote, setWrote] = useState<WriteOutcome | undefined>()
     /**
      * Every command this panel sends, and the key that makes a second attempt at one the *same*
      * command rather than another one. Shared by the editors and the row actions, because an
@@ -538,6 +563,86 @@ export const ComponentPanel = ({
      * and in time filtered and ordered - and all of that is `getList`'s already. The peer does the
      * collecting; this only asks.
      */
+    useEffect(() => {
+        let cancelled = false
+        const link = server.current
+        if (!link) return
+        void (async () => {
+            try {
+                const proxy = await link.proxy<{ writable(): Promise<readonly RpcWritableResource[]> }>(writeNamespace(namespace), peer)
+                const answer = await proxy.writable()
+                if (!cancelled) setWritable(answer)
+            } catch {
+                // No write half, or one that will not say. Either way there is nothing to offer,
+                // which is the same screen as before this existed.
+                if (!cancelled) setWritable(undefined)
+            }
+        })()
+        return () => {
+            cancelled = true
+        }
+    }, [peer, namespace, server])
+
+    /**
+     * Read the row through the write surface, which is the only read whose stamp means anything.
+     *
+     * The table beside this already has the row, and using it would be wrong twice: its copy came
+     * from a different question, and it carries no stamp at all. What `update` needs is the state
+     * the precondition will be checked against.
+     */
+    const openEditor = async (resource: readonly string[], id: string) => {
+        const link = server.current
+        if (!link || resource.length !== 1) return
+        setWrote(undefined)
+        try {
+            const proxy = await link.proxy<{ getOne(resource: string, id: string): Promise<RpcRowRead> }>(writeNamespace(namespace), peer)
+            const read = await proxy.getOne(resource[0], id)
+            if (read.status !== 'ok') return setWrote({ status: 'missing' })
+            const row = (read.row ?? {}) as Record<string, unknown>
+            // Named from the row the write surface just read, using the field the *read* resource
+            // says names one - the two halves describe the same rows, and only one of them was
+            // asked what to call them.
+            const names = component.resources?.find((one) => one.path.join('.') === resource.join('.'))?.presentation?.representation
+            const named = names ? row[names] : undefined
+            setEditing({ resource, id, row, stamp: read.stamp, ...(typeof named === 'string' && named ? { name: named } : {}) })
+        } catch (e) {
+            setWrote({ status: 'refused', message: (e as { message?: string }).message ?? String(e) })
+        }
+    }
+
+    /**
+     * Send the patch under the stamp the row was read with.
+     *
+     * `conflict` and `missing` are answers rather than exceptions - the contract is explicit that
+     * they are facts about the store and not failures of the call - so they are shown as answers.
+     * Only a genuine refusal is drawn as one.
+     */
+    const saveEdit = async (patch: Record<string, unknown>) => {
+        const link = server.current
+        if (!link || !editing) return
+        setSending(true)
+        setWrote(undefined)
+        let answer: WriteOutcome | undefined
+        // Through the same commanding path a row action uses, which is what mints one idempotency
+        // key per press and puts an outcome nobody knows into the tray. `update` is declared
+        // non-repeatable, and this is the screen where that has to mean something.
+        await commanding
+            .run(`${editing.resource.join('.')}/${editing.id}`, async (idempotencyKey) => {
+                const proxy = await link.proxy<Record<string, (...args: unknown[]) => Promise<RpcWriteOutcome>>>(writeNamespace(namespace), peer)
+                const outcome = await proxy.$with(commandOptions(idempotencyKey, 'non-repeatable-command')).update(editing.resource[0], editing.id, patch, editing.stamp)
+                // The read side is a different component with its own cache entries and no idea a
+                // write happened, so it is asked again rather than left to find out on a period.
+                if (outcome.status === 'ok') data.settled({ target: peer, namespace, resource: editing.resource })
+                answer = outcome.status === 'ok' ? { status: 'ok' } : outcome
+            })
+            .catch((e) => {
+                answer = { status: 'refused', message: (e as { message?: string }).message ?? String(e) }
+            })
+        setSending(false)
+        if (answer?.status === 'ok') setEditing(undefined)
+        else setWrote(answer)
+    }
+
     /**
      * A set of ids of one resource, asked for at once.
      *
@@ -723,11 +828,50 @@ export const ComponentPanel = ({
                                 onPageSize={(size) => {
                                     setPageSize(size)
                                     rememberPageSize(size)
-                                }} objectAccess={objectAccess} cache={data} pageQuestion={pageQuestion} period={period} actionsFor={(path) => actionsFor(component, path, methods)} manyQuestion={manyQuestion} resourceAt={(path) => component.resources?.find((declared) => declared.path.length === path.length && declared.path.every((segment, at) => segment === path[at]))} onAction={(action, id, resource, label) => pressAction(action, id, resource, label)} />
+                                }} objectAccess={objectAccess} cache={data} pageQuestion={pageQuestion} period={period} actionsFor={(path) => actionsFor(component, path, methods)} manyQuestion={manyQuestion} editable={(path) => canUpdate(writableFor(writable, path), component.resources?.find((one) => one.path.join('.') === path.join('.'))?.presentation?.edit)} onEdit={(resource, id) => void openEditor(resource, id)} resourceAt={(path) => component.resources?.find((declared) => declared.path.length === path.length && declared.path.every((segment, at) => segment === path[at]))} onAction={(action, id, resource, label) => pressAction(action, id, resource, label)} />
                         )}
                         {/* Under the rows rather than over them: the table is what somebody is
                             reading while they decide, and a form that covered it would hide the
                             row it is about. */}
+                        {/* One row being changed, under the stamp it was read with. Beside the
+                            action form rather than instead of it: an action is a method the node
+                            named, and this is the write contract - two different things that
+                            happen to want the same corner of the screen. */}
+                        {editing && (
+                            <RecordForm
+                                /**
+                                 * Keyed by the stamp, so reading the row again *remounts* the form
+                                 * on what is there now rather than merging into what somebody had
+                                 * typed against what used to be.
+                                 *
+                                 * Losing the typed text is the point rather than the cost. A
+                                 * conflict means another writer got there first, and the contract
+                                 * is explicit that proceeding means reading again and deciding
+                                 * again - a form that kept the old text would show the reader their
+                                 * own value with no sign of the one they were about to overwrite,
+                                 * which is the blind overwrite the missing stamp exists to prevent,
+                                 * arriving by a different route.
+                                 */
+                                key={editing.stamp}
+                                resource={editing.resource.join('.')}
+                                id={editing.id}
+                                name={editing.name}
+                                fields={editableFields(writableFor(writable, editing.resource), component.resources?.find((one) => one.path.join('.') === editing.resource.join('.'))?.presentation?.edit)}
+                                row={editing.row}
+                                shape={writableFor(writable, editing.resource)?.row}
+                                types={types}
+                                busy={sending}
+                                outcome={wrote}
+                                onSubmit={(patch) => void saveEdit(patch)}
+                                onReread={() => void openEditor(editing.resource, editing.id)}
+                                onCancel={() => {
+                                    setEditing(undefined)
+                                    setWrote(undefined)
+                                }}
+                            />
+                        )}
+                        {!editing && wrote?.status === 'missing' && <p className="component-error">there is no longer a row with this id</p>}
+                        {!editing && wrote?.status === 'refused' && <p className="component-error">{wrote.message}</p>}
                         {asking && (
                             <ActionForm
                                 action={asking.action}
