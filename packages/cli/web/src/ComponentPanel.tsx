@@ -237,10 +237,19 @@ export const ComponentPanel = ({
     server,
     data,
     onSubscribed,
-    standalone
+    standalone,
+    openAt
 }: {
     peer: string
     namespace: string
+    /**
+     * Which scope to open on, by its dotted path. What a search hit carries, so a reader lands on
+     * the resource the thing was found in rather than on whichever this component opens by default.
+     *
+     * Advice, and checked: a path this component does not have is ignored, because it arrives from a
+     * URL and an empty pane is indistinguishable from a resource that is genuinely empty.
+     */
+    openAt?: string
     /**
      * This panel is the whole page rather than one section of a peer's description.
      *
@@ -317,7 +326,19 @@ export const ComponentPanel = ({
      * opening it on a root that does not exist would show an empty grid beside a tree that plainly
      * has something in it.
      */
-    const [scope, setScope] = useState<string[]>(() => (component.state ? ['state'] : (tree[0]?.path ?? ['state'])))
+    /**
+     * State first where there is one, and otherwise whatever the tree begins with - unless a caller
+     * named the scope, which is how a search hit lands on the resource it was found in rather than
+     * on whichever this component happens to open with.
+     *
+     * Checked against the tree rather than taken on trust: a scope from a URL is somebody else's
+     * text, and a path this component does not have would show an empty pane with no way to tell
+     * that from a resource that is genuinely empty.
+     */
+    const [scope, setScope] = useState<string[]>(() => {
+        const asked = openAt ? tree.find((node) => node.path.join('.') === openAt) : undefined
+        return asked ? asked.path : component.state ? ['state'] : (tree[0]?.path ?? ['state'])
+    })
 
     /**
      * What the subscription asks for: every typed leaf in the whole component, and no collection.

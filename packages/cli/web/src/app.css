@@ -358,6 +358,43 @@ h1 {
     border-top: 1px solid var(--line);
 }
 
+/* ---- looking for something across a peer -------------------------------- */
+
+.search {
+    margin: 0 0 18px;
+}
+
+.search-head {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.search-head .control {
+    flex: 1 1 22rem;
+    min-width: 0;
+}
+
+.search-group {
+    margin-top: 10px;
+}
+
+.search-where {
+    font-size: 12px;
+    padding-bottom: 2px;
+    border-bottom: 1px solid var(--line);
+}
+
+.search-hits {
+    list-style: none;
+    margin: 4px 0 0;
+    padding: 0;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 14px;
+}
+
 /* One row being changed. The same chrome as the action form, because from a reader's side they are
    the same gesture - something is about to happen to the row they picked. */
 .record-form {

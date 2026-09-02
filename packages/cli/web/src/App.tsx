@@ -12,6 +12,7 @@ import chatContract from './chat.types.json'
 import { ComponentPanel } from './ComponentPanel'
 import { ContextPanel } from './ContextPanel'
 import { StructurePanel } from './StructurePanel'
+import { Search } from './Search'
 import { MethodPanel } from './MethodPanel'
 import { Operations } from './Operations'
 import { Traffic, TRAFFIC_KEPT } from './Traffic'
@@ -294,7 +295,10 @@ export const App = () => {
         const asked = new URLSearchParams(window.location.search)
         const peer = asked.get('observe')
         const namespace = asked.get('ns')
-        return peer && namespace ? { peer, namespace } : undefined
+        // `scope` is where a search hit points: the resource it was found in, so the observer opens
+        // on that rather than on whichever the component happens to begin with.
+        const scope = asked.get('scope') ?? undefined
+        return peer && namespace ? { peer, namespace, scope } : undefined
     }, [])
     const [described, setDescribed] = useState<ServerDescription | { error: string; code?: string } | null>(null)
     const [watching, setWatching] = useState<Set<string>>(new Set())
@@ -514,6 +518,7 @@ export const App = () => {
                     {description && shown?.component && (
                         <ComponentPanel
                             standalone
+                            openAt={observing.scope}
                             peer={observing.peer}
                             namespace={shown.name}
                             component={shown.component}
@@ -653,6 +658,20 @@ export const App = () => {
                             </div>
                         ) : null}
                         <StructurePanel description={description} peers={peers} onSelectPeer={(other) => void select(other)} />
+                        {/* Above the namespaces, because it is a question about all of them. */}
+                        <Search
+                            description={description}
+                            peer={description.name}
+                            cache={data}
+                            period={undefined}
+                            pageQuestion={(namespace, resource, filter, size) => ({
+                                target: description.name,
+                                namespace,
+                                method: 'getList',
+                                resource,
+                                params: { pagination: { page: 0, pageSize: size }, filter }
+                            })}
+                        />
                         {description.namespaces.map((namespace) => (
                             <section key={namespace.name} className="namespace">
                                 <h2>
