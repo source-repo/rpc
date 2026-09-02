@@ -171,7 +171,7 @@ class Named extends RpcComponent<{ title: string }, { rows: number }> {
             {
                 path: ['bad'],
                 verbs: ['getList'],
-                presentation: { representation: 'headline' },
+                presentation: { representation: 'headline', detail: ['title', 'absent'], edit: ['title', 'nowhere'] },
                 row: { kind: 'object', fields: { id: { type: { kind: 'string' } }, title: { type: { kind: 'string' } } } }
             }
         ]
@@ -353,6 +353,14 @@ test.serial('a representation that names nothing is reported, and says what it c
     t.regex(String(complaint), /'headline'/, 'and names the path somebody has to go and fix')
     t.regex(String(complaint), /named by their id instead/)
     t.false(said.some((line) => line.includes("names 'title'")), 'the one that is really there says nothing')
+
+    // Every hint that names a path is checked the same way, and each says what its own absence
+    // costs - a missing column is not a missing editable field, and being told "ignored" for both
+    // is being told nothing.
+    t.regex(String(said.find((line) => line.includes('presentation.detail'))), /'absent'.+still shows everything/s)
+    const edit = String(said.find((line) => line.includes('presentation.edit')))
+    t.regex(edit, /'nowhere'/)
+    t.regex(edit, /settled by the write rules, never here/, 'and says where the authority actually is')
 })
 
 test.serial('a row that admits fields it did not name is not missing them', async (t) => {

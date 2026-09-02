@@ -78,7 +78,7 @@ export interface DescribedResource {
      * Which columns to draw first. Advice, not a schema: a path the row does not have is not drawn,
      * and every other field stays readable - this decides what is shown first, never what may be.
      */
-    presentation?: { defaultColumns?: string[]; representation?: string }
+    presentation?: { defaultColumns?: string[]; representation?: string; detail?: string[]; edit?: string[] }
 }
 
 /** An observable component's shape: structure and a live count, never the snapshot itself. */

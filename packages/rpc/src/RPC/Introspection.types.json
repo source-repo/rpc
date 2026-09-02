@@ -1715,6 +1715,24 @@
             "kind": "string"
           },
           "optional": true
+        },
+        "detail": {
+          "type": {
+            "kind": "array",
+            "items": {
+              "kind": "string"
+            }
+          },
+          "optional": true
+        },
+        "edit": {
+          "type": {
+            "kind": "array",
+            "items": {
+              "kind": "string"
+            }
+          },
+          "optional": true
         }
       }
     },

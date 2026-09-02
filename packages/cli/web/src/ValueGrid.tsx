@@ -466,7 +466,7 @@ export const ValueGrid = ({
                             which is a worse answer than no button at all - the verb list is there
                             precisely so a viewer offers what is served and nothing else. */}
                         {preview && opensRows && opened !== undefined && (
-                            <RecordPanel cache={cache} question={rowQuestion(tree.path, opened)} id={opened} period={period} columns={columns} onClose={() => setOpened(undefined)} />
+                            <RecordPanel cache={cache} question={rowQuestion(tree.path, opened)} id={opened} period={period} columns={columns} detail={tree.presentation?.detail} onClose={() => setOpened(undefined)} />
                         )}
                         </div>
                     </>

@@ -358,6 +358,15 @@ h1 {
     border-top: 1px solid var(--line);
 }
 
+/* Where the fields the resource promoted end and the rest of the row begins. A rule rather than a
+   heading, because the rest are not a different kind of thing - they are the same row, further
+   down, and the panel deliberately still shows all of them. */
+.object-field.rest {
+    border-top: 1px solid var(--line);
+    padding-top: 6px;
+    margin-top: 4px;
+}
+
 /* ---- a row action that needs asking ------------------------------------- */
 
 /* Deliberately quiet: it appears under a table somebody is reading, and a panel that announced

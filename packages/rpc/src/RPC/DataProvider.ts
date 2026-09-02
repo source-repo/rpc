@@ -484,6 +484,35 @@ export interface RpcDataPresentationHint {
      * presentation hint is a worse failure than a viewer falling back to the id.
      */
     readonly representation?: string
+    /**
+     * Which fields to read first when one row is opened on its own.
+     *
+     * `defaultColumns` answers what a row looks like *among its siblings* - the four worth reading
+     * down a page. This answers what it looks like *on its own*, and the two are different
+     * questions with different right answers: a serial port has twenty-two fields, four of which
+     * belong in a table and about eight of which somebody opening one actually wants.
+     *
+     * **Order and prominence, never concealment.** The fields named here come first, in this order,
+     * and everything else follows - the same rule `defaultColumns` states one field up, because a
+     * reader comparing a panel against the row it came from must find every field in both. A viewer
+     * may choose to fold the remainder away; that is the reader's decision and not the node's.
+     */
+    readonly detail?: readonly string[]
+    /**
+     * Which fields an outside caller would reasonably want to change, in the order to offer them.
+     *
+     * **Advice that narrows, and it can never widen.** What may actually be written is settled by
+     * the write rules and answered by `writable()`, which resolves them against the store it is
+     * pointed at; this says which of those are worth putting in front of somebody, because a
+     * resource with forty writable columns and three anybody edits is the ordinary case. A path
+     * here that `writable()` does not resolve is dropped, exactly as a rule naming a column the
+     * store does not have is dropped - a presentation hint that could make a field editable would
+     * be a hint deciding authority, which is the one thing this whole surface is arranged against.
+     *
+     * Absent means the writable columns in the order the rule declares them, which is a perfectly
+     * good answer and the reason this is optional.
+     */
+    readonly edit?: readonly string[]
 }
 
 export interface RpcDataResource {
@@ -702,15 +731,24 @@ export const describedResources = (instance: unknown, owner: string, types?: Rpc
     return resources
 }
 
+/**
+ * Every path a presentation hint names, checked against the row it is about.
+ *
+ * One walk over four hints rather than four walks, and the consequence travels with each because
+ * they are not the same: a column that is not there leaves a table one column short, a
+ * representation that is not there leaves every confirmation naming a row by its id, and a field
+ * missing from `edit` is a field somebody expected to be able to change.
+ */
 const checkPresentation = (owner: string, resource: RpcDataResource, types?: RpcSchema['types']): void => {
-    if (!resource.row) return
-    const columns = resource.presentation?.defaultColumns ?? []
-    for (const column of columns) complain(owner, resource, types, column, 'defaultColumns', 'The column is ignored; every other field of the row is still selectable.')
-    const representation = resource.presentation?.representation
-    // The same check and a different consequence, which is why the sentence is passed in: a column
-    // that is not there leaves a table one column short, and a representation that is not there
-    // leaves every confirmation, reference and search hit naming a row by its id.
-    if (representation) complain(owner, resource, types, representation, 'representation', 'Rows will be named by their id instead.')
+    const hint = resource.presentation
+    if (!resource.row || !hint) return
+    const named: readonly [string, readonly string[], string][] = [
+        ['defaultColumns', hint.defaultColumns ?? [], 'The column is ignored; every other field of the row is still selectable.'],
+        ['representation', hint.representation ? [hint.representation] : [], 'Rows will be named by their id instead.'],
+        ['detail', hint.detail ?? [], 'The field is not promoted; an opened row still shows everything it carries.'],
+        ['edit', hint.edit ?? [], 'The field is not offered for editing. What may be written is settled by the write rules, never here.']
+    ]
+    for (const [where, paths, consequence] of named) for (const path of paths) complain(owner, resource, types, path, where, consequence)
 }
 
 const complain = (owner: string, resource: RpcDataResource, types: RpcSchema['types'] | undefined, path: string, hint: string, consequence: string): void => {

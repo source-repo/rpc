@@ -37,6 +37,7 @@ export const RecordPanel = ({
     id,
     period,
     columns,
+    detail,
     onClose
 }: {
     cache: RpcDataCache
@@ -57,12 +58,28 @@ export const RecordPanel = ({
      * came from should find every field in both.
      */
     columns?: readonly string[]
+    /**
+     * What the resource says to read first when a row is opened on its own.
+     *
+     * Order and prominence rather than a filter: the named fields come first in this order and the
+     * rest follow under a divider, because a reader comparing this panel against the row it came
+     * from has to find every field in both. Hiding the remainder would make the hint decide what
+     * may be seen, and it decides what is seen *first*.
+     */
+    detail?: readonly string[]
     onClose?: () => void
 }) => {
     const { data, error, fetching } = useRpcData<RpcGetOneResult>(cache, question, period)
 
     const row = data?.data
-    const fields = isRecord(row) ? Object.entries(row) : undefined
+    const all = isRecord(row) ? Object.entries(row) : undefined
+    const promoted = (detail ?? []).filter((name) => all?.some(([field]) => field === name))
+    const fields = all
+        ? [...promoted.map((name) => all.find(([field]) => field === name)!), ...all.filter(([field]) => !promoted.includes(field))]
+        : undefined
+    // Where the promoted ones end, so the rest can be shown as the rest. Absent where nothing was
+    // promoted, which is every resource that has not declared a detail set.
+    const rest = promoted.length && fields && promoted.length < fields.length ? promoted.length : undefined
     const inTable = new Set(columns ?? [])
 
     return (
@@ -84,8 +101,8 @@ export const RecordPanel = ({
             {data && row === undefined && <p className="muted">there is no longer a row with this id</p>}
             {fields && (
                 <dl className="object-fields">
-                    {fields.map(([name, value]) => (
-                        <div className={inTable.has(name) ? 'object-field in-table' : 'object-field'} key={name}>
+                    {fields.map(([name, value], at) => (
+                        <div className={`object-field${inTable.has(name) ? ' in-table' : ''}${at === rest ? ' rest' : ''}`} key={name}>
                             <dt className="muted">{name}</dt>
                             <dd>{shown(value)}</dd>
                         </div>

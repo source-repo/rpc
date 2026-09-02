@@ -342,9 +342,25 @@ class SerialPorts extends RpcComponent<RackProps, RackState> {
                 label: 'Serial ports',
                 // The four worth reading down a column, and `description` deliberately not among
                 // them. Every field stays selectable; this decides only what is shown first.
-                // The title, so `closePort` asks about `Weighbridge scale` rather than about
-                // `cab-1/hub-2/port-3`, which is where the port sits rather than what it is.
-                presentation: { defaultColumns: ['port', 'baudrate', 'status', 'errors'], representation: 'title' },
+                presentation: {
+                    defaultColumns: ['port', 'baudrate', 'status', 'errors'],
+                    // The title, so `closePort` asks about `Weighbridge scale` rather than about
+                    // `cab-1/hub-2/port-3`, which is where the port sits rather than what it is.
+                    representation: 'title',
+                    /**
+                     * The three sets are three different questions, and this fixture exists to show
+                     * that they have three different answers.
+                     *
+                     * Four columns are what fits across a rack of ports and what somebody scans
+                     * down. Opening one is a different act - it is nearly always because something
+                     * is wrong with it - so the line settings and the error counters come first,
+                     * and the twelve remaining fields are still there underneath. And of the
+                     * twenty-two, exactly three are things anybody outside this program would set:
+                     * what the port is called, how fast it runs, and what it is plugged into.
+                     */
+                    detail: ['title', 'status', 'lastError', 'errors', 'framingErrors', 'parityErrors', 'overruns', 'baudrate', 'parity', 'dataBits', 'stopBits', 'flowControl'],
+                    edit: ['title', 'baudrate', 'devicePath']
+                },
                 // Methods this component already has, said to apply to a row. The declaration adds
                 // no capability whatsoever - `resetPort` is an ordinary `@rpc` method, already in
                 // `describe()`, already ruled on. What this carries is the one fact a viewer cannot
