@@ -535,3 +535,46 @@ test.serial('write is offered on the variables of every arrangement, and on noth
         'declared for the kind it is about: an address space lists Methods beside Variables and both are leaves'
     )
 })
+
+test.serial('a mixed list can be asked for one kind of thing, in either arrangement', async (t) => {
+    const opcua = await connected(t)
+    const everything = await underFiller(opcua)
+    t.true(everything.some((row) => row.title === 'Recalibrate'), 'a Method is a leaf here, which is the whole problem')
+
+    // What a reader does when a list holds two kinds: ask for the one they came for. `kind` is a
+    // property of the occurrence rather than an entry in its fields, so before this it matched
+    // nothing - and nothing looks exactly like an empty branch from a console.
+    const line1 = rows(await branch(opcua)).find((row) => row.title === 'Line1')!
+    const filler = rows(await branch(opcua, line1.occurrenceId)).find((row) => row.title === 'Filler01')!
+    const variables = rows(await beneath(opcua, filler.occurrenceId, { page: 0, pageSize: 50 }, { field: 'kind', op: 'eq', operand: 'opcua.variable' }))
+    t.true(variables.length > 0)
+    t.false(variables.some((row) => row.title === 'Recalibrate'), 'and the Method is not among them')
+
+    // The same question of an arrangement built from the index, which reaches the other
+    // implementation entirely. It used to answer with everything: the filter arrived and nothing
+    // read it, which is the failure mode a console cannot tell from an empty branch.
+    const arranged = new OpcUaAspectProvider({ endpointUrl, identity: provider, derived: [byLocation] })
+    await arranged.connect()
+    t.teardown(async () => {
+        await arranged.disconnect()
+    })
+    await arranged.index()
+
+    // Large enough to reach past the server's own object, which is most of any address space.
+    const page = { pagination: { page: 0, pageSize: 500 } }
+    const all = rows((await arranged.dataRequest('getList', ['location'], page as never)) as RpcGetChildrenResult)
+    // A Method has no Value attribute, and asking for one gets a bad status back. Reading every
+    // leaf as though it were a Variable put that status in the cell, so every method in a list
+    // reported a fault it did not have.
+    const method = everything.find((row) => row.title === 'Recalibrate')! as unknown as { value?: string }
+    t.is(method.value, undefined, 'no value, rather than the failure of asking for one')
+
+    const kinds = [...new Set(all.map((row) => row.nodeClass))].sort()
+    t.deepEqual(kinds, ['Object', 'Variable'], 'the arrangement is mixed too - a childless Object is as much a leaf of it as a reading is')
+
+    const objects = (await arranged.dataRequest('getList', ['location'], { ...page, filter: { field: 'kind', op: 'eq', operand: 'opcua.object' } } as never)) as RpcGetChildrenResult
+    t.true(rows(objects).length > 0)
+    t.true(rows(objects).every((row) => row.nodeClass === 'Object'), 'one kind asked for, one kind returned')
+    t.true(rows(objects).length < all.length, 'and it is a narrowing rather than the same answer with a filter attached')
+    t.is(objects.total, rows(objects).length, 'the total counts what matched, not what was walked')
+})

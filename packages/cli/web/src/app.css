@@ -358,6 +358,21 @@ h1 {
     border-top: 1px solid var(--line);
 }
 
+/* Which kinds of thing a list holds. Above the rows and outside the scroller, because it decides
+   what the rows *are* and must not scroll away from them. */
+.kind-chips {
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
+    padding: 0 0 8px;
+    flex-wrap: wrap;
+}
+
+.kind-chips .toggle.on {
+    border-color: var(--accent);
+    color: var(--accent);
+}
+
 /* Where the fields the resource promoted end and the rest of the row begins. A rule rather than a
    heading, because the rest are not a different kind of thing - they are the same row, further
    down, and the panel deliberately still shows all of them. */

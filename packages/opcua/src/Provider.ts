@@ -152,6 +152,18 @@ const isGrouping = (nodeClass: string): boolean => nodeClass === 'Object' || nod
  * is bound to, and presses. A modal on top of that asks the same question twice, and a question
  * asked twice is one people learn to click through.
  */
+/**
+ * What a filter is tested against: an occurrence's own fields, plus the two things about it that are
+ * not fields.
+ *
+ * `title` was already here. `kind` is the addition, and it is the one that makes a mixed list
+ * usable: an address space lists Variables beside Methods and both are leaves, so `kind eq
+ * opcua.variable` is how a reader asks for the half they came for. It is a property of the
+ * occurrence rather than an entry in `fields`, so without this line a filter naming it matched
+ * nothing at all - which reads from a console exactly like a branch that happens to be empty.
+ */
+const matchable = (occurrence: Occurrence): Record<string, unknown> => ({ ...occurrence.fields, title: occurrence.title, kind: occurrence.kind })
+
 const WRITE: readonly RpcDataAction[] = [{ method: 'write', label: 'write', kinds: ['opcua.variable'] }]
 
 const builtinOf = (dataType: unknown): DataType | undefined => {
@@ -599,16 +611,22 @@ export class OpcUaAspectProvider extends AspectProvider<OpcUaProviderProps, OpcU
      * No walk and no budget: `index()` already visited the server once and the answer is in memory,
      * which is the whole reason an arrangement that had to be indexed can afford to be scoped.
      */
-    private derivedLeaves(aspectId: string, under: string | undefined, page: { from: number; size: number }): Branch {
+    private derivedLeaves(aspectId: string, under: string | undefined, page: { from: number; size: number; filter?: RpcFilter }): Branch {
         const built = this.indexOf(aspectId)
         const found: Occurrence[] = []
         const walk = (group: string) => {
             for (const occurrence of built.children.get(group) ?? []) {
                 if (occurrence.hasChildren) walk(occurrence.occurrenceId)
-                else found.push(occurrence)
+                // Tested here as the address-space walk tests it, and it was silently dropped
+                // before: the parameter arrived, nothing read it, and a caller asking for the
+                // Variables of an arrangement got everything back looking like an answer. A filter
+                // that is ignored is worse than one that is refused.
+                else if (!page.filter || matchesFilter(page.filter, matchable(occurrence), occurrence.occurrenceId)) found.push(occurrence)
             }
         }
         walk(under ?? derivedRoot)
+        // Countable here, unlike the address-space walk: the index is in memory, so the total is
+        // the number that matched rather than the number found before the page filled.
         return { total: found.length, occurrences: found.slice(page.from, page.from + page.size) }
     }
 
@@ -718,13 +736,18 @@ export class OpcUaAspectProvider extends AspectProvider<OpcUaProviderProps, OpcU
                 // whole address space, and a page of fifty matches must be fifty *matches* rather
                 // than fifty rows of which three matched. The library's own matcher, so a condition
                 // means the same thing here as it does over a table.
-                if (!page.filter || matchesFilter(page.filter, { ...leaf.fields, title: leaf.title }, leaf.occurrenceId)) found.push(leaf)
+                if (!page.filter || matchesFilter(page.filter, matchable(leaf), leaf.occurrenceId)) found.push(leaf)
             }
         }
 
         await walk(under, under ? this.nodeOf(under) : OBJECTS_FOLDER, [])
         const window = found.slice(page.from, page.from + page.size)
-        const values = await this.valuesFor(window.map((one) => ({ session: this.nodeOf(one.occurrenceId), nodeClass: 'Variable' })))
+        // The row's own class, not a blanket `Variable`. Claiming every leaf was one made the Read
+        // ask a Method for a value it does not have, and the bad status that came back was rendered
+        // with the message written for an unreadable *tag* - so every method in an address space sat
+        // in the list saying `(BadAttributeIdInvalid)`, which reads as a fault on a node that is
+        // working perfectly. Only visible once a reader could ask for the methods on their own.
+        const values = await this.valuesFor(window.map((one) => ({ session: this.nodeOf(one.occurrenceId), nodeClass: String(one.fields?.nodeClass ?? 'Variable') })))
         return {
             occurrences: window.map((one, at) => (values[at] !== undefined ? { ...one, fields: { ...one.fields, value: values[at] } } : one)),
             // More either because the walk filled the page and stopped, or because it ran out of

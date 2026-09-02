@@ -538,12 +538,12 @@ export const ComponentPanel = ({
      * and in time filtered and ordered - and all of that is `getList`'s already. The peer does the
      * collecting; this only asks.
      */
-    const scopedQuestion: ScopedQuestion = (resource, under, page, size) => ({
+    const scopedQuestion: ScopedQuestion = (resource, under, page, size, filter) => ({
         target: peer,
         namespace,
         method: 'getList',
         resource,
-        params: { pagination: { page, pageSize: size }, ...(under !== undefined ? { under } : {}) }
+        params: { pagination: { page, pageSize: size }, ...(under !== undefined ? { under } : {}), ...(filter ? { filter } : {}) }
     })
 
     /**

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { RpcDataCache, RpcQuestion } from '@source-repo/query'
+import type { RpcFilter } from '@source-repo/rpc'
 import { useRpcData } from './data'
 import type { Ref } from './ObjectPanel'
 import type { DescribedAction, DescribedResource } from './types'
@@ -40,7 +41,7 @@ export type RowQuestion = (resource: readonly string[], id: string) => RpcQuesti
  * and an order are *about* - a set of rows rather than a level of them. The peer answers it and
  * nothing here walks anything.
  */
-export type ScopedQuestion = (resource: readonly string[], under: string | undefined, page: number, pageSize: number) => RpcQuestion
+export type ScopedQuestion = (resource: readonly string[], under: string | undefined, page: number, pageSize: number, filter?: RpcFilter) => RpcQuestion
 
 interface Branch {
     readonly ids: readonly string[]
@@ -480,16 +481,28 @@ export const BranchTable = ({
     onAction?: (action: DescribedAction, id: string, resource: readonly string[], label?: string) => void
 }) => {
     const [page, setPage] = useState(0)
-    // A subtree where the resource answers for one, a level where it does not.
+    /**
+     * The one kind of thing being listed, where the reader has picked one.
+     *
+     * Asked of the peer rather than sifted here, which is the rule the whole scoped list follows:
+     * a page of fifty Variables is fifty Variables, and filtering what arrived would give a page of
+     * fifty *rows* of which some are Variables, with a pager counting the wrong set.
+     */
+    const [kind, setKind] = useState<string | undefined>()
+    const filter = useMemo(() => (kind ? ({ field: 'kind', op: 'eq', operand: kind } as RpcFilter) : undefined), [kind])
+    // A subtree where the resource answers for one, a level where it does not. Only the first can
+    // be narrowed: a level is a level, and there is nowhere to push a filter to.
     const question = useMemo(
-        () => (scopedQuestion ? scopedQuestion(resource, parentId, page, pageSize) : branchQuestion(resource, parentId, page, pageSize)),
-        [scopedQuestion, branchQuestion, resource, parentId, page, pageSize]
+        () => (scopedQuestion ? scopedQuestion(resource, parentId, page, pageSize, filter) : branchQuestion(resource, parentId, page, pageSize)),
+        [scopedQuestion, branchQuestion, resource, parentId, page, pageSize, filter]
     )
     const { data, error, fetching } = useRpcData(cache, question, period)
     const branch = data as Branch | undefined
     // Back to the first page when the branch changes: page four of one branch is not page four of
     // the next, and staying put would land somebody past the end of a list they never scrolled.
-    useEffect(() => setPage(0), [parentId, scopedQuestion])
+    useEffect(() => setPage(0), [parentId, scopedQuestion, filter])
+    // A branch is a different set of things, so which kinds are in it is a different question.
+    useEffect(() => setKind(undefined), [parentId])
 
     /**
      * Open one on arrival: what the branch named, or failing that the first row.
@@ -520,6 +533,25 @@ export const BranchTable = ({
      * pick one.
      */
     const listed = branch ? branch.ids.map((id, index) => [id, index] as const).filter(([, index]) => !isScope(branch, index)) : []
+
+    /**
+     * What kinds this branch holds, tallied from the last answer that was not already narrowed.
+     *
+     * Held rather than derived from whatever is on screen, because once a kind is picked the page
+     * is all of that kind and can no longer say what else was there - and a set of chips that
+     * collapsed to the one you chose would take away the way back to the others.
+     */
+    const [seen, setSeen] = useState<[string, number][]>([])
+    useEffect(() => {
+        if (filter || !branch) return
+        const tally = new Map<string, number>()
+        for (const [, index] of listed) {
+            const named = field(branch.data[index], 'kind')
+            if (typeof named === 'string' && named) tally.set(named, (tally.get(named) ?? 0) + 1)
+        }
+        const next = [...tally.entries()].sort(([a], [b]) => a.localeCompare(b))
+        setSeen((held) => (JSON.stringify(held) === JSON.stringify(next) ? held : next))
+    }, [branch, filter, listed])
     const suggested = branch && listed.length ? (listed.some(([id]) => id === branch.defaultChild) ? branch.defaultChild : listed[0][0]) : undefined
     const opening = `${parentId ?? ''}\u0000${suggested ?? ''}`
     const taken = useRef<string | undefined>(undefined)
@@ -557,13 +589,40 @@ export const BranchTable = ({
     // Nothing here is a thing to list - it is all scope, and the tree beside this is how it is read.
     if (!listed.length) return <p className="tree-note muted">pick a branch on the left to list what is in it</p>
 
-    const controls = pageControls(page, pageSize, branch, false)
+    const controls = pageControls(page, pageSize, branch, filter !== undefined)
     // A column for the label even when the resource named none: a table of ids and nothing else is
     // still a table, and it is what a resource that declared no `defaultColumns` honestly has.
     const headings = columns.length ? columns : ['id']
 
     return (
         <div className="branch-table-wrap">
+            {/* Which kinds of thing are in here, where there is more than one.
+             *
+             * An address space lists Variables beside Methods and both are leaves; a reader looking
+             * for a reading does not want the fourteen methods in the way. The kinds come from the
+             * rows that arrived and the counts are counts *of this page* - said in the label,
+             * because a number next to a name reads as how many there are, and the peer has not
+             * been asked that. Picking one asks the peer for that kind, so the page that comes back
+             * is a full page of them rather than what was left after sifting. */}
+            {(seen.length > 1 || kind) && (
+                <div className="kind-chips">
+                    <button className={kind === undefined ? 'toggle on' : 'toggle'} onClick={() => setKind(undefined)}>
+                        all
+                    </button>
+                    {seen.map(([name, count]) => (
+                        <button key={name} className={kind === name ? 'toggle on' : 'toggle'} onClick={() => setKind(kind === name ? undefined : name)} title={name}>
+                            {name.split('.').pop()}
+                            {/* Only while nothing is picked. The tally is of the page that arrived,
+                                and once a kind is asked for the peer answers with all of them - so
+                                `method 3` beside fourteen rows of methods would be a number
+                                contradicting the list under it. After picking, the pager is the
+                                one that can count, and it does. */}
+                            {!kind && <span className="muted"> {count}</span>}
+                        </button>
+                    ))}
+                    {!kind && <span className="muted">on this page</span>}
+                </div>
+            )}
             {/* The rows scroll inside this, and the pager below stays put. One element rather than
                 none, because a pager that scrolls away with a hundred rows is a pager somebody has
                 to reach the bottom of the page to press - which is the position they were using it
