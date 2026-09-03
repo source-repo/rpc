@@ -1,54 +1,60 @@
-import { leavesUnder, typeAt } from './scope.js'
-import type { DescribedComponent, TypeNode } from './types.js'
+import { leavesUnder, scopeTree, typeAt } from './scope.js'
+import type { DescribedComponent, ServerDescription, TypeNode } from './types.js'
 
 /**
- * A view: the nodes a reader chose to look at together, from wherever those nodes are.
+ * A watch list: the nodes a reader chose to look at together, from wherever those nodes are.
  *
- * Everything else here shows one scope, of one component, of one peer, and every navigation
- * replaces the last. That is right for reading a node and wrong for watching a plant, where the
- * four things somebody is comparing sit on four machines - so "how is the line doing" is a question
- * the console cannot be asked at all, however good its answer about any one node is.
+ * Everything else here shows one scope, of one component, of one peer, and every navigation replaces
+ * the last. That is right for reading a node and wrong for watching a plant, where the four things
+ * somebody is comparing sit on four machines - so "how is the line doing" is a question the console
+ * cannot be asked at all, however good its answer about any one node is.
  *
- * Two other ways to widen it were considered, and this is deliberately neither.
+ * ## The argument this file used to make, and why it was wrong
  *
- * **A root above the scopes** - the plant above `Line1` - widens within one component, which is what
- * the scope tree already does; it stops at the peer, and the case that needs solving crosses peers.
- * **A root above the network** - everything the federation serves, in one list - crosses peers and
- * fails for the opposite reason: the whole network is thousands of values, and a screen showing all
- * of them shows none of them. Neither is wrong, and both are the same move - *show me everything
- * under X* - whose limit is that the size of the set is decided by the topology rather than by
- * anyone reading it.
+ * It said that a set derived from the whole network - every scope of every peer, in one list - was
+ * not worth offering, because a federation is thousands of values and a screen showing all of them
+ * shows none. That is an argument about *size*, and size is not something the network root
+ * introduces. One OPC UA address space on the rig this was built against is four hundred nodes and a
+ * real one is far larger, and the console already deals with it: the scope tree is bounded by the
+ * contract, collections are paged, trees are browsed a branch at a time. The network root is the
+ * same problem one level up, and refusing it avoided a confrontation rather than settling one.
  *
- * A view is the other move: **the reader names the set**. It is small because somebody chose it, it
- * crosses peers because a locator does, and it outlives navigating away - which is the whole
- * difference between a view and a selection.
+ * What genuinely did not scale was never the number of nodes but **holding a channel per section**.
+ * That is a defect wherever it happens - a hand-picked list of thirty has it too - so it is fixed
+ * rather than dodged: a section costs nothing until it is opened, which makes a list of headings
+ * free and leaves opening one costing exactly what opening that node has always cost. The console
+ * offers both lists over the same rendering, and how big either one is stopped being the question.
+ *
+ * A chosen list is still the more useful of the two, for a reason that survives all of that: it is
+ * small because somebody chose it, it crosses peers because a locator does, and it outlives
+ * navigating away - which is the walk that made them want one.
  *
  * ## What is here and what is not
  *
- * The model, and nothing that fetches. A node in a view is a *locator*: a claim about where
- * something is, not a way to reach it. So nothing in this file opens a link, and nothing in it
- * draws: the arrangement is a layout, and layout is the thing this package says it does not do.
- * The console builds the pane out of `ValueGrid`, one per chosen node, which is how a view comes to
- * hold whatever a console can show rather than only what this file could have anticipated.
+ * The model, and nothing that fetches. A node is a *locator*: a claim about where something is, not
+ * a way to reach it. So nothing in this file opens a link, and nothing in it draws: the arrangement
+ * is a layout, and layout is the thing this package says it does not do. The console builds the pane
+ * out of `ValueGrid`, one per open node, which is how a watch list comes to hold whatever a console
+ * can show rather than only what this file could have anticipated.
  *
- * Persistence is the host's as well. Where a reader's view is kept is an application decision - a
+ * Persistence is the host's as well. Where a reader's list is kept is an application decision - a
  * browser console has `localStorage`, a CLI has a file, a hosted console has an account - and a
  * package that picked one of those would be picking wrong for the other two. What *is* here is
- * `asView`, because reading a stored view back is not persistence but validation: the text was
+ * `asWatch`, because reading a stored list back is not persistence but validation: the text was
  * written by an older version of this software, and a node it can no longer make sense of has to be
  * dropped rather than take a pane down with it.
  *
- * ## One view, ordered, unnamed
+ * ## One list, ordered, unnamed
  *
- * There is one and it has no name. A list of named views is the obvious next shape and is
+ * There is one and it has no name. A set of named lists is the obvious next shape and is
  * deliberately not built yet: naming and multiplicity arrive together, they arrive with a picker and
  * a create-and-delete of their own, and none of that is needed to find out whether reading four
- * machines on one screen is worth the code. `View` is an ordered list rather than a set so that
+ * machines on one screen is worth the code. `Watch` is an ordered list rather than a set so that
  * becoming one element of a longer list is an addition rather than a rewrite.
  */
 
 /** Where a chosen node is. Enough to find it again after a reload, and nothing about drawing it. */
-export interface ViewNode {
+export interface WatchNode {
     readonly peer: string
     readonly namespace: string
     /** Spelled from the component root, exactly as a scope selection is: `['state', 'zones', 'top']`. */
@@ -61,7 +67,7 @@ export interface ViewNode {
  * Ordered because they put it in an order, and it is theirs: a list that re-sorted itself
  * alphabetically, or by peer, would be answering a question nobody asked over one somebody did.
  */
-export type View = readonly ViewNode[]
+export type Watch = readonly WatchNode[]
 
 /**
  * The identity of a chosen node.
@@ -72,28 +78,28 @@ export type View = readonly ViewNode[]
  * file binary to everything that decides by sniffing content, and `grep` then matches it and prints
  * nothing at all. See CLAUDE.md, which has the scars.
  */
-export const viewKey = (node: ViewNode): string => `${node.peer}\u0000${node.namespace}\u0000${node.path.join('.')}`
+export const watchKey = (node: WatchNode): string => `${node.peer}\u0000${node.namespace}\u0000${node.path.join('.')}`
 
-export const holds = (view: View, node: ViewNode): boolean => view.some((held) => viewKey(held) === viewKey(node))
+export const holds = (watch: Watch, node: WatchNode): boolean => watch.some((held) => watchKey(held) === watchKey(node))
 
 /**
  * Add, idempotently, at the end.
  *
  * Adding what is already there is neither an error nor a duplicate. The button that does this sits
- * on a screen that may not be showing the view, so a reader pressing it twice is ordinary rather
+ * on a screen that may not be showing the list, so a reader pressing it twice is ordinary rather
  * than careless - and a set with the same tag in it twice is something they now have to repair.
  */
-export const withNode = (view: View, node: ViewNode): View =>
-    holds(view, node) ? view : [...view, { peer: node.peer, namespace: node.namespace, path: [...node.path] }]
+export const withNode = (watch: Watch, node: WatchNode): Watch =>
+    holds(watch, node) ? watch : [...watch, { peer: node.peer, namespace: node.namespace, path: [...node.path] }]
 
-export const withoutNode = (view: View, key: string): View => view.filter((held) => viewKey(held) !== key)
+export const withoutNode = (watch: Watch, key: string): Watch => watch.filter((held) => watchKey(held) !== key)
 
 /** Move one node one place, staying inside the list. A move off either end is no move, not a wrap. */
-export const movedNode = (view: View, key: string, by: -1 | 1): View => {
-    const at = view.findIndex((held) => viewKey(held) === key)
+export const movedNode = (watch: Watch, key: string, by: -1 | 1): Watch => {
+    const at = watch.findIndex((held) => watchKey(held) === key)
     const to = at + by
-    if (at < 0 || to < 0 || to >= view.length) return view
-    const moved = [...view]
+    if (at < 0 || to < 0 || to >= watch.length) return watch
+    const moved = [...watch]
     ;[moved[at], moved[to]] = [moved[to], moved[at]]
     return moved
 }
@@ -107,40 +113,40 @@ export const movedNode = (view: View, key: string, by: -1 | 1): View => {
  * would lose a reader their entire view because of one node on a peer that has since been renamed,
  * which is the moment they would least like to lose it.
  */
-export const asView = (held: unknown): View =>
+export const asWatch = (held: unknown): Watch =>
     Array.isArray(held)
         ? held.filter(
-              (node): node is ViewNode =>
+              (node): node is WatchNode =>
                   !!node &&
                   typeof node === 'object' &&
-                  typeof (node as ViewNode).peer === 'string' &&
-                  typeof (node as ViewNode).namespace === 'string' &&
-                  Array.isArray((node as ViewNode).path) &&
-                  (node as ViewNode).path.every((segment) => typeof segment === 'string')
+                  typeof (node as WatchNode).peer === 'string' &&
+                  typeof (node as WatchNode).namespace === 'string' &&
+                  Array.isArray((node as WatchNode).path) &&
+                  (node as WatchNode).path.every((segment) => typeof segment === 'string')
           )
         : []
 
 /**
- * How a screen offers to put what it is showing into the view.
+ * How a screen offers to put what it is showing onto the watch list.
  *
  * An affordance rather than a callback pair, for the reason `EditAffordance` is one: a control has
  * to know whether to offer the action *and* what it is already, and a component given only the verb
  * would have to guess the state or ask for it separately. `holds` is what makes the button able to
- * say `in view` instead of pretending nothing has happened when it is pressed a second time.
+ * say `on watch` instead of pretending nothing has happened when it is pressed a second time.
  *
  * Optional wherever it appears. A console with no view - or a screen where adding would mean
  * nothing - passes none, and the control is simply absent rather than present and inert.
  */
-export interface ViewAffordance {
-    holds(node: ViewNode): boolean
-    add(node: ViewNode): void
+export interface WatchAffordance {
+    holds(node: WatchNode): boolean
+    add(node: WatchNode): void
 }
 
 /** The chosen nodes of one component of one peer, which is one subscription's worth. */
-export interface ViewChannel {
+export interface WatchChannel {
     readonly peer: string
     readonly namespace: string
-    readonly nodes: readonly ViewNode[]
+    readonly nodes: readonly WatchNode[]
 }
 
 /**
@@ -154,9 +160,9 @@ export interface ViewChannel {
  * First appearance decides the order of the groups, so a view somebody arranged does not come back
  * rearranged by peer name.
  */
-export const channelsFor = (view: View): readonly ViewChannel[] => {
-    const groups = new Map<string, { peer: string; namespace: string; nodes: ViewNode[] }>()
-    for (const node of view) {
+export const channelsFor = (watch: Watch): readonly WatchChannel[] => {
+    const groups = new Map<string, { peer: string; namespace: string; nodes: WatchNode[] }>()
+    for (const node of watch) {
         const key = `${node.peer}\u0000${node.namespace}`
         const group = groups.get(key)
         if (group) group.nodes.push(node)
@@ -181,7 +187,7 @@ export const channelsFor = (view: View): readonly ViewChannel[] => {
  * cut of this conflated the two and drew only what it could subscribe to, which on a network of
  * aspect providers and relational services meant a view that could hold nothing at all.
  */
-export const viewProjection = (nodes: readonly ViewNode[], component: DescribedComponent, types?: { [name: string]: TypeNode }): string[][] => {
+export const watchProjection = (nodes: readonly WatchNode[], component: DescribedComponent, types?: { [name: string]: TypeNode }): string[][] => {
     const paths = new Map<string, string[]>()
     for (const node of nodes)
         for (const leaf of leavesUnder(typeAt(component, [...node.path], types), [...node.path], types))
@@ -191,3 +197,15 @@ export const viewProjection = (nodes: readonly ViewNode[], component: DescribedC
             if (!leaf.collection) paths.set(leaf.path.join('.'), leaf.path)
     return [...paths.values()]
 }
+
+/**
+ * Every scope of every observable namespace of every described peer.
+ *
+ * Roots only - the top of each component's scope tree, plus each declared resource - rather than
+ * every node of every tree. A list of everything is for finding out what is there; the way in to one
+ * of them is to open it, which is where the scope tree and its whole depth already are.
+ */
+export const everythingIn = (known: { readonly [peer: string]: ServerDescription }): Watch =>
+    Object.entries(known).flatMap(([peer, description]) =>
+        description.namespaces.flatMap((namespace) => (namespace.component ? scopeTree(namespace.component, description.types).map((node) => ({ peer, namespace: namespace.name, path: node.path })) : []))
+    )

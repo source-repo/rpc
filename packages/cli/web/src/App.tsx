@@ -10,11 +10,11 @@ import { ChatMessage, ChatService } from './ChatService'
 // `say(from: string, text: string)` instead of `say(…)`.
 import chatContract from './chat.types.json'
 import { ComponentPanel } from './ComponentPanel'
-import { ViewPane } from './ViewPane'
+import { WatchPane } from './WatchPane'
 import { ContextPanel } from './ContextPanel'
 import { StructurePanel } from './StructurePanel'
-import { asView, ConsoleService, holds, DescribedEvent, fetchConsoleName, NetworkProblem, PeerChange, PeerRole, PeerStructure, Search, ServerDescription, socketPath, StreamedEvent, TappedFrame, targetsIn, typeText, withNode, type View, type ViewNode } from '@source-repo/react'
-import type { SearchTarget } from '@source-repo/search'
+import { asWatch, ConsoleService, holds, DescribedEvent, fetchConsoleName, NetworkProblem, PeerChange, PeerRole, PeerStructure, Search, ServerDescription, socketPath, StreamedEvent, TappedFrame, targetsIn, typeText, withNode, type Watch, type WatchNode } from '@source-repo/react'
+import { throttled, type SearchTarget } from '@source-repo/search'
 import { MethodPanel } from './MethodPanel'
 import { Operations } from './Operations'
 import { Traffic, TRAFFIC_KEPT } from './Traffic'
@@ -23,7 +23,7 @@ import { Presence } from './Presence'
 import { displayNameForId, namespaceDisplayName, peerDisplayName } from './displayName'
 
 /**
- * The reader's view, kept where the reader is.
+ * The reader's watch, kept where the reader is.
  *
  * In `localStorage` and not on a peer, because a view is a fact about somebody rather than about
  * the network: two people watching the same plant are watching different parts of it, and a set of
@@ -35,22 +35,22 @@ import { displayNameForId, namespaceDisplayName, peerDisplayName } from './displ
  * in a browser set to block site data, and a console that would not start because it could not
  * remember a view is a worse failure than one that forgets it.
  */
-const VIEW_KEY = 'msgrpc.view'
+const WATCH_KEY = 'msgrpc.watch'
 
-const rememberedView = (): View => {
+const rememberedWatch = (): Watch => {
     try {
-        const held = window.localStorage.getItem(VIEW_KEY)
-        return held ? asView(JSON.parse(held)) : []
+        const held = window.localStorage.getItem(WATCH_KEY)
+        return held ? asWatch(JSON.parse(held)) : []
     } catch {
-        // Unreadable is empty. `asView` already keeps whatever is still intelligible inside a
+        // Unreadable is empty. `asWatch` already keeps whatever is still intelligible inside a
         // document that parsed; this is the case where nothing did.
         return []
     }
 }
 
-const rememberView = (view: View) => {
+const rememberWatch = (watch: Watch) => {
     try {
-        window.localStorage.setItem(VIEW_KEY, JSON.stringify(view))
+        window.localStorage.setItem(WATCH_KEY, JSON.stringify(watch))
     } catch {
         // Nothing to do: the view is still on screen, it just will not outlive the tab.
     }
@@ -324,6 +324,16 @@ export const App = () => {
      * is the load a console adds by being opened.
      */
     const [known, setKnown] = useState<{ readonly [peer: string]: ServerDescription }>({})
+    /**
+     * Peers that would not describe themselves, kept rather than retried.
+     *
+     * A separate map from `known` so that the search targets stay a list of successes - `targetsIn`
+     * reads descriptions and a refusal is not one - while a pane naming a peer can still say why it
+     * has nothing to show for it.
+     */
+    const [describeRefusals, setDescribeRefusals] = useState<{ readonly [peer: string]: string }>({})
+    /** Which describes are in flight, so two panes asking at once ask once. A ref: renders must not lose it. */
+    const asking = useRef(new Set<string>())
     const [offline, setOffline] = useState<Set<string>>(new Set())
     const [selected, setSelected] = useState<string | null>(null)
     /**
@@ -331,11 +341,11 @@ export const App = () => {
      *
      * Kept here rather than inside the panel because it outlives the panel: the whole point of a
      * view is that it survives walking away to another peer, which is the walk that made a reader
-     * want one. `showingView` is exclusive with `selected` for the same reason a peer is exclusive
+     * want one. `showingWatch` is exclusive with `selected` for the same reason a peer is exclusive
      * with another peer - the main pane shows one thing.
      */
-    const [view, setView] = useState<View>(rememberedView)
-    const [showingView, setShowingView] = useState(false)
+    const [watch, setView] = useState<Watch>(rememberedWatch)
+    const [showingWatch, setShowingWatch] = useState(false)
     /**
      * The observer this page was opened onto, when it was opened as one.
      *
@@ -352,68 +362,70 @@ export const App = () => {
      * absent from the targets - which is the same outcome as a peer that serves nothing searchable,
      * and both are better than a search box that fails because one node is unreachable.
      */
-    const onSearching = useCallback(
-        (query: string) => {
-            if (!query.trim() || !service) return
-            const missing = peers.filter((peer) => !(peer in known))
+    /**
+     * Describe these peers, once each, never more than a few at a time.
+     *
+     * Two panes want this and they want it for the same reason: a search asks every peer whether it
+     * has a row, and the watch pane asks every peer what it serves. Both are one question per peer,
+     * issued because somebody opened something, and both are a burst on a plant network if nothing
+     * bounds them - so the bound is `@source-repo/search`'s own, which was never really about
+     * searching.
+     *
+     * A peer that refuses is remembered as a refusal rather than retried on every render. The search
+     * targets simply omit it, which is the same outcome as a peer serving nothing searchable; the
+     * watch pane says which peer would not answer, because there a reader is looking at a named
+     * section and an empty one would read as an empty node.
+     */
+    const describePeers = useCallback(
+        (wanted: readonly string[]) => {
+            if (!service) return
+            const missing = wanted.filter((peer) => !(peer in known) && !(peer in describeRefusals) && !asking.current.has(peer))
             if (!missing.length) return
-            void Promise.all(
-                missing.map(async (peer) => {
-                    try {
-                        const answer = await service.describe(peer)
-                        return [peer, answer] as const
-                    } catch {
-                        return undefined
-                    }
-                })
-            ).then((answers) => {
-                const learnt = answers.filter((one): one is readonly [string, ServerDescription] => !!one && 'namespaces' in one[1])
+            for (const peer of missing) asking.current.add(peer)
+            void throttled(missing, 6, async (peer) => {
+                try {
+                    return [peer, await service.describe(peer)] as const
+                } catch (failure) {
+                    return [peer, { error: (failure as { message?: string }).message ?? String(failure) }] as const
+                }
+            }).then((answers) => {
+                for (const [peer] of answers) asking.current.delete(peer)
+                const learnt = answers.filter((one): one is readonly [string, ServerDescription] => 'namespaces' in one[1])
+                const refused = answers.filter((one): one is readonly [string, { error: string }] => !('namespaces' in one[1]))
                 if (learnt.length) setKnown((held) => ({ ...held, ...Object.fromEntries(learnt) }))
+                if (refused.length) setDescribeRefusals((held) => ({ ...held, ...Object.fromEntries(refused.map(([peer, why]) => [peer, why.error])) }))
             })
         },
-        [service, peers, known]
+        [service, known, describeRefusals]
     )
+
+    const onSearching = useCallback((query: string) => (query.trim() ? describePeers(peers) : undefined), [describePeers, peers])
 
     /**
      * Change the view and remember it in one move.
      *
      * Takes a change rather than a value so that a button on a screen which is not showing the view
-     * cannot write back a stale copy of it: `add to view` fires from the component panel, which was
+     * cannot write back a stale copy of it: `add to watch` fires from the component panel, which was
      * rendered from whatever the view was when it mounted.
      */
-    const changeView = useCallback((change: (held: View) => View) => {
+    const changeWatch = useCallback((change: (held: Watch) => Watch) => {
         setView((held) => {
             const next = change(held)
-            rememberView(next)
+            rememberWatch(next)
             return next
         })
     }, [])
 
-    const addToView = useCallback((node: ViewNode) => changeView((held) => withNode(held, node)), [changeView])
+    const addToWatch = useCallback((node: WatchNode) => changeWatch((held) => withNode(held, node)), [changeWatch])
 
     /**
      * The affordance every scope pane is handed, rebuilt only when the view changes.
      *
      * One object rather than two props for the reason `EditAffordance` is one: a control has to
      * know what the state already is as well as how to change it, and a button given only the verb
-     * would say `add to view` on something already in it.
+     * would say `add to watch` on something already in it.
      */
-    const viewing = useMemo(() => ({ holds: (node: ViewNode) => holds(view, node), add: addToView }), [view, addToView])
-
-    /**
-     * Describe a peer for the view, which may be a peer this console has never looked at.
-     *
-     * Peers are described lazily here - a search does the same - and a view is the case that makes
-     * that visible: it is restored from storage naming four peers, and three of them may never have
-     * been selected.
-     */
-    const describeForView = useCallback(
-        async (other: string) => {
-            if (!service) throw new Error('the console is not connected')
-            return service.describe(other)
-        },
-        [service]
-    )
+    const viewing = useMemo(() => ({ holds: (node: WatchNode) => holds(watch, node), add: addToWatch }), [watch, addToWatch])
 
     /** Every resource of every described peer that can answer, which is what the fan-out asks. */
     const targets = useMemo(() => Object.entries(known).flatMap(([peer, description]) => targetsIn(peer, description)), [known])
@@ -460,8 +472,8 @@ export const App = () => {
     const [roles, setRoles] = useState<{ [peer: string]: PeerRole }>({})
     const [structure, setStructure] = useState<{ [peer: string]: PeerStructure }>({})
 
-    /** What to call a place in the view, under the same display names the rest of the console uses. */
-    const viewTitle = useCallback((other: string, namespace: string) => `${peerDisplayName(other, structure[other])} · ${namespace}`, [structure])
+    /** What to call a place in the watch, under the same display names the rest of the console uses. */
+    const watchTitle = useCallback((other: string, namespace: string) => `${peerDisplayName(other, structure[other])} · ${namespace}`, [structure])
     const [comings, setComings] = useState<PeerChange[]>([])
     const [eventFilter, setEventFilter] = useState('')
     const [eventsPaused, setEventsPaused] = useState(false)
@@ -488,7 +500,7 @@ export const App = () => {
             setChats((current) => ({ ...current, [from]: [...(current[from] ?? []), { from, text, at: Date.now(), mine: false }] }))
             // Counted unconditionally and cleared below when it is genuinely on screen. Deciding it
             // here would mean reading `tab` and `selected` out of a closure this effect installs
-            // once, so every message after the first would be judged against a stale view.
+            // once, so every message after the first would be judged against a stale watch.
             setUnread((current) => ({ ...current, [from]: (current[from] ?? 0) + 1 }))
         }
     }, [said])
@@ -563,7 +575,7 @@ export const App = () => {
 
     const select = async (peer: string) => {
         setSelected(peer)
-        setShowingView(false)
+        setShowingWatch(false)
         setDescribed(null)
         if (!service) return
         setDescribed(await service.describe(peer))
@@ -711,11 +723,11 @@ export const App = () => {
                     A view crosses the network, so putting it inside the list would be filing it
                     under whichever peer happened to be first - and the whole point is that it
                     belongs to none of them. */}
-                <button className={`peer view-entry${showingView ? ' selected' : ''}`} onClick={() => setShowingView(true)}>
+                <button className={`peer watch-entry${showingWatch ? ' selected' : ''}`} onClick={() => setShowingWatch(true)}>
                     <span className="entity-title">
-                        <span>view</span>
+                        <span>watch</span>
                     </span>
-                    {view.length > 0 && <span className="badge">{view.length}</span>}
+                    {watch.length > 0 && <span className="badge">{watch.length}</span>}
                 </button>
                 <header>
                     <h1>Peers</h1>
@@ -780,17 +792,17 @@ export const App = () => {
             </aside>
 
             <main>
-                {showingView && <ViewPane view={view} onChange={changeView} server={peer} describe={describeForView} title={viewTitle} cache={data} period={undefined} pageSize={25} />}
-                {!showingView && !selected && <p className="muted">Select a peer to see what it exposes.</p>}
-                {!showingView && selected && !described && <p className="muted">Describing {selected}…</p>}
-                {!showingView && failed && (
+                {showingWatch && <WatchPane watch={watch} onChange={changeWatch} server={peer} known={known} refusals={describeRefusals} onNeed={describePeers} peers={peers} title={watchTitle} cache={data} period={5000} pageSize={25} />}
+                {!showingWatch && !selected && <p className="muted">Select a peer to see what it exposes.</p>}
+                {!showingWatch && selected && !described && <p className="muted">Describing {selected}…</p>}
+                {!showingWatch && failed && (
                     <div className="notice">
                         <strong>{failed.code ?? 'Error'}</strong>
                         <p>{failed.error}</p>
                         <p className="muted">A server answers this only when it is started with exposeIntrospection.</p>
                     </div>
                 )}
-                {!showingView && description && (
+                {!showingWatch && description && (
                     <>
                         <header className="peer-head">
                             <h1>

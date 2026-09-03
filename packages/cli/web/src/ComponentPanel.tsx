@@ -12,7 +12,7 @@ import {
     type RpcWriteOutcome
 } from '@source-repo/rpc'
 import type { RpcDataCache, RpcQuestion } from '@source-repo/query'
-import { ActionForm, actionsFor, canUpdate, editableFields, leavesUnder, RecordForm, scopeTree, staticSource, storeSource, Uncertain, useCommanding, ValueGrid, writableFor, writeNamespace, type BranchQuestion, type DescribedAction, type DescribedComponent, type DescribedMethod, type EditAffordance, type Link, type ObjectAccess, type PageQuestion, type Ref, type RowQuestion, type ScopedQuestion, type TypeNode, type ViewAffordance, type Where, type WriteOutcome } from '@source-repo/react'
+import { ActionForm, actionsFor, canUpdate, editableFields, leavesUnder, RecordForm, scopeTree, staticSource, storeSource, Uncertain, useCommanding, ValueGrid, writableFor, writeNamespace, type BranchQuestion, type DescribedAction, type DescribedComponent, type DescribedMethod, type EditAffordance, type Link, type ObjectAccess, type PageQuestion, type Ref, type RowQuestion, type ScopedQuestion, type TypeNode, type WatchAffordance, type Where, type WriteOutcome } from '@source-repo/react'
 import { SourceView, type SourceDocument } from './SourceView'
 import { overlayRefusal, type RpcSourceBinding, type RpcSourceCatalogue, type RpcActiveSourceIdentity } from '@source-repo/diagnostics/catalogue'
 import { ScopeTree } from './ScopeTree'
@@ -64,7 +64,7 @@ import { ScopeTree } from './ScopeTree'
  * failure than one that forgets. Defaults to showing, which is the answer somebody who has never
  * touched it is expecting.
  */
-const PREVIEW_KEY = 'msgrpc.preview'
+const PREWATCH_KEY = 'msgrpc.preview'
 /**
  * Rows per page, for every component at once.
  *
@@ -93,7 +93,7 @@ const rememberPageSize = (size: number) => {
 
 const rememberedPreview = (): boolean => {
     try {
-        return window.localStorage.getItem(PREVIEW_KEY) !== 'off'
+        return window.localStorage.getItem(PREWATCH_KEY) !== 'off'
     } catch {
         return true
     }
@@ -101,7 +101,7 @@ const rememberedPreview = (): boolean => {
 
 const rememberPreview = (on: boolean) => {
     try {
-        window.localStorage.setItem(PREVIEW_KEY, on ? 'on' : 'off')
+        window.localStorage.setItem(PREWATCH_KEY, on ? 'on' : 'off')
     } catch {
         // Nothing to do and nothing worth saying: the pane still changed on screen.
     }
@@ -265,7 +265,7 @@ export const ComponentPanel = ({
      * heading, which is what somebody comparing four machines wants. Adding a single value is the
      * obvious next grain and belongs on the row rather than here.
      */
-    viewing?: ViewAffordance
+    viewing?: WatchAffordance
     /** The page's one cache. Holds the answers, and decides whether a period tick asks anything. */
     data: RpcDataCache
     /** The peer's observer count just changed, so a re-describe will show it moving. */
@@ -351,9 +351,9 @@ export const ComponentPanel = ({
      * remember whether they added this is the ordinary case, and a control that vanished would
      * leave them to go and look.
      */
-    const addToView = viewing && (
+    const addToWatch = viewing && (
         <button className="toggle" disabled={inView} onClick={() => viewing.add(chosen)} title={inView ? 'this scope is already in the view' : 'watch this scope alongside nodes from any other peer'}>
-            {inView ? 'in view' : 'add to view'}
+            {inView ? 'on watch' : 'add to watch'}
         </button>
     )
 
@@ -833,13 +833,13 @@ export const ComponentPanel = ({
                                     </option>
                                 ))}
                             </select>
-                            {addToView}
+                            {addToWatch}
                         </div>
                     ) : (
                         <div className="scope-pane">
                             <h4>
                                 scope
-                                {addToView}
+                                {addToWatch}
                             </h4>
                             <ScopeTree nodes={tree} selected={scope.join('.')} onSelect={setScope} />
                         </div>

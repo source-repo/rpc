@@ -263,7 +263,7 @@ h1 {
 
 /* The view sits above the peers and is not one of them: full width like a peer row so the list
    reads as one column, with a rule under it so it is plainly not the first entry of the list. */
-.view-entry {
+.watch-entry {
     justify-content: space-between;
     margin-bottom: 10px;
     padding-bottom: 10px;
@@ -1663,27 +1663,58 @@ h1 {
     margin-bottom: 2px;
 }
 
-/* ---- the view: nodes a reader chose, from wherever they are --------------- */
+/* ---- the watch pane: places a reader chose, or every place there is ------ */
 
 /* Sections rather than a flat table with a "where" column, because two machines running the same
    line publish the same paths under the same names - so the answer to "which one is this" has to be
    above the rows rather than repeated in every one of them. */
-.view-node {
+.watch-node {
     margin: 0 0 18px;
 }
 
-.view-node-head {
+/* A closed section is a heading and nothing else, which is the whole reason a list of every node on
+   the network is a reasonable thing to draw. It is spaced tighter to say so. */
+.watch-node.shut {
+    margin-bottom: 2px;
+}
+
+.watch-node-head {
     display: flex;
     align-items: baseline;
     justify-content: space-between;
     gap: 10px;
     flex-wrap: wrap;
     padding-bottom: 3px;
-    margin-bottom: 4px;
     border-bottom: 1px solid var(--line);
 }
 
-.view-node-controls {
+.watch-node.shut .watch-node-head {
+    border-bottom-color: transparent;
+}
+
+/* The whole heading is the disclosure, rather than a triangle somebody has to hit. */
+.watch-node-name {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    flex: 1 1 auto;
+    min-width: 0;
+    text-align: left;
+    padding: 2px 0;
+}
+
+.watch-node-name:hover .entity-title > span:first-child {
+    color: var(--accent);
+}
+
+.twist {
+    flex: none;
+    width: 0.8rem;
+    color: var(--muted);
+    font-size: 11px;
+}
+
+.watch-node-controls {
     display: flex;
     align-items: baseline;
     gap: 4px;
@@ -1692,12 +1723,22 @@ h1 {
 
 /* The two move buttons are one glyph wide and would otherwise be two different widths, which reads
    as a misalignment rather than as two buttons. */
-.view-node-controls .toggle {
+.watch-node-controls .toggle {
     min-width: 1.6rem;
     text-align: center;
 }
 
-.view-node-controls .toggle:disabled {
+.watch-node-controls .toggle:disabled {
     opacity: 0.4;
     cursor: default;
+}
+
+.watch-modes {
+    display: flex;
+    gap: 4px;
+}
+
+.watch-note {
+    margin: 0 0 14px;
+    font-size: 12px;
 }

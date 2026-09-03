@@ -148,8 +148,13 @@ export const merge = (found: readonly SearchHit[], limit: number = DEFAULTS.limi
  * Written here rather than taken from a dependency because it is nine lines and because the bound is
  * the point of the package: a federation that fans out without one is a way to make one person's
  * keystroke everybody else's outage.
+ *
+ * Exported because that argument was never about searching. Asking every peer what it serves has the
+ * same shape as asking every peer whether it has a row - one question per peer, issued because
+ * somebody opened a pane - and a console that bounded the second while sending the first as a burst
+ * would have solved half of it.
  */
-const throttled = async <T, R>(items: readonly T[], width: number, work: (item: T) => Promise<R>): Promise<R[]> => {
+export const throttled = async <T, R>(items: readonly T[], width: number, work: (item: T) => Promise<R>): Promise<R[]> => {
     const answers: R[] = new Array(items.length)
     let next = 0
     const runner = async () => {
