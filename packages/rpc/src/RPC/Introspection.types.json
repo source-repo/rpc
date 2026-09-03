@@ -1628,9 +1628,18 @@
             "kind": "array",
             "items": {
               "kind": "ref",
-              "name": "RpcDataMethod"
+              "name": "RpcResourceVerb"
             }
           }
+        },
+        "columns": {
+          "type": {
+            "kind": "array",
+            "items": {
+              "kind": "string"
+            }
+          },
+          "optional": true
         },
         "shape": {
           "type": {
@@ -1683,7 +1692,7 @@
         }
       }
     },
-    "RpcDataMethod": {
+    "RpcResourceVerb": {
       "kind": "union",
       "options": [
         {
@@ -1705,6 +1714,18 @@
         {
           "kind": "literal",
           "value": "getChildren"
+        },
+        {
+          "kind": "literal",
+          "value": "create"
+        },
+        {
+          "kind": "literal",
+          "value": "update"
+        },
+        {
+          "kind": "literal",
+          "value": "delete"
         }
       ]
     },

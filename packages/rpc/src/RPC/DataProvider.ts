@@ -1,4 +1,5 @@
 import { componentSnapshot, projectionKeyOrder, type RpcComponentData } from './Component.js'
+import type { RpcWritableResource, RpcWriteVerb } from './DataWrites.js'
 import type { RpcSchema, TypeNode } from './Schema.js'
 
 /**
@@ -33,6 +34,24 @@ import type { RpcSchema, TypeNode } from './Schema.js'
 
 /** What a caller may ask for. */
 export type RpcDataMethod = 'getList' | 'getOne' | 'getMany' | 'getManyReference' | 'getChildren'
+
+/**
+ * Everything a resource can be asked to do, reading and writing, in one vocabulary.
+ *
+ * The two surfaces stay apart on the wire and should: `$data` reads and is repeatable by
+ * construction, `$write` carries a precondition and answers `ok | missing | conflict`. What had no
+ * reason to stay apart was the **declaration**. A resource used to say what it read in
+ * `RpcDataResource.verbs` and what it wrote somewhere else entirely - a separate `<namespace>.write`
+ * instance answering `writable()` - so "what can I do with this?" was two questions, of two shapes,
+ * over two round trips, joined by the caller.
+ *
+ * That join was also lossy, and the loss is the argument. A write surface named a resource by a
+ * single string where `$data` addresses it by a path, so the two agreed only for resources one
+ * segment deep: anything under `props` or `state`, or any resource nested deeper, could not be
+ * described as writable at all - not refused, just unsayable. One vocabulary over one address ends
+ * that by construction rather than by widening the join.
+ */
+export type RpcResourceVerb = RpcDataMethod | RpcWriteVerb
 
 /**
  * What is answered, which is now all of them.
@@ -633,8 +652,26 @@ export interface RpcDataResource {
     readonly path: RpcResource
     /** The shape of one row, so a viewer can draw columns for a table it has never heard of. */
     readonly row?: TypeNode
-    /** Which verbs it answers. A viewer offers what is here and nothing else. */
-    readonly verbs: readonly RpcDataMethod[]
+    /**
+     * Which verbs it answers - **reading and writing, one list**. A viewer offers what is here and
+     * nothing else, and asking for anything else is refused by name rather than ignored.
+     *
+     * A resource that cannot be written does not have a smaller interface; it has a shorter list.
+     * That distinction is the point: the provider interface is one verb-shaped `dataRequest`, so
+     * nothing about a read-only resource is missing from the type - what is missing is the claim,
+     * and the claim is what a viewer reads to decide whether to draw a delete button at all.
+     */
+    readonly verbs: readonly RpcResourceVerb[]
+    /**
+     * Which fields a caller may write, by name - the resolved answer, not the rule that asked for it.
+     *
+     * Required wherever `create` or `update` is offered, for the reason the write rule gives: a
+     * declaration naming a resource and no columns reads as "all of them" to whoever wrote it and to
+     * whoever reads it next, and those are the two people who must not disagree. Resolved against
+     * the store before it is published, so a column the store does not have is absent here rather
+     * than advertised and then refused.
+     */
+    readonly columns?: readonly string[]
     /**
      * Whether rows are a flat list or a hierarchy.
      *
@@ -846,11 +883,37 @@ const warnedColumns = new Set<string>()
  * A resource with no declared `row` is left alone. There is nothing to check the path against, and
  * warning about every column of an undescribed row would train people to ignore this.
  */
-export const describedResources = (instance: unknown, owner: string, types?: RpcSchema['types']): readonly RpcDataResource[] => {
+export const describedResources = (instance: unknown, owner: string, types?: RpcSchema['types'], writable?: readonly RpcWritableResource[]): readonly RpcDataResource[] => {
     const resources = (instance as RpcDataResources).dataResources()
     for (const resource of resources) checkPresentation(owner, resource, types)
     checkReferences(owner, resources, types)
-    return resources
+    return writable?.length ? resources.map((resource) => withWrites(resource, writable)) : resources
+}
+
+/**
+ * Fold what a resource may be written with into what it may be read with, so `describe()` answers
+ * the whole question.
+ *
+ * The write half arrives already resolved against the store - `writable()` is the authority and
+ * stays it - so this carries an answer rather than restating a rule. What it removes is a join the
+ * caller was doing: a console read `describe()` for the read verbs, opened a second namespace for
+ * `writable()`, and matched the two by name, which only worked for resources exactly one segment
+ * deep. Nothing is added to the write surface by doing this and nothing is taken away; the two lists
+ * simply stop being two.
+ *
+ * A resource nobody named in the write rules keeps the verbs it had, which is the default the write
+ * contract already states: a name that is not there accepts none.
+ */
+const withWrites = (resource: RpcDataResource, writable: readonly RpcWritableResource[]): RpcDataResource => {
+    // Matched on the single-segment name the write surface uses, which is the same join as before -
+    // but done here, once, by the side that holds both halves, instead of by every caller.
+    const rule = resource.path.length === 1 ? writable.find((one) => one.resource === resource.path[0]) : undefined
+    if (!rule?.verbs.length) return resource
+    return {
+        ...resource,
+        verbs: [...resource.verbs, ...rule.verbs.filter((verb) => !resource.verbs.includes(verb))],
+        ...(rule.columns.length ? { columns: rule.columns } : {})
+    }
 }
 
 /**

@@ -70,7 +70,16 @@ export interface DescribedAction {
 export interface DescribedResource {
     path: string[]
     row?: TypeNode
+    /**
+     * Everything this resource answers, reading and writing, in one list.
+     *
+     * `string[]` rather than a union because it is somebody else's declaration: a node serving a
+     * verb this viewer has never heard of is a node that is ahead, not a node that is wrong, and the
+     * rule downstream is the same either way - offer what is here and nothing else.
+     */
     verbs: string[]
+    /** Which fields a caller may write, resolved by the node. Present only where a write verb is. */
+    columns?: string[]
     shape?: 'list' | 'tree'
     label?: string
     actions?: DescribedAction[]

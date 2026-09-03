@@ -1,4 +1,5 @@
-import type { RpcWritableResource } from '@source-repo/rpc'
+import { RPC_WRITE_VERBS, type RpcWritableResource, type RpcWriteVerb } from '@source-repo/rpc'
+import type { DescribedResource } from './types.js'
 
 /**
  * Where a component's write half lives, and which of its fields to offer.
@@ -44,6 +45,25 @@ export const editableFields = (writable: RpcWritableResource | undefined, edit?:
 }
 
 /** The writable resource for one path, by the name the write service knows it as. */
+/**
+ * What a resource accepts, read from the resource's own declaration.
+ *
+ * The declaration now carries the write half - `describe()` answers "what can I do with this" on its
+ * own - so this replaces a join the console was doing: fetch the description, open a second
+ * namespace, call `writable()`, match the two lists by name. It also fixes what that join could not
+ * express. A write surface names a resource by a single string where `$data` addresses it by a path,
+ * so the two agreed only for resources exactly one segment deep, and anything nested was silently
+ * unwritable rather than refused.
+ *
+ * Shaped as an `RpcWritableResource` rather than as something new, so `canUpdate` and
+ * `editableFields` are unchanged: what moved is where the answer comes from, not what it says.
+ */
+export const writableIn = (resource: DescribedResource | undefined): RpcWritableResource | undefined => {
+    const verbs = (resource?.verbs ?? []).filter((verb): verb is RpcWriteVerb => RPC_WRITE_VERBS.includes(verb as RpcWriteVerb))
+    if (!resource || !verbs.length) return undefined
+    return { resource: resource.path.join('.'), verbs, columns: resource.columns ?? [], ...(resource.row ? { row: resource.row } : {}) }
+}
+
 export const writableFor = (writable: readonly RpcWritableResource[] | undefined, resource: readonly string[]): RpcWritableResource | undefined =>
     // A write surface names a resource by a single string - a table, a collection - where `$data`
     // addresses it by a path. They agree for every resource that has one segment, which is every

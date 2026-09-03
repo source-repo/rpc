@@ -8,11 +8,10 @@ import {
     type RpcMethodSemantics,
     type RpcRowRead,
     type RpcServer,
-    type RpcWritableResource,
     type RpcWriteOutcome
 } from '@source-repo/rpc'
 import type { RpcDataCache, RpcQuestion } from '@source-repo/query'
-import { ActionForm, actionsFor, canUpdate, editableFields, leavesUnder, RecordForm, scopeTree, staticSource, storeSource, Uncertain, useCommanding, ValueGrid, writableFor, writeNamespace, type BranchQuestion, type DescribedAction, type DescribedComponent, type DescribedMethod, type EditAffordance, type Link, type ObjectAccess, type PageQuestion, type Ref, type RowQuestion, type ScopedQuestion, type TypeNode, type WatchAffordance, type Where, type WriteOutcome } from '@source-repo/react'
+import { ActionForm, actionsFor, canUpdate, editableFields, leavesUnder, RecordForm, scopeTree, staticSource, storeSource, Uncertain, useCommanding, ValueGrid, writableIn, writeNamespace, type BranchQuestion, type DescribedAction, type DescribedComponent, type DescribedMethod, type EditAffordance, type Link, type ObjectAccess, type PageQuestion, type Ref, type RowQuestion, type ScopedQuestion, type TypeNode, type WatchAffordance, type Where, type WriteOutcome } from '@source-repo/react'
 import { SourceView, type SourceDocument } from './SourceView'
 import { overlayRefusal, type RpcSourceBinding, type RpcSourceCatalogue, type RpcActiveSourceIdentity } from '@source-repo/diagnostics/catalogue'
 import { ScopeTree } from './ScopeTree'
@@ -289,7 +288,6 @@ export const ComponentPanel = ({
      * namespace that is not there is the ordinary case and not a failure: most components have no
      * write half, and the refusal is swallowed on purpose.
      */
-    const [writable, setWritable] = useState<readonly RpcWritableResource[] | undefined>()
     /** The row being changed: what was read, and the stamp that names the state it was read in. */
     const [editing, setEditing] = useState<{ resource: readonly string[]; id: string; row: Record<string, unknown>; stamp: string; name?: string } | undefined>()
     const [wrote, setWrote] = useState<WriteOutcome | undefined>()
@@ -340,6 +338,20 @@ export const ComponentPanel = ({
         const asked = openAt ? tree.find((node) => node.path.join('.') === openAt) : undefined
         return asked ? asked.path : component.state ? ['state'] : (tree[0]?.path ?? ['state'])
     })
+
+    /**
+     * The declaration for a path - which now says what may be *written* as well as read.
+     *
+     * One lookup where there used to be a lookup and a round trip. The panel opened the sibling
+     * `<namespace>.write` surface, called `writable()`, and matched its answer to this one by name;
+     * `describe()` carries both halves now, so the join is gone and with it the case it could not
+     * express - a write surface names a resource by a single string where `$data` addresses it by a
+     * path, so anything deeper than one segment was silently unwritable.
+     */
+    const resourceAt = useCallback(
+        (path: readonly string[]) => component.resources?.find((declared) => declared.path.length === path.length && declared.path.every((segment, at) => segment === path[at])),
+        [component]
+    )
 
     const chosen = useMemo(() => ({ peer, namespace, path: scope }), [peer, namespace, scope])
     const inView = viewing?.holds(chosen) ?? false
@@ -601,25 +613,6 @@ export const ComponentPanel = ({
      * and in time filtered and ordered - and all of that is `getList`'s already. The peer does the
      * collecting; this only asks.
      */
-    useEffect(() => {
-        let cancelled = false
-        const link = server.current
-        if (!link) return
-        void (async () => {
-            try {
-                const proxy = await link.proxy<{ writable(): Promise<readonly RpcWritableResource[]> }>(writeNamespace(namespace), peer)
-                const answer = await proxy.writable()
-                if (!cancelled) setWritable(answer)
-            } catch {
-                // No write half, or one that will not say. Either way there is nothing to offer,
-                // which is the same screen as before this existed.
-                if (!cancelled) setWritable(undefined)
-            }
-        })()
-        return () => {
-            cancelled = true
-        }
-    }, [peer, namespace, server])
 
     /**
      * Read the row through the write surface, which is the only read whose stamp means anything.
@@ -870,7 +863,7 @@ export const ComponentPanel = ({
                                 onPageSize={(size) => {
                                     setPageSize(size)
                                     rememberPageSize(size)
-                                }} objectAccess={objectAccess} cache={data} pageQuestion={pageQuestion} period={period} actionsFor={(path) => actionsFor(component, path, methods)} manyQuestion={manyQuestion} editable={(path) => canUpdate(writableFor(writable, path), component.resources?.find((one) => one.path.join('.') === path.join('.'))?.presentation?.edit)} onEdit={(resource, id) => void openEditor(resource, id)} resourceAt={(path) => component.resources?.find((declared) => declared.path.length === path.length && declared.path.every((segment, at) => segment === path[at]))} onAction={(action, id, resource, label) => pressAction(action, id, resource, label)} />
+                                }} objectAccess={objectAccess} cache={data} pageQuestion={pageQuestion} period={period} actionsFor={(path) => actionsFor(component, path, methods)} manyQuestion={manyQuestion} editable={(path) => canUpdate(writableIn(resourceAt(path)), resourceAt(path)?.presentation?.edit)} onEdit={(resource, id) => void openEditor(resource, id)} resourceAt={resourceAt} onAction={(action, id, resource, label) => pressAction(action, id, resource, label)} />
                         )}
                         {/* Under the rows rather than over them: the table is what somebody is
                             reading while they decide, and a form that covered it would hide the
@@ -898,9 +891,9 @@ export const ComponentPanel = ({
                                 resource={editing.resource.join('.')}
                                 id={editing.id}
                                 name={editing.name}
-                                fields={editableFields(writableFor(writable, editing.resource), component.resources?.find((one) => one.path.join('.') === editing.resource.join('.'))?.presentation?.edit)}
+                                fields={editableFields(writableIn(resourceAt(editing.resource)), resourceAt(editing.resource)?.presentation?.edit)}
                                 row={editing.row}
-                                shape={writableFor(writable, editing.resource)?.row}
+                                shape={writableIn(resourceAt(editing.resource))?.row}
                                 types={types}
                                 busy={sending}
                                 outcome={wrote}
