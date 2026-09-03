@@ -446,7 +446,8 @@ export const BranchTable = ({
     onSelect,
     onPickRow,
     actions,
-    onAction
+    onAction,
+    onMove
 }: {
     resource: readonly string[]
     columns: readonly string[]
@@ -479,6 +480,18 @@ export const BranchTable = ({
     onPickRow?: (id: string) => void
     actions?: DescribedAction[]
     onAction?: (action: DescribedAction, id: string, resource: readonly string[], label?: string) => void
+    /**
+     * Put a row at a position, where the resource said it can be - and only then.
+     *
+     * Supplied by the host exactly when the declaration lists `move`, so the arrows appear on a
+     * resource whose order is *its* data and nowhere else. A list that is merely displayed in some
+     * order gets none, which is the point: a viewer that let you drag rows of a resource with no
+     * order would be inventing one, and it would disagree with the next reader's.
+     *
+     * The position is absolute within the resource, not within the page - `page * pageSize + row` -
+     * because the node knows nothing about how this screen happens to be paged.
+     */
+    onMove?: (id: string, position: number, resource: readonly string[]) => void
 }) => {
     const [page, setPage] = useState(0)
     /**
@@ -666,8 +679,41 @@ export const BranchTable = ({
                                             </td>
                                         )
                                     })}
-                                    {actions?.length ? (
+                                    {actions?.length || onMove ? (
                                         <td className="branch-actions">
+                                            {/* Before the declared actions, because moving is about
+                                                where the row is and an action is about what it is -
+                                                and because a reader reordering a list does it
+                                                repeatedly, so the target should not move as the
+                                                declared buttons come and go per kind. */}
+                                            {onMove && (
+                                                <>
+                                                    <button
+                                                        className="toggle"
+                                                        // Absolute within the resource: the node knows
+                                                        // nothing about how this screen is paged.
+                                                        disabled={page === 0 && listed[0]?.[0] === id}
+                                                        title="move up"
+                                                        onClick={(event) => {
+                                                            event.stopPropagation()
+                                                            onMove(id, Math.max(0, page * pageSize + listed.findIndex(([held]) => held === id) - 1), resource)
+                                                        }}
+                                                    >
+                                                        ↑
+                                                    </button>
+                                                    <button
+                                                        className="toggle"
+                                                        disabled={!controls.hasNext && listed[listed.length - 1]?.[0] === id}
+                                                        title="move down"
+                                                        onClick={(event) => {
+                                                            event.stopPropagation()
+                                                            onMove(id, page * pageSize + listed.findIndex(([held]) => held === id) + 1, resource)
+                                                        }}
+                                                    >
+                                                        ↓
+                                                    </button>
+                                                </>
+                                            )}
                                             {offered.map((action) => (
                                                 <button
                                                     key={action.method}

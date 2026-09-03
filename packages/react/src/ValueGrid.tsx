@@ -81,7 +81,8 @@ const Collection = ({
     resourceAt,
     manyQuestion,
     onEdit,
-    onAction
+    onAction,
+    onMove
 }: {
     leaf: ScopeLeaf
     types?: { [name: string]: TypeNode }
@@ -105,6 +106,13 @@ const Collection = ({
     onEdit?: (resource: readonly string[], id: string) => void
     /** The resource travels with the call: where the button lives is what the method touched. */
     onAction?: (action: DescribedAction, id: string, resource: readonly string[], label?: string) => void
+    /**
+     * Put a row at a position, where the resource declared `move`. Absent means no arrows.
+     *
+     * Supplied by the host rather than derived here, for the reason every other write is: the grid
+     * names questions and draws answers, and opening a link is somebody else's job.
+     */
+    onMove?: (id: string, position: number, resource: readonly string[]) => void
 }) => {
     const [page, setPage] = useState(0)
     const [sort, setSort] = useState<RpcSort | undefined>()
@@ -268,11 +276,33 @@ const Collection = ({
                         {/* Before the declared actions, because it is not one: an action is a method
                             the component named, and this is the write contract every store package
                             already serves. */}
-                        {onEdit && (
+                        {(onEdit || onMove) && (
                             <span className="row-actions">
-                                <button className="toggle" title={`edit ${id}`} onClick={() => onEdit(leaf.path, id)}>
-                                    edit
-                                </button>
+                                {/* Before `edit`, because moving is about where a row is and editing
+                                    is about what it holds - and because a reader reordering does it
+                                    repeatedly, so the target should stay still. */}
+                                {onMove && (
+                                    <>
+                                        <button
+                                            className="toggle"
+                                            disabled={page === 0 && index === 0}
+                                            title="move up"
+                                            // Absolute within the resource: the node knows nothing
+                                            // about how this screen happens to be paged.
+                                            onClick={() => onMove(id, Math.max(0, page * pageSize + index - 1), leaf.path)}
+                                        >
+                                            ↑
+                                        </button>
+                                        <button className="toggle" disabled={!controls.hasNext && index === (data?.ids.length ?? 0) - 1} title="move down" onClick={() => onMove(id, page * pageSize + index + 1, leaf.path)}>
+                                            ↓
+                                        </button>
+                                    </>
+                                )}
+                                {onEdit && (
+                                    <button className="toggle" title={`edit ${id}`} onClick={() => onEdit(leaf.path, id)}>
+                                        edit
+                                    </button>
+                                )}
                             </span>
                         )}
                         {offered.length ? (
@@ -317,6 +347,7 @@ export const ValueGrid = ({
     onPageSize,
     actionsFor,
     onAction,
+    onMove,
     pageSize = 50
 }: {
     component: DescribedComponent
@@ -357,6 +388,13 @@ export const ValueGrid = ({
     /** What may be done to a row of the resource at this path, if anything. */
     actionsFor: (path: string[]) => DescribedAction[] | undefined
     onAction?: (action: DescribedAction, id: string, resource: readonly string[], label?: string) => void
+    /**
+     * Put a row at a position, where the resource declared `move`. Absent means no arrows.
+     *
+     * Supplied by the host rather than derived here, for the reason every other write is: the grid
+     * names questions and draws answers, and opening a link is somebody else's job.
+     */
+    onMove?: (id: string, position: number, resource: readonly string[]) => void
     pageSize?: number
 }) => {
     // Decided before anything else in this pane, because a tree is not a page of the same thing: it
@@ -518,6 +556,7 @@ export const ValueGrid = ({
                                 }
                                 actions={actionsFor(tree.path as string[])}
                                 onAction={onAction}
+                                onMove={tree.verbs.includes('move') ? onMove : undefined}
                             />
                         {/* The row is still picked when the panel is off - it is marked, and an
                             action still knows which row it is about. What is turned off is the
@@ -579,6 +618,7 @@ export const ValueGrid = ({
                     filter={filter}
                     actions={actionsFor(leaf.path)}
                     onAction={onAction}
+                    onMove={resourceAt?.(leaf.path)?.verbs.includes('move') ? onMove : undefined}
                 />
             ))}
             {leaves.length === 0 && <p className="muted">nothing under this node</p>}

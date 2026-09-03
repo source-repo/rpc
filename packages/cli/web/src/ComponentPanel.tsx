@@ -460,6 +460,38 @@ export const ComponentPanel = ({
      * collection in the pane a different question after any successful call - one round trip per
      * collection, on the link least able to spare it, for a command that touched one row.
      */
+    /**
+     * Put a row where somebody dragged it, through the one write dispatch.
+     *
+     * **`expect: '*'`**, and that is a decision rather than a shortcut. The write surface requires a
+     * precondition and should: two edits where the second silently discards the first leave no trace
+     * anywhere. But a reader pressing an arrow has not read the row and has no stamp to claim - they
+     * mean *wherever it is now, put it here*, which is exactly what the sentinel says, and says on
+     * the record where a node that does not want blind writes can refuse it. An omitted field could
+     * say neither of those things, which is why there is no way to omit it.
+     *
+     * Sent to the sibling write surface, which is where the dispatch lives - the same namespace the
+     * declaration's write half was resolved from.
+     */
+    const moveRow = async (id: string, position: number, resource: readonly string[]) => {
+        const link = server.current
+        if (!link) return
+        setFailed(undefined)
+        setRefused(undefined)
+        try {
+            const proxy = await link.proxy<{ $write(verb: string, resource: string, params: unknown): Promise<{ status: string }> }>(writeNamespace(namespace), peer)
+            const outcome = await proxy.$write('move', resource.join('.'), { id, position, expect: '*' })
+            // A refusal is an answer here, not an exception: `conflict` and `missing` are both things
+            // the node is entitled to say, and both mean the row is not where this screen thinks.
+            if (outcome.status !== 'ok') setRefused(`${resource.join('.')}.${id} was not moved: ${outcome.status}`)
+            // Asked again rather than reordered locally: the node owns the order, and a list this
+            // screen rearranged itself would be a second opinion about it.
+            data.settled({ target: peer, namespace, resource })
+        } catch (e) {
+            setRefused((e as { message?: string }).message ?? String(e))
+        }
+    }
+
     const runAction = async (action: DescribedAction, id: string, resource: readonly string[], rest: readonly unknown[] = [], label?: string) => {
         const link = server.current
         if (!link) return
@@ -863,7 +895,7 @@ export const ComponentPanel = ({
                                 onPageSize={(size) => {
                                     setPageSize(size)
                                     rememberPageSize(size)
-                                }} objectAccess={objectAccess} cache={data} pageQuestion={pageQuestion} period={period} actionsFor={(path) => actionsFor(component, path, methods)} manyQuestion={manyQuestion} editable={(path) => canUpdate(writableIn(resourceAt(path)), resourceAt(path)?.presentation?.edit)} onEdit={(resource, id) => void openEditor(resource, id)} resourceAt={resourceAt} onAction={(action, id, resource, label) => pressAction(action, id, resource, label)} />
+                                }} objectAccess={objectAccess} cache={data} pageQuestion={pageQuestion} period={period} actionsFor={(path) => actionsFor(component, path, methods)} manyQuestion={manyQuestion} editable={(path) => canUpdate(writableIn(resourceAt(path)), resourceAt(path)?.presentation?.edit)} onEdit={(resource, id) => void openEditor(resource, id)} resourceAt={resourceAt} onAction={(action, id, resource, label) => pressAction(action, id, resource, label)} onMove={(id, position, resource) => void moveRow(id, position, resource)} />
                         )}
                         {/* Under the rows rather than over them: the table is what somebody is
                             reading while they decide, and a form that covered it would hide the
