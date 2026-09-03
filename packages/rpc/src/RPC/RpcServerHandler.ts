@@ -55,6 +55,7 @@ import {
     type RpcProjectionSlice
 } from './Component.js'
 import { declaredResource, getList, getMany, getOne, getManyReference, readDataRequest, servesDataResources, SLOW_DATA_REQUEST_MS, type RpcDataMethod, type RpcDataResource, type RpcDataResources, type RpcDataTiming, type RpcGetListParams, type RpcGetOneParams, type RpcGetManyParams, type RpcGetManyReferenceParams } from './DataProvider.js'
+import { readWriteRequest, servesWrites } from './DataWrites.js'
 import { RpcSchema, validateParams, validateValue, type ComponentSchema } from './Schema.js'
 import { describeProblems, namespaceProblems } from './Compatibility.js'
 
@@ -273,6 +274,10 @@ const chosenCode = (e: unknown): RpcErrorCode => {
  */
 const dispatchEffects = new Map<string, RpcEffect>([
     ['$data', 'observe'],
+    // `operate`, which is the worst case of the four verbs and the right classification for a
+    // dispatch: the effect is read before the params are, so it cannot depend on which verb the
+    // frame turns out to name.
+    ['$write', 'operate'],
     ['$acquire', 'operate'],
     ['$release', 'operate']
 ])
@@ -904,6 +909,54 @@ export class RpcServerHandler extends MessageModule<Message<RpcMessage>, RpcMess
                         const result = releaseComponentAuthority(inst, source)
                         await this.respond(payload.id, source, { type: RpcMessageType.success, result, id: payload.id } as RpcSuccessPayload, MessageType.ResponseMessage)
                     }
+                } else if (payload.method === '$write' && inst) {
+                    /**
+                     * One dispatch verb for every write, the way `$data` is one for every read.
+                     *
+                     * What this replaces is a hand-written method per verb on a service per store
+                     * package, which made every new verb a method every implementor had to grow -
+                     * the thing `dataRequest` was shaped to avoid, solved on the read side and not
+                     * on this one. `move` is the verb that made it cost something.
+                     *
+                     * Permission is checked here rather than inside an implementation, for the same
+                     * two reasons `$data` checks it here: the check needs the caller's identity,
+                     * which a method does not see, and a store's author should not have to remember
+                     * to write it.
+                     */
+                    if (!servesWrites(inst)) {
+                        await this.sendError(payload.id, source, 'ClassNotFound', `${payload.path} accepts no writes`)
+                        return
+                    }
+                    const denied = await this.checkAccess(payload, source, false)
+                    if (denied) {
+                        await this.sendError(payload.id, source, denied, `not permitted to call ${payload.path}.${payload.method}`)
+                        return
+                    }
+                    const asked = readWriteRequest(payload.params[0], payload.params[1], payload.params[2])
+                    if (asked instanceof Error) {
+                        await this.sendError(payload.id, source, 'InvalidParams', asked.message)
+                        return
+                    }
+                    // Against what the node actually accepts, resolved - so a verb a rule allows on
+                    // a table the store does not have is refused here rather than reaching a store
+                    // that would have to refuse it less clearly.
+                    const accepts = await inst.writable()
+                    const rule = accepts.find((one) => one.resource === asked.resource)
+                    if (!rule || !rule.verbs.includes(asked.verb)) {
+                        // Named, and shaped like the read side's refusal, because a caller reading
+                        // both should not have to learn two ways of being told no.
+                        await this.sendError(
+                            payload.id,
+                            source,
+                            'InvalidParams',
+                            rule
+                                ? `$write: ${asked.resource} accepts ${rule.verbs.join(', ')}, not ${asked.verb}`
+                                : `$write: ${asked.resource} accepts no writes${accepts.length ? ` - ${payload.path} accepts them for ${accepts.map((one) => one.resource).join(', ')}` : ''}`
+                        )
+                        return
+                    }
+                    const outcome = await inst.writeRequest(asked.verb, asked.resource, asked.params)
+                    await this.respond(payload.id, source, { type: RpcMessageType.success, result: outcome, id: payload.id } as RpcSuccessPayload, MessageType.ResponseMessage)
                 } else if (payload.method === '$data' && inst) {
                     // Dispatch-level like $acquire, and for the same two reasons: the check needs
                     // the caller's identity, which methods do not see, and a component's author

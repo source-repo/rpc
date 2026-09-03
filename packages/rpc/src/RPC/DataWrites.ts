@@ -36,9 +36,86 @@ import type { TypeNode } from './Schema.js'
  * that is genuinely too expensive it will arrive as its own verb with its own bound and its own
  * entry in the permission document, rather than as a flag on one of these.
  */
-export type RpcWriteVerb = 'create' | 'update' | 'delete'
+export type RpcWriteVerb = 'create' | 'update' | 'delete' | 'move'
 
-export const RPC_WRITE_VERBS: readonly RpcWriteVerb[] = ['create', 'update', 'delete']
+export const RPC_WRITE_VERBS: readonly RpcWriteVerb[] = ['create', 'update', 'delete', 'move']
+
+/**
+ * Put a row somewhere: at a position among its siblings, and optionally under a different parent.
+ *
+ * One verb where react-admin's tree extension has two - `moveAsNthChildOf` and
+ * `moveAsNthSiblingOf` - because those differ only in how the destination is named, and both are
+ * *this parent, this index*. A flat ordered list omits `parentId` and moves within one sequence; a
+ * tree supplies it and reparents in the same call, which is what any implementation would have to do
+ * atomically anyway.
+ *
+ * **Ordering is a property of a resource, not of the viewer.** A list of contact methods somebody
+ * arranged - try email, then sms, then phone - is data, and a viewer that stored that order itself
+ * would be a second system of record for it, disagreeing with the first as soon as anything else
+ * wrote. So a resource declares `move` or it does not, and a viewer offers arrows only where it is
+ * declared. Nothing here re-orders anything: a store that has no inherent order refuses the verb,
+ * which is a better answer than inventing one.
+ *
+ * Named before it is widely served, exactly as `shape: 'tree'` was and for the same reason. The
+ * alternative to reserving it is two implementors independently inventing `moveNode` and `reparent`.
+ */
+export interface RpcMoveParams {
+    readonly id: string
+    /**
+     * Where it should sit among its siblings, zero-based. The position *after* the move, which is
+     * what a reader dragging a row means, rather than an offset from where it started.
+     */
+    readonly position: number
+    /**
+     * Which branch to sit under, for a tree. Absent leaves the parent alone; `null` means a root.
+     * A flat resource has neither and refuses anything but absent.
+     */
+    readonly parentId?: string | null
+    /** The precondition, as everywhere else on this surface. See `RpcWriteParams`. */
+    readonly expect: string
+}
+
+export interface RpcCreateParams {
+    readonly row: Record<string, unknown>
+}
+
+export interface RpcUpdateParams {
+    readonly id: string
+    readonly patch: Record<string, unknown>
+    readonly expect: string
+}
+
+export interface RpcDeleteParams {
+    readonly id: string
+    readonly expect: string
+}
+
+/**
+ * What a write verb is asked with.
+ *
+ * ## On `expect`, and the two kinds of caller
+ *
+ * `expect` is required and stays required. The reason is recorded on `update` and has not changed:
+ * an optional precondition is one that gets omitted the first time somebody is in a hurry, and the
+ * failure it prevents - two edits where the second silently discards the first - leaves no trace
+ * anywhere for anyone to find later.
+ *
+ * But there are genuinely two callers. A production write, from code or an operator's screen, has
+ * read the row and is claiming what it read. A **tool** - this console, a CLI, a script during
+ * development - often just wants to set a value it can see, and has no stamp because it never did
+ * the read. Making `expect` optional would serve the second by weakening the first, and invisibly:
+ * an omitted field looks exactly like a caller who forgot.
+ *
+ * So the unconditional write is spelled `expect: '*'`. It says the same thing an omitted field would
+ * have said - *whatever it is now* - and says it **on the record**: it is a value in the frame, it
+ * appears in an audit line, and it can be searched for, refused by a node that does not want blind
+ * writes, and counted. A precondition nobody made is then distinguishable from one nobody could
+ * make, which is the whole difference between the two callers.
+ */
+export type RpcWriteParams = RpcCreateParams | RpcUpdateParams | RpcDeleteParams | RpcMoveParams
+
+/** The stamp that means "no precondition": whatever this row is now. See `RpcWriteParams`. */
+export const RPC_WRITE_ANY = '*'
 
 /**
  * What one resource accepts, as data a reviewer can diff.
@@ -245,3 +322,67 @@ export const validateWritePermissions = (value: unknown, what = 'writes'): RpcWr
  * `RpcRefusedWrite` explains.
  */
 export const permittedResources = (permissions: RpcWritePermissions | undefined): readonly string[] => Object.keys(permissions ?? {}).sort()
+
+/**
+ * A component that accepts writes, shaped the way the read side is.
+ *
+ * **One verb-shaped method, not one method per verb**, and that is the whole point of this
+ * interface existing. `create`, `update` and `delete` were ordinary methods on a hand-written
+ * service per store package, so every new verb was a method every implementor had to grow - exactly
+ * what `RpcDataResources.dataRequest` was shaped to avoid, solved on the read side and not on this
+ * one. `move` is the verb that made the asymmetry cost something: adding it as a fourth method would
+ * have been the fourth time, and the next one would be the fifth.
+ *
+ * The typed methods stay where they are. A store package is entitled to a pleasant local interface,
+ * and `create(table, row)` reads better in its own code than a switch does; what changes is that the
+ * *wire* no longer needs one method per verb, so a peer serving a verb this library has not heard of
+ * is a peer that is ahead rather than one that cannot be called.
+ */
+export interface RpcWrites {
+    /** What this node will accept, resolved against the store. Unchanged: still the authority. */
+    writable(): Promise<readonly RpcWritableResource[]> | readonly RpcWritableResource[]
+    /**
+     * Do one write. Reached only for a resource `writable()` named and a verb it claimed, so an
+     * implementation answers what it declared rather than re-checking permission.
+     */
+    writeRequest(verb: RpcWriteVerb, resource: string, params: RpcWriteParams): Promise<RpcWriteOutcome> | RpcWriteOutcome
+}
+
+/**
+ * Whether an instance accepts writes through the dispatch.
+ *
+ * Both together, for the reason `servesDataResources` requires both of its own: one that listed what
+ * it accepts and could not perform it would publish an edit button that always fails, and one that
+ * performed writes it never listed could not be discovered at all.
+ */
+export const servesWrites = (instance: object): instance is RpcWrites =>
+    typeof (instance as RpcWrites).writable === 'function' && typeof (instance as RpcWrites).writeRequest === 'function'
+
+/**
+ * Read a `$write` frame into something the dispatcher can act on, or say why not.
+ *
+ * The read side's `readDataRequest` with the same job and the same reasons: the params arrive from
+ * the wire, so every one of them is somebody else's text until it has been checked, and a refusal
+ * names what was wrong rather than answering something adjacent.
+ */
+export const readWriteRequest = (verb: unknown, resource: unknown, params: unknown): Error | { verb: RpcWriteVerb; resource: string; params: RpcWriteParams } => {
+    if (typeof verb !== 'string' || !RPC_WRITE_VERBS.includes(verb as RpcWriteVerb))
+        return new Error(`$write: '${String(verb)}' is not a write verb - ${RPC_WRITE_VERBS.join(', ')} are`)
+    if (typeof resource !== 'string' || !resource) return new Error('$write: a resource is named by a non-empty string')
+    const given = (params ?? {}) as Record<string, unknown>
+    if (typeof given !== 'object' || given === null || Array.isArray(given)) return new Error('$write: params is an object')
+
+    // `expect` is required everywhere it applies, and `'*'` is how a caller says it has no
+    // precondition to offer - visibly, rather than by leaving a field out. See `RpcWriteParams`.
+    const needsExpect = verb !== 'create'
+    if (needsExpect && typeof given.expect !== 'string')
+        return new Error(`$write: ${verb} needs 'expect' - the stamp the row was read with, or '${RPC_WRITE_ANY}' to say there is no precondition`)
+    if (verb !== 'create' && typeof given.id !== 'string') return new Error(`$write: ${verb} needs the id of one row`)
+    if (verb === 'create' && (typeof given.row !== 'object' || given.row === null || Array.isArray(given.row))) return new Error('$write: create needs a row object')
+    if (verb === 'update' && (typeof given.patch !== 'object' || given.patch === null || Array.isArray(given.patch))) return new Error('$write: update needs a patch object')
+    if (verb === 'move') {
+        if (!Number.isInteger(given.position) || (given.position as number) < 0) return new Error('$write: move needs a whole, non-negative position - it is where the row ends up, not how far it travelled')
+        if (given.parentId !== undefined && given.parentId !== null && typeof given.parentId !== 'string') return new Error('$write: move takes a parentId of a string, null for a root, or nothing at all to leave the parent alone')
+    }
+    return { verb: verb as RpcWriteVerb, resource, params: given as unknown as RpcWriteParams }
+}

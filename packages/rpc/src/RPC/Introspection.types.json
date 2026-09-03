@@ -1726,6 +1726,10 @@
         {
           "kind": "literal",
           "value": "delete"
+        },
+        {
+          "kind": "literal",
+          "value": "move"
         }
       ]
     },

@@ -9,6 +9,10 @@ import {
     type RpcWriteOutcome,
     type RpcWritePermissions,
     type RpcWriteVerb,
+    type RpcWriteParams,
+    type RpcCreateParams,
+    type RpcUpdateParams,
+    type RpcDeleteParams,
     type RpcResourceStamps,
     type RpcWritableResource
 } from '@source-repo/rpc'
@@ -263,6 +267,37 @@ export class RelationalWriteService extends RpcComponent<RelationalWriteProps, R
      * execution is at least once here as it is everywhere else - which is written down rather than
      * quietly hoped about.
      */
+    /**
+     * The verb-shaped entry the `$write` dispatch calls, delegating to the typed methods below.
+     *
+     * Both exist on purpose and neither is redundant. The **wire** wants one dispatch verb, so a new
+     * write verb is one case rather than a method every store package has to grow - which is the
+     * asymmetry `move` made expensive and this closes. The **methods** stay because a store package
+     * is entitled to a pleasant local interface, and `create(table, row)` reads better in this file's
+     * own code than a switch does; they are also what the existing callers already use.
+     *
+     * `move` is refused rather than approximated. A SQL table has no inherent order - a `getList`
+     * without a sort returns whatever the engine found convenient - so there is nothing here for a
+     * position to mean. A table that genuinely carries an order carries it in a column, and ordering
+     * *that* is a feature with a schema behind it rather than a verb this service can quietly honour.
+     */
+    async writeRequest(verb: RpcWriteVerb, resource: string, params: RpcWriteParams): Promise<RpcWriteOutcome> {
+        switch (verb) {
+            case 'create':
+                return this.create(resource, (params as RpcCreateParams).row)
+            case 'update': {
+                const asked = params as RpcUpdateParams
+                return this.update(resource, asked.id, asked.patch, asked.expect)
+            }
+            case 'delete': {
+                const asked = params as RpcDeleteParams
+                return this.delete(resource, asked.id, asked.expect)
+            }
+            case 'move':
+                throw new RelationalRefusal(`${resource} has no order to move a row within - a SQL table returns rows in whatever order the engine found convenient, so a position would mean nothing here`)
+        }
+    }
+
     @rpc({ semantics: 'non-repeatable-command', effect: 'operate' })
     async create(table: string, row: Record<string, unknown>): Promise<RpcWriteOutcome> {
         return this.guard(async () => {
