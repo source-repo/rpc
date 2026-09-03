@@ -53,6 +53,8 @@ Two things to know. A textconv diff is for reading, not applying: `git apply` wi
 
 The workspace scripts run in **dependency order, and it is written out rather than derived**: `rpc` first, then `conformance`, then everything that depends on either. A package is compiled against its dependency's *emitted declarations*, so a workspace built before the one it imports fails with `Cannot find module '@source-repo/rpc'` - and only on a clean checkout, because a stale `dist` from a previous run makes the wrong order look fine on a laptop and break in CI. When a workspace is added, put it after what it imports.
 
+The rule has been broken exactly once, and the way it happened is worth knowing: `@source-repo/search` was added after `@source-repo/react` because it was written second, while react *imports* it - so the order matched the order they were built by hand rather than the direction of the dependency. It passed locally against a `dist` that was already there and failed on both CI runners at once. If a build fails with `Cannot find module '@source-repo/…'` for a workspace that plainly exists, this is why; `rm -rf packages/*/dist && npm run build` reproduces it in one step and is worth running whenever the order changes.
+
 ```
 npm run build        # both workspaces
 npm run typecheck
