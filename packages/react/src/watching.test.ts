@@ -1,5 +1,5 @@
 import { expect, test } from 'vitest'
-import { asWatch, channelsFor, everythingIn, holds, movedNode, watchKey, watchProjection, withNode, withoutNode, type Watch } from './watching.js'
+import { asWatch, channelsFor, everythingIn, holds, movedNode, scopesIn, watchKey, watchProjection, withNode, withoutNode, type Watch } from './watching.js'
 import type { DescribedComponent, ServerDescription } from './types.js'
 
 const node = (peer: string, namespace: string, ...path: string[]) => ({ peer, namespace, path })
@@ -124,4 +124,12 @@ test('roots only, because the way into a tree is to open it', () => {
     const nodes = everythingIn({ p: description([observable('plant')]) })
     expect(nodes).toHaveLength(1)
     expect(nodes[0].path).toEqual(['state'])
+})
+
+test('one peer at a time is the same derivation, which is what the console draws grouped', () => {
+    // The console lists peers and describes one when it is opened, so the per-peer form is the one
+    // it actually uses; the flat form is what a CLI printing the network would want.
+    const one = description([observable('plant'), service('msgrpc')])
+    expect(scopesIn('devserver', one).map((node) => `${node.namespace}/${node.path.join('.')}`)).toEqual(['plant/state'])
+    expect(everythingIn({ devserver: one })).toEqual(scopesIn('devserver', one))
 })

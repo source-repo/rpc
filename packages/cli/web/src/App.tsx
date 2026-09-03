@@ -792,7 +792,7 @@ export const App = () => {
             </aside>
 
             <main>
-                {showingWatch && <WatchPane watch={watch} onChange={changeWatch} server={peer} known={known} refusals={describeRefusals} onNeed={describePeers} peers={peers} title={watchTitle} cache={data} period={5000} pageSize={25} />}
+                {showingWatch && <WatchPane watch={watch} onChange={changeWatch} server={peer} known={known} refusals={describeRefusals} onNeed={describePeers} peers={peers} title={watchTitle} peerTitle={(other) => peerDisplayName(other, structure[other])} cache={data} period={5000} pageSize={25} />}
                 {!showingWatch && !selected && <p className="muted">Select a peer to see what it exposes.</p>}
                 {!showingWatch && selected && !described && <p className="muted">Describing {selected}…</p>}
                 {!showingWatch && failed && (

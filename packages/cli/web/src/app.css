@@ -1665,6 +1665,47 @@ h1 {
 
 /* ---- the watch pane: places a reader chose, or every place there is ------ */
 
+/* A peer, and under it what it serves. The outer level exists because a peer serving forty
+   resources is forty headings - and because a flat list would have to describe every machine to
+   know what to put in it, spending a round trip each on a pane somebody opened to see one. */
+.watch-peer {
+    margin: 0 0 16px;
+}
+
+.watch-peer.shut {
+    margin-bottom: 2px;
+}
+
+.watch-peer-head {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    width: 100%;
+    text-align: left;
+    padding: 4px 0;
+    border-bottom: 1px solid var(--line);
+    font-size: 14px;
+}
+
+.watch-peer.shut .watch-peer-head {
+    border-bottom-color: transparent;
+}
+
+.watch-peer-head:hover .entity-title > span:first-child {
+    color: var(--accent);
+}
+
+/* Indented so the two levels are plainly two, and the sections under a peer read as its contents
+   rather than as more peers. */
+.watch-peer > .watch-node {
+    margin-left: 18px;
+}
+
+.badge.warn {
+    color: var(--warn);
+    border-color: var(--warn);
+}
+
 /* Sections rather than a flat table with a "where" column, because two machines running the same
    line publish the same paths under the same names - so the answer to "which one is this" has to be
    above the rows rather than repeated in every one of them. */

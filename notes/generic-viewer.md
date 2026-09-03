@@ -111,6 +111,18 @@ What the whole network does still cost is one `describe` per peer, which is irre
 
 Two smaller things fall out. Sections a reader *added* start open, because choosing one is the act of saying you want to watch it, while derived ones start closed - a rule about how the node got into the list rather than a threshold on how many is too many. And a derived section carries `keep`, which pins it into the chosen list, so browsing everything is how a watch list gets built.
 
+### Grouping by peer, which turns the last cost into nothing
+
+The flat `everything` still had one: a peer serving forty resources is forty headings, and worse, a flat list has to **describe every peer to know what to put in it** - so it spent a round trip per machine on a pane somebody may have opened to look at one of them. Grouping by peer fixes both, and the second is the one that matters.
+
+The list is now built from the *peers*, whose names the console already knows from the network, and a peer is described when somebody opens it. Which gives a cost ladder that can be stated in one line and was measured over the wire rather than asserted: **opening the pane costs nothing** - zero describes, four peer headings; **opening a peer costs one describe** - nine scope headings, still no channel; **opening a scope costs one channel**. Collapsing a peer releases its channels and remembers the expansion, so re-opening it re-asks nothing and brings back what was open.
+
+Building the outer level from the peer list rather than from the descriptions has a second effect worth having: a peer that is unreachable or has not been asked is *in the list*, saying so, where a list derived from descriptions would leave it out and let a reader see a shorter network instead of a broken one.
+
+It also exposed an inconsistency in `chosen`, which had been describing the peers of every node it held whether or not the section was open. The rule is now the same in both modes - describe what is open - which mostly changes nothing there, because a node somebody added starts open, but a collapsed section should no more cost a description than it costs a channel.
+
+`chosen` is deliberately **not** grouped. It is in the reader's order because they put it in one, and grouping it by peer would re-sort it - which is exactly what somebody comparing the same line on two machines does not want. `everything` is derived and has no order to destroy.
+
 Read-only for now, and deliberately: the machinery that makes commanding safe - the argument form, the write discovery, the conflict re-read - belongs to `ComponentPanel` and to *a* component, and `open` on any section is one click to the page where all of it is. Commanding a plant from a screen assembled out of four peers is a thing to design on purpose rather than to inherit by passing one more prop.
 
 ## What the first step found

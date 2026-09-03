@@ -2,9 +2,9 @@ import { RefObject, useCallback, useEffect, useMemo, useState } from 'react'
 import type { RpcServer } from '@source-repo/rpc'
 import type { RpcDataCache, RpcQuestion } from '@source-repo/query'
 import {
-    everythingIn,
     hitAddress,
     movedNode,
+    scopesIn,
     ValueGrid,
     watchKey,
     withNode,
@@ -39,8 +39,27 @@ import { useWatchParts, type WatchPart } from './watchParts'
  * list is then headings, which are free, and opening one costs exactly what opening that one node
  * has always cost.
  *
- * What everything still costs is one `describe` per peer, which is unavoidable - a console cannot
- * list what a peer serves without asking it - and is bounded rather than issued as a burst.
+ * ## The cost ladder, which is the whole design in three lines
+ *
+ * Opening the pane costs **nothing**: `everything` lists *peers*, whose names this console already
+ * knows from the network. Opening a peer costs **one describe** - a console cannot list what a peer
+ * serves without asking it, and that is the only irreducible cost here. Opening a scope costs **one
+ * channel**, which is what opening that node has always cost.
+ *
+ * Which is what the grouping is for, rather than tidiness. A peer serving forty resources is forty
+ * headings, and the peer is the thing a reader is choosing between; more to the point, a flat list
+ * has to describe every peer to know what to put in it, so it spends a round trip per machine on a
+ * pane somebody may have opened to look at one of them.
+ *
+ * A section inside a closed peer is not observed, even if the reader had opened it - a channel for
+ * something nobody can see is the defect this pane exists to avoid. The expansion is *remembered*
+ * rather than discarded, so collapsing a peer releases its channels and expanding it again brings
+ * back what was open.
+ *
+ * **`chosen` is not grouped**, and that is not an oversight. It is in the reader's order because
+ * they put it in one, and grouping it by peer would re-sort it - which is exactly what somebody
+ * comparing the same line on two machines does not want. `everything` is derived and has no order to
+ * destroy.
  *
  * ## Which sections start open
  *
@@ -176,6 +195,48 @@ const Section = ({
     )
 }
 
+/**
+ * One peer, and what it serves - the outer level of `everything`.
+ *
+ * Drawn from the peer list rather than from what has been described, so a peer that is unreachable
+ * or has not been asked yet is *here*, saying so. A list built from descriptions would leave it out
+ * entirely, and a reader would read a shorter network rather than a broken one.
+ */
+const PeerGroup = ({
+    peer,
+    title,
+    open,
+    scopes,
+    refusal,
+    describing,
+    onToggle,
+    children
+}: {
+    peer: string
+    title: string
+    open: boolean
+    scopes: number | undefined
+    refusal: string | undefined
+    describing: boolean
+    onToggle: () => void
+    children: React.ReactNode
+}) => (
+    <section className={`watch-peer${open ? '' : ' shut'}`}>
+        <button className="watch-peer-head" onClick={onToggle} title={open ? 'close this peer, and release whatever it was serving this pane' : 'open this peer, which costs one description of it'}>
+            <span className="twist">{open ? '▾' : '▸'}</span>
+            <span className="entity-title">
+                <span>{title}</span>
+                <span className="entity-id mono">{peer}</span>
+            </span>
+            {/* A closed peer that has been described says how much is in it, because that is the
+                number somebody deciding whether to open it wants. One that has not been described
+                says nothing rather than nothing-shaped-like-zero. */}
+            {refusal ? <span className="badge warn">unreachable</span> : describing ? <span className="muted">describing…</span> : scopes !== undefined ? <span className="badge">{scopes}</span> : null}
+        </button>
+        {open && (refusal ? <p className="component-error">{peer} could not be described: {refusal}</p> : children)}
+    </section>
+)
+
 export const WatchPane = ({
     watch,
     onChange,
@@ -185,6 +246,7 @@ export const WatchPane = ({
     onNeed,
     peers,
     title,
+    peerTitle,
     cache,
     period,
     pageSize
@@ -198,45 +260,75 @@ export const WatchPane = ({
     onNeed: (peers: readonly string[]) => void
     peers: readonly string[]
     title: (peer: string, namespace: string) => string
+    peerTitle: (peer: string) => string
     cache: RpcDataCache
     period: number | undefined
     pageSize: number
 }) => {
     const [mode, setMode] = useState<'chosen' | 'everything'>('chosen')
     /**
-     * Which sections are open, and so which of them cost anything.
+     * Which sections and which peers are open, and so which of them cost anything.
      *
      * Kept for the session rather than stored. What somebody chose is worth remembering across a
-     * reload and is; which sections they had expanded while looking through the whole network is a
-     * fact about the last few minutes.
+     * reload and is; which parts of the network they had expanded while looking through it is a fact
+     * about the last few minutes.
      */
-    const [open, setOpen] = useState<ReadonlySet<string>>(() => new Set(watch.map(watchKey)))
-
-    const everything = useMemo(() => everythingIn(known), [known])
-    const nodes = mode === 'chosen' ? watch : everything
+    const [openNodes, setOpenNodes] = useState<ReadonlySet<string>>(() => new Set(watch.map(watchKey)))
+    const [openPeers, setOpenPeers] = useState<ReadonlySet<string>>(() => new Set())
 
     /**
-     * Describe what this pane needs, and only that.
+     * The nodes this pane could draw at all - which for `everything` is the scopes of the peers that
+     * are *open*, and nothing from the rest.
      *
-     * `chosen` needs the peers its own nodes name, which may be peers this console has never looked
-     * at - the list is restored from storage and nothing says its peers were ever selected.
-     * `everything` needs them all, because a console cannot list what a peer serves without asking.
+     * A closed peer contributes none, so nothing under it can be observed however the reader left
+     * it, and the hook releases those channels without being told to. The expansion itself is kept,
+     * so opening the peer again brings back what was open inside it.
+     */
+    const nodes = useMemo(
+        () => (mode === 'chosen' ? watch : peers.filter((peer) => openPeers.has(peer)).flatMap((peer) => (known[peer] ? scopesIn(peer, known[peer]) : []))),
+        [mode, watch, peers, openPeers, known]
+    )
+
+    /**
+     * Describe what is *open*, and nothing else - the same rule in both modes.
+     *
+     * In `everything` that is the peers somebody expanded, which is why opening the pane costs
+     * nothing at all: the list of peers is something this console already knows, and describing one
+     * is what expanding it buys. In `chosen` it is the peers whose sections are open, which is
+     * usually all of them - a node somebody added starts open - but not always, and a collapsed
+     * section should no more cost a description than it costs a channel.
+     *
+     * Either way these may be peers this console has never looked at: a chosen list comes back from
+     * storage and nothing says its peers were ever selected.
      */
     useEffect(() => {
-        onNeed(mode === 'chosen' ? [...new Set(watch.map((node) => node.peer))] : peers)
-    }, [mode, watch, peers, onNeed])
+        onNeed(mode === 'chosen' ? [...new Set(watch.filter((node) => openNodes.has(watchKey(node))).map((node) => node.peer))] : peers.filter((peer) => openPeers.has(peer)))
+    }, [mode, watch, peers, openNodes, openPeers, onNeed])
 
-    const parts = useWatchParts(nodes, open, server, known, refusals, title)
+    const parts = useWatchParts(nodes, openNodes, server, known, refusals, title)
 
-    const toggle = useCallback((key: string) => setOpen((held) => {
-        const next = new Set(held)
-        if (!next.delete(key)) next.add(key)
-        return next
-    }), [])
+    const toggleNode = useCallback(
+        (key: string) =>
+            setOpenNodes((held) => {
+                const next = new Set(held)
+                if (!next.delete(key)) next.add(key)
+                return next
+            }),
+        []
+    )
+    const togglePeer = useCallback(
+        (peer: string) =>
+            setOpenPeers((held) => {
+                const next = new Set(held)
+                if (!next.delete(peer)) next.add(peer)
+                return next
+            }),
+        []
+    )
     const remove = useCallback(
         (key: string) => {
             onChange((held) => withoutNode(held, key))
-            setOpen((held) => new Set([...held].filter((one) => one !== key)))
+            setOpenNodes((held) => new Set([...held].filter((one) => one !== key)))
         },
         [onChange]
     )
@@ -246,12 +338,30 @@ export const WatchPane = ({
     const pin = useCallback(
         (node: WatchNode) => {
             onChange((held) => withNode(held, node))
-            setOpen((held) => new Set(held).add(watchKey(node)))
+            setOpenNodes((held) => new Set(held).add(watchKey(node)))
         },
         [onChange]
     )
 
+    const section = (part: WatchPart, at: number, of: number, derived: boolean) => (
+        <Section
+            key={watchKey(part.node)}
+            part={part}
+            first={at === 0}
+            last={at === of - 1}
+            derived={derived}
+            cache={cache}
+            period={period}
+            pageSize={pageSize}
+            onToggle={toggleNode}
+            onRemove={remove}
+            onMove={move}
+            onPin={pin}
+        />
+    )
+
     const observed = parts.filter((part) => part.observed).length
+    const measure = mode === 'chosen' ? `${nodes.length} node${nodes.length === 1 ? '' : 's'}` : `${peers.length} peer${peers.length === 1 ? '' : 's'}`
 
     return (
         <>
@@ -259,44 +369,52 @@ export const WatchPane = ({
                 <h1>
                     <span>watch</span>
                     <span className="entity-id mono">
-                        {nodes.length} node{nodes.length === 1 ? '' : 's'} · {observed} open
+                        {measure} · {observed} open
                     </span>
                 </h1>
                 <span className="watch-modes">
                     {(['chosen', 'everything'] as const).map((one) => (
-                        <button key={one} className={mode === one ? 'toggle on' : 'toggle'} onClick={() => setMode(one)} title={one === 'chosen' ? 'the nodes you added, in your order' : 'every scope of every peer that has been described'}>
+                        <button key={one} className={mode === one ? 'toggle on' : 'toggle'} onClick={() => setMode(one)} title={one === 'chosen' ? 'the nodes you added, in your order' : 'every peer on the network, and what each one serves'}>
                             {one}
                         </button>
                     ))}
                 </span>
             </header>
-            {/* Said once, at the top, because it is the thing that makes the list safe to be long. */}
-            <p className="muted watch-note">A section costs nothing until it is opened — a closed one holds no subscription and asks no questions.</p>
-            {nodes.length === 0 ? (
-                mode === 'chosen' ? (
+            {/* Said once, at the top, because it is what makes the list safe to be long. */}
+            <p className="muted watch-note">
+                {mode === 'chosen'
+                    ? 'A section costs nothing until it is opened — a closed one holds no subscription and asks no questions.'
+                    : 'Opening this pane costs nothing. Opening a peer costs one description of it; opening a scope costs one subscription. Nothing closed costs anything.'}
+            </p>
+            {mode === 'chosen' ? (
+                nodes.length === 0 ? (
                     <p className="muted">
                         Nothing chosen yet. Open a peer, pick a scope, and press <span className="mono">add to watch</span> — from as many peers as you like. What you choose stays here until you take it out. Or switch to <span className="mono">everything</span> and keep what looks useful.
                     </p>
                 ) : (
-                    <p className="muted">Describing the network…</p>
+                    parts.map((part, at) => section(part, at, parts.length, false))
                 )
+            ) : peers.length === 0 ? (
+                <p className="muted">No peer has announced itself yet.</p>
             ) : (
-                parts.map((part, at) => (
-                    <Section
-                        key={watchKey(part.node)}
-                        part={part}
-                        first={at === 0}
-                        last={at === parts.length - 1}
-                        derived={mode === 'everything'}
-                        cache={cache}
-                        period={period}
-                        pageSize={pageSize}
-                        onToggle={toggle}
-                        onRemove={remove}
-                        onMove={move}
-                        onPin={pin}
-                    />
-                ))
+                peers.map((peer) => {
+                    const mine = parts.filter((part) => part.node.peer === peer)
+                    const open = openPeers.has(peer)
+                    return (
+                        <PeerGroup
+                            key={peer}
+                            peer={peer}
+                            title={peerTitle(peer)}
+                            open={open}
+                            scopes={known[peer] ? scopesIn(peer, known[peer]).length : undefined}
+                            refusal={refusals[peer]}
+                            describing={open && !known[peer] && !refusals[peer]}
+                            onToggle={() => togglePeer(peer)}
+                        >
+                            {known[peer] && mine.length === 0 ? <p className="muted">nothing observable here — this peer serves services rather than components</p> : mine.map((part, at) => section(part, at, mine.length, true))}
+                        </PeerGroup>
+                    )
+                })
             )}
         </>
     )

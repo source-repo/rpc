@@ -199,13 +199,34 @@ export const watchProjection = (nodes: readonly WatchNode[], component: Describe
 }
 
 /**
- * Every scope of every observable namespace of every described peer.
+ * Every scope one peer serves, from its description.
  *
  * Roots only - the top of each component's scope tree, plus each declared resource - rather than
- * every node of every tree. A list of everything is for finding out what is there; the way in to one
- * of them is to open it, which is where the scope tree and its whole depth already are.
+ * every node of every tree. A list of what is there is for finding out what is there; the way into
+ * one of them is to open it, which is where the scope tree and its whole depth already are.
+ *
+ * A namespace that is a service rather than an observable component contributes nothing, rather than
+ * an empty entry under its name: an empty section would claim it has something to show *and* that it
+ * is empty, which are two different statements and only one of them is true.
+ */
+export const scopesIn = (peer: string, description: ServerDescription): Watch =>
+    description.namespaces.flatMap((namespace) =>
+        namespace.component ? scopeTree(namespace.component, description.types).map((node) => ({ peer, namespace: namespace.name, path: node.path })) : []
+    )
+
+/**
+ * Every scope of every described peer - the whole network, flat.
+ *
+ * The console draws this grouped by peer, because a peer serving forty resources is forty headings
+ * and the peer is the thing a reader is actually choosing between. The flat form stays because it is
+ * the honest answer to *what does this network serve*, and because a caller that is not drawing a
+ * tree - a CLI printing it, an MCP server answering about it - wants the list rather than the
+ * arrangement.
+ *
+ * Only *described* peers appear, which is a property to know rather than to work around: a peer
+ * nobody has asked has no scopes to report, and inventing an entry for it would be reporting a guess.
+ * A console listing the network lists **peers** first for exactly that reason - it knows their names
+ * without asking anything - and describes one when somebody opens it.
  */
 export const everythingIn = (known: { readonly [peer: string]: ServerDescription }): Watch =>
-    Object.entries(known).flatMap(([peer, description]) =>
-        description.namespaces.flatMap((namespace) => (namespace.component ? scopeTree(namespace.component, description.types).map((node) => ({ peer, namespace: namespace.name, path: node.path })) : []))
-    )
+    Object.entries(known).flatMap(([peer, description]) => scopesIn(peer, description))
