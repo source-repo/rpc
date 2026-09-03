@@ -12,7 +12,7 @@ import {
     type RpcWriteOutcome
 } from '@source-repo/rpc'
 import type { RpcDataCache, RpcQuestion } from '@source-repo/query'
-import { ActionForm, actionsFor, canUpdate, editableFields, leavesUnder, RecordForm, scopeTree, staticSource, storeSource, Uncertain, useCommanding, ValueGrid, writableFor, writeNamespace, type BranchQuestion, type DescribedAction, type DescribedComponent, type DescribedMethod, type EditAffordance, type Link, type ObjectAccess, type PageQuestion, type Ref, type RowQuestion, type ScopedQuestion, type TypeNode, type Where, type WriteOutcome } from '@source-repo/react'
+import { ActionForm, actionsFor, canUpdate, editableFields, leavesUnder, RecordForm, scopeTree, staticSource, storeSource, Uncertain, useCommanding, ValueGrid, writableFor, writeNamespace, type BranchQuestion, type DescribedAction, type DescribedComponent, type DescribedMethod, type EditAffordance, type Link, type ObjectAccess, type PageQuestion, type Ref, type RowQuestion, type ScopedQuestion, type TypeNode, type ViewAffordance, type Where, type WriteOutcome } from '@source-repo/react'
 import { SourceView, type SourceDocument } from './SourceView'
 import { overlayRefusal, type RpcSourceBinding, type RpcSourceCatalogue, type RpcActiveSourceIdentity } from '@source-repo/diagnostics/catalogue'
 import { ScopeTree } from './ScopeTree'
@@ -229,7 +229,8 @@ export const ComponentPanel = ({
     data,
     onSubscribed,
     standalone,
-    openAt
+    openAt,
+    viewing
 }: {
     peer: string
     namespace: string
@@ -256,6 +257,15 @@ export const ComponentPanel = ({
     types?: { [name: string]: TypeNode }
     /** The page's own RpcServer - the peer this page is - read at observe time, like sendChat. */
     server: RefObject<RpcServer | null>
+    /**
+     * How to put the selected scope into the reader's view, where the console keeps one.
+     *
+     * Offered here rather than beside each value because a scope is what this pane selects, and it
+     * is the useful grain: choosing `state.zones.top` puts its whole reading in the view under one
+     * heading, which is what somebody comparing four machines wants. Adding a single value is the
+     * obvious next grain and belongs on the row rather than here.
+     */
+    viewing?: ViewAffordance
     /** The page's one cache. Holds the answers, and decides whether a period tick asks anything. */
     data: RpcDataCache
     /** The peer's observer count just changed, so a re-describe will show it moving. */
@@ -330,6 +340,22 @@ export const ComponentPanel = ({
         const asked = openAt ? tree.find((node) => node.path.join('.') === openAt) : undefined
         return asked ? asked.path : component.state ? ['state'] : (tree[0]?.path ?? ['state'])
     })
+
+    const chosen = useMemo(() => ({ peer, namespace, path: scope }), [peer, namespace, scope])
+    const inView = viewing?.holds(chosen) ?? false
+
+    /**
+     * The one control, drawn the same whichever shape the scope pane takes.
+     *
+     * A button that has already been pressed says so rather than going away: a reader who cannot
+     * remember whether they added this is the ordinary case, and a control that vanished would
+     * leave them to go and look.
+     */
+    const addToView = viewing && (
+        <button className="toggle" disabled={inView} onClick={() => viewing.add(chosen)} title={inView ? 'this scope is already in the view' : 'watch this scope alongside nodes from any other peer'}>
+            {inView ? 'in view' : 'add to view'}
+        </button>
+    )
 
     /**
      * What the subscription asks for: every typed leaf in the whole component, and no collection.
@@ -807,10 +833,14 @@ export const ComponentPanel = ({
                                     </option>
                                 ))}
                             </select>
+                            {addToView}
                         </div>
                     ) : (
                         <div className="scope-pane">
-                            <h4>scope</h4>
+                            <h4>
+                                scope
+                                {addToView}
+                            </h4>
                             <ScopeTree nodes={tree} selected={scope.join('.')} onSelect={setScope} />
                         </div>
                     )}

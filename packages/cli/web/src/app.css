@@ -261,6 +261,16 @@ h1 {
     color: #fff;
 }
 
+/* The view sits above the peers and is not one of them: full width like a peer row so the list
+   reads as one column, with a rule under it so it is plainly not the first entry of the list. */
+.view-entry {
+    justify-content: space-between;
+    margin-bottom: 10px;
+    padding-bottom: 10px;
+    border-bottom: 1px solid var(--line);
+    border-radius: 6px 6px 0 0;
+}
+
 .dot {
     width: 7px;
     height: 7px;
@@ -1651,4 +1661,43 @@ h1 {
     align-items: baseline;
     gap: 8px;
     margin-bottom: 2px;
+}
+
+/* ---- the view: nodes a reader chose, from wherever they are --------------- */
+
+/* Sections rather than a flat table with a "where" column, because two machines running the same
+   line publish the same paths under the same names - so the answer to "which one is this" has to be
+   above the rows rather than repeated in every one of them. */
+.view-node {
+    margin: 0 0 18px;
+}
+
+.view-node-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 10px;
+    flex-wrap: wrap;
+    padding-bottom: 3px;
+    margin-bottom: 4px;
+    border-bottom: 1px solid var(--line);
+}
+
+.view-node-controls {
+    display: flex;
+    align-items: baseline;
+    gap: 4px;
+    flex: none;
+}
+
+/* The two move buttons are one glyph wide and would otherwise be two different widths, which reads
+   as a misalignment rather than as two buttons. */
+.view-node-controls .toggle {
+    min-width: 1.6rem;
+    text-align: center;
+}
+
+.view-node-controls .toggle:disabled {
+    opacity: 0.4;
+    cursor: default;
 }

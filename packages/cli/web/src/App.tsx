@@ -10,9 +10,10 @@ import { ChatMessage, ChatService } from './ChatService'
 // `say(from: string, text: string)` instead of `say(…)`.
 import chatContract from './chat.types.json'
 import { ComponentPanel } from './ComponentPanel'
+import { ViewPane } from './ViewPane'
 import { ContextPanel } from './ContextPanel'
 import { StructurePanel } from './StructurePanel'
-import { ConsoleService, DescribedEvent, fetchConsoleName, NetworkProblem, PeerChange, PeerRole, PeerStructure, Search, ServerDescription, socketPath, StreamedEvent, TappedFrame, targetsIn, typeText } from '@source-repo/react'
+import { asView, ConsoleService, holds, DescribedEvent, fetchConsoleName, NetworkProblem, PeerChange, PeerRole, PeerStructure, Search, ServerDescription, socketPath, StreamedEvent, TappedFrame, targetsIn, typeText, withNode, type View, type ViewNode } from '@source-repo/react'
 import type { SearchTarget } from '@source-repo/search'
 import { MethodPanel } from './MethodPanel'
 import { Operations } from './Operations'
@@ -20,6 +21,40 @@ import { Traffic, TRAFFIC_KEPT } from './Traffic'
 import { Problems } from './Problems'
 import { Presence } from './Presence'
 import { displayNameForId, namespaceDisplayName, peerDisplayName } from './displayName'
+
+/**
+ * The reader's view, kept where the reader is.
+ *
+ * In `localStorage` and not on a peer, because a view is a fact about somebody rather than about
+ * the network: two people watching the same plant are watching different parts of it, and a set of
+ * chosen nodes stored on a node would be one person's screen imposed on everyone who opens that
+ * console. The same argument the presentation hints make from the other side - what a resource *is*
+ * belongs to the resource; what a reader is looking at belongs to the reader.
+ *
+ * Wrapped, like every other read of `localStorage` here: it throws outright in a private window and
+ * in a browser set to block site data, and a console that would not start because it could not
+ * remember a view is a worse failure than one that forgets it.
+ */
+const VIEW_KEY = 'msgrpc.view'
+
+const rememberedView = (): View => {
+    try {
+        const held = window.localStorage.getItem(VIEW_KEY)
+        return held ? asView(JSON.parse(held)) : []
+    } catch {
+        // Unreadable is empty. `asView` already keeps whatever is still intelligible inside a
+        // document that parsed; this is the case where nothing did.
+        return []
+    }
+}
+
+const rememberView = (view: View) => {
+    try {
+        window.localStorage.setItem(VIEW_KEY, JSON.stringify(view))
+    } catch {
+        // Nothing to do: the view is still on screen, it just will not outlive the tab.
+    }
+}
 
 /**
  * The page talks to the CLI over msgrpc itself, and is a peer of the network in its own right.
@@ -292,6 +327,16 @@ export const App = () => {
     const [offline, setOffline] = useState<Set<string>>(new Set())
     const [selected, setSelected] = useState<string | null>(null)
     /**
+     * The nodes this reader chose, and whether they are looking at them.
+     *
+     * Kept here rather than inside the panel because it outlives the panel: the whole point of a
+     * view is that it survives walking away to another peer, which is the walk that made a reader
+     * want one. `showingView` is exclusive with `selected` for the same reason a peer is exclusive
+     * with another peer - the main pane shows one thing.
+     */
+    const [view, setView] = useState<View>(rememberedView)
+    const [showingView, setShowingView] = useState(false)
+    /**
      * The observer this page was opened onto, when it was opened as one.
      *
      * `?observe=<peer>&ns=<namespace>` draws that component alone and full height - the scope tree
@@ -327,6 +372,47 @@ export const App = () => {
             })
         },
         [service, peers, known]
+    )
+
+    /**
+     * Change the view and remember it in one move.
+     *
+     * Takes a change rather than a value so that a button on a screen which is not showing the view
+     * cannot write back a stale copy of it: `add to view` fires from the component panel, which was
+     * rendered from whatever the view was when it mounted.
+     */
+    const changeView = useCallback((change: (held: View) => View) => {
+        setView((held) => {
+            const next = change(held)
+            rememberView(next)
+            return next
+        })
+    }, [])
+
+    const addToView = useCallback((node: ViewNode) => changeView((held) => withNode(held, node)), [changeView])
+
+    /**
+     * The affordance every scope pane is handed, rebuilt only when the view changes.
+     *
+     * One object rather than two props for the reason `EditAffordance` is one: a control has to
+     * know what the state already is as well as how to change it, and a button given only the verb
+     * would say `add to view` on something already in it.
+     */
+    const viewing = useMemo(() => ({ holds: (node: ViewNode) => holds(view, node), add: addToView }), [view, addToView])
+
+    /**
+     * Describe a peer for the view, which may be a peer this console has never looked at.
+     *
+     * Peers are described lazily here - a search does the same - and a view is the case that makes
+     * that visible: it is restored from storage naming four peers, and three of them may never have
+     * been selected.
+     */
+    const describeForView = useCallback(
+        async (other: string) => {
+            if (!service) throw new Error('the console is not connected')
+            return service.describe(other)
+        },
+        [service]
     )
 
     /** Every resource of every described peer that can answer, which is what the fan-out asks. */
@@ -373,6 +459,9 @@ export const App = () => {
     const [network, setNetwork] = useState<{ broker?: string; hub?: string; prefix?: string }>({})
     const [roles, setRoles] = useState<{ [peer: string]: PeerRole }>({})
     const [structure, setStructure] = useState<{ [peer: string]: PeerStructure }>({})
+
+    /** What to call a place in the view, under the same display names the rest of the console uses. */
+    const viewTitle = useCallback((other: string, namespace: string) => `${peerDisplayName(other, structure[other])} · ${namespace}`, [structure])
     const [comings, setComings] = useState<PeerChange[]>([])
     const [eventFilter, setEventFilter] = useState('')
     const [eventsPaused, setEventsPaused] = useState(false)
@@ -474,6 +563,7 @@ export const App = () => {
 
     const select = async (peer: string) => {
         setSelected(peer)
+        setShowingView(false)
         setDescribed(null)
         if (!service) return
         setDescribed(await service.describe(peer))
@@ -588,6 +678,7 @@ export const App = () => {
                             types={description.types}
                             server={peer}
                             data={data}
+                            viewing={viewing}
                             onSubscribed={() => {
                                 if (service) void service.describe(observing.peer).then(setDescribed).catch(() => undefined)
                             }}
@@ -616,6 +707,16 @@ export const App = () => {
                         </span>
                     )}
                 </div>
+                {/* Above the peers, because it is not one of them and is not under any of them.
+                    A view crosses the network, so putting it inside the list would be filing it
+                    under whichever peer happened to be first - and the whole point is that it
+                    belongs to none of them. */}
+                <button className={`peer view-entry${showingView ? ' selected' : ''}`} onClick={() => setShowingView(true)}>
+                    <span className="entity-title">
+                        <span>view</span>
+                    </span>
+                    {view.length > 0 && <span className="badge">{view.length}</span>}
+                </button>
                 <header>
                     <h1>Peers</h1>
                     <span className={`status ${status === 'connected' ? 'ok' : 'warn'}`}>{status}</span>
@@ -679,16 +780,17 @@ export const App = () => {
             </aside>
 
             <main>
-                {!selected && <p className="muted">Select a peer to see what it exposes.</p>}
-                {selected && !described && <p className="muted">Describing {selected}…</p>}
-                {failed && (
+                {showingView && <ViewPane view={view} onChange={changeView} server={peer} describe={describeForView} title={viewTitle} cache={data} period={undefined} pageSize={25} />}
+                {!showingView && !selected && <p className="muted">Select a peer to see what it exposes.</p>}
+                {!showingView && selected && !described && <p className="muted">Describing {selected}…</p>}
+                {!showingView && failed && (
                     <div className="notice">
                         <strong>{failed.code ?? 'Error'}</strong>
                         <p>{failed.error}</p>
                         <p className="muted">A server answers this only when it is started with exposeIntrospection.</p>
                     </div>
                 )}
-                {description && (
+                {!showingView && description && (
                     <>
                         <header className="peer-head">
                             <h1>
@@ -755,6 +857,7 @@ export const App = () => {
                                         types={description.types}
                                         server={peer}
                                         data={data}
+                                        viewing={viewing}
                                         onSubscribed={() => {
                                             if (service && selected) void service.describe(selected).then(setDescribed).catch(() => undefined)
                                         }}

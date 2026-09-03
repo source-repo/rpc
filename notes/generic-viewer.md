@@ -93,6 +93,21 @@ Two things made it a package rather than a copy of the console's file. Every col
 
 What this wave still leaves alone: `revisions` and `audit` are two different questions - *what did it look like* and *what happened* - and both stay concepts until a second consumer needs them. Neither belongs inside `continuity`, whose job is fenced replacement of running implementations and not every version an object ever had.
 
+**Four - the reader composes the screen.** Everything up to here shows one scope, of one component, of one peer, and every navigation replaces the last - which is right for reading a node and wrong for watching a plant, where the four things somebody is comparing sit on four machines. A **view** is an ordered set of chosen nodes, each a locator, added from wherever the reader happens to be and kept until they take it out.
+
+Two other ways to widen the screen were considered first and are worth writing down as rejected, because both look obvious. **A root above the scopes** - the plant above `Line1` - widens within one component, which the scope tree already does, and stops at the peer; the case that needs solving crosses peers. **A root above the network** - everything the federation serves, in one list - crosses peers and fails the other way, because the whole network is thousands of values and a screen showing all of them shows none. They are the same move, *show me everything under X*, and its limit is that the topology decides how big the answer is. A view is the other move: the reader names the set, so it is small because somebody chose it.
+
+The split follows the one `@source-repo/search` already made. The **model** is in `@source-repo/react` - what a chosen node is, how a set of them groups into subscriptions, what a stored one reads back as - because a CLI or an MCP server would otherwise write it again. The **arrangement** is in the console, because it is a layout and the toolkit says plainly that it does not do layout. `viewParts.ts` holds the links, exactly as the host supplies `Search` with its `ask`.
+
+Two things it decides that the first attempt got wrong, and the second is the interesting one.
+
+*One channel per component, not one per node.* Twelve tags from four machines is four subscriptions, with the paths of every node chosen from a component travelling in one projection - and that projection is **narrowed to the chosen nodes**, where the component panel deliberately asks for a whole component. Both follow from the same rule about what changes: the panel's selection moves with every click, so narrowing would only make each click a re-subscribe, while a view's set is fixed until the reader edits it. Without the grouping, the property that makes a view attractive - that you keep adding to it - is what makes it expensive.
+
+*A view holds whatever the console can show, not only what it can subscribe to.* The first cut drew value rows itself and so could hold typed state and nothing else. It was enforcing a real rule - a collection is paged rather than watched - but that rule is about the *projection*, and it had been quietly promoted into a claim about what a view may contain. The rig found it immediately: on this network every interesting node is an aspect provider, a document library or a relational service, so a values-only view could hold nothing at all, and the plant tree the whole idea started from was the first thing excluded. The fix deleted code rather than adding it - each section is a `ValueGrid` for the chosen scope, so a view now holds an OPC UA address space, a SQL table and a document folder side by side, from three peers, because the grid already knew how to draw all three.
+
+Read-only for now, and deliberately: the machinery that makes commanding safe - the argument form, the write discovery, the conflict re-read - belongs to `ComponentPanel` and to *a* component, and `open` on any section is one click to the page where all of it is. Commanding a plant from a screen assembled out of four peers is a thing to design on purpose rather than to inherit by passing one more prop.
+
+
 ## What the first step found
 
 *Appended after representation was built, which is the part of `branches-and-rows.md` worth imitating.*
