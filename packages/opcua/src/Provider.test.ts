@@ -109,7 +109,13 @@ const branch = async (opcua: OpcUaAspectProvider, parent?: string) =>
 
 const rows = (answer: RpcGetChildrenResult) => answer.data as { title: string; id: string; nodeClass: string; occurrenceId: string }[]
 
-/** Every leaf beneath a node, which is `getList` rather than a branch at a time. */
+/**
+ * Every leaf beneath a node, which is `getList` **asked for the depth**.
+ *
+ * `recursive` is what says so now. `under` is where and this is how deep, and `getList` without it
+ * answers one level - the same five roots `getChildren` does - so the flag is not decoration here:
+ * it is the whole difference between this helper and browsing.
+ */
 const beneath = async (
     opcua: OpcUaAspectProvider,
     under?: string,
@@ -117,6 +123,7 @@ const beneath = async (
     filter?: { field: string; op: string; operand: unknown }
 ) =>
     (await opcua.dataRequest('getList', ['address-space'], {
+        recursive: true,
         ...(under === undefined ? {} : { under }),
         ...(page ? { pagination: page } : {}),
         ...(filter ? { filter } : {})
@@ -597,7 +604,9 @@ test.serial('a mixed list can be asked for one kind of thing, in either arrangem
     await arranged.index()
 
     // Large enough to reach past the server's own object, which is most of any address space.
-    const page = { pagination: { page: 0, pageSize: 500 } }
+    // `recursive`, because what this test is about is the arrangement's *leaves* - a level of it
+    // would be the lines, and the mixed kinds it checks for are further down.
+    const page = { pagination: { page: 0, pageSize: 500 }, recursive: true }
     const all = rows((await arranged.dataRequest('getList', ['location'], page as never)) as RpcGetChildrenResult)
     // A Method has no Value attribute, and asking for one gets a bad status back. Reading every
     // leaf as though it were a Variable put that status in the cell, so every method in a list
