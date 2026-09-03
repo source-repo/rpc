@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { matchesFilter, type RpcFilter, type RpcSort } from '@source-repo/rpc'
 import type { RpcDataCache, RpcFreshness, RpcQuestion } from '@source-repo/query'
-import { leavesUnder, treeResourceAt, typeAt, type ScopeLeaf } from './scope.js'
+import { columnsFor, declaredResourceAt, leavesUnder, typeAt, type ScopeLeaf } from './scope.js'
 import type { DescribedResource } from './types.js'
 import { staticSource, ValueTree, type EditAffordance, type ValueSource } from './ValueTree.js'
 import { compileFilter } from './filter.js'
@@ -401,7 +401,16 @@ export const ValueGrid = ({
     // has no page number, its filter belongs to a branch rather than to the collection, and the
     // question it asks names a parent. Sharing the grid's machinery would mean explaining, in both
     // directions, which half of it does not apply.
-    const tree = treeResourceAt(component, scope)
+    /**
+     * The resource this scope names, browsable or not.
+     *
+     * `treeResourceAt` used to decide this, and deciding it by *shape* is what produced three
+     * renderings of one idea: a real table for an address space, stacked key-and-value blocks for a
+     * SQL table, and a value list for a record. They are the same arrangement - rows with columns, a
+     * page under them, a panel for the row that is picked - and the only thing a tree adds is
+     * something to browse on the left.
+     */
+    const tree = declaredResourceAt(component, scope)
     // Where the reader is, which is what makes a link keep its aspect: `follow` is answered against
     // the place they are following *from*, and without it every link would land in whichever
     // structure the provider prefers.
@@ -455,6 +464,18 @@ export const ValueGrid = ({
     // Offered only where the resource said it answers for one row, which is what the verb list is
     // for: a viewer offers what is served and nothing else.
     const opensRows = !!rowQuestion && !!tree && tree.verbs.includes('getOne')
+    /**
+     * Whether this resource can be *browsed*, which is the only thing a tree adds.
+     *
+     * Everything else about the arrangement is the same for a table, a queue and an address space:
+     * rows with columns, a page under them, and a panel for the row that is picked. Asking whether a
+     * resource is a tree in order to decide how to *draw* it is what produced three renderings of
+     * one idea - stacked key/value blocks for a table, a value list for a record, a real table only
+     * for a tree - and this is where that stops.
+     */
+    const browsable = !!tree && tree.shape === 'tree' && tree.verbs.includes('getChildren') && !!branchQuestion
+    /** How the rows are asked for: scoped where a subtree is served, plain where there is no depth. */
+    const listable = tree?.verbs.includes('getList') ? scopedQuestion : undefined
     // Closed when the reader moves to another resource. An id belongs to the resource that handed
     // it out, so carrying it across would ask the new one about a row of the old one - which it
     // answers, correctly and uselessly, with "no longer a row with this id".
@@ -464,7 +485,9 @@ export const ValueGrid = ({
         setBranch(undefined)
         setWhere(undefined)
     }, [here])
-    const columns = tree?.presentation?.defaultColumns ?? []
+    // The resource's own judgement first, then its row type - so a table that declared no columns
+    // still draws its fields rather than a lone id.
+    const columns = columnsFor(tree, types)
     const representation = tree?.presentation?.representation
 
     // A tree is the whole pane when one is selected. There is nothing else under that scope node -
@@ -473,7 +496,7 @@ export const ValueGrid = ({
     if (tree)
         return (
             <div className="value-grid">
-                {branchQuestion ? (
+                {browsable || listable ? (
                     <>
                         {/* One arrangement, three depths of one question: which set, which row,
                             which fields. The tree is scope and holds branches only; the table holds
@@ -496,6 +519,9 @@ export const ValueGrid = ({
                             </div>
                         )}
                         <div className="tree-and-object">
+                        {/* Only where there is something to browse. A flat resource has no branches,
+                            so the pane is the table and the panel - the same two of the three. */}
+                        {browsable && (
                         <ResourceTree
                             resource={tree}
                             cache={cache}
@@ -520,6 +546,7 @@ export const ValueGrid = ({
                             // The rows are on the right, and so are the buttons about them.
                             onAction={onAction}
                         />
+                        )}
                         <BranchTable
                                 resource={tree.path}
                                 columns={columns}
@@ -529,7 +556,7 @@ export const ValueGrid = ({
                                 branchQuestion={branchQuestion}
                                 // Offered only where the resource says it answers for a subtree.
                                 // Everything else about the table is the same either way.
-                                scopedQuestion={tree.verbs.includes('getList') ? scopedQuestion : undefined}
+                                scopedQuestion={listable}
                                 period={period}
                                 pageSize={pageSize}
                                 onPageSize={onPageSize}
@@ -557,6 +584,7 @@ export const ValueGrid = ({
                                 actions={actionsFor(tree.path as string[])}
                                 onAction={onAction}
                                 onMove={tree.verbs.includes('move') ? onMove : undefined}
+                                onEdit={editable?.(tree.path) ? onEdit : undefined}
                             />
                         {/* The row is still picked when the panel is off - it is marked, and an
                             action still knows which row it is about. What is turned off is the
@@ -572,7 +600,7 @@ export const ValueGrid = ({
                         </div>
                     </>
                 ) : (
-                    <p className="muted">this pane was given no way to ask for a branch, so the tree cannot be drawn</p>
+                    <p className="muted">this pane was given no way to ask this resource for rows</p>
                 )}
             </div>
         )

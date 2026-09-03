@@ -166,6 +166,16 @@ Two implementations rather than one, and neither was much. The aspect provider a
 
 On a flat resource the flag is **already true rather than meaningless**, so it is ignored rather than refused - every row of a table is one level down whichever way it points. That is the opposite of `fold` on an ordering comparison, which is refused because honouring it would mean something the caller cannot have meant, and the difference is now a conformance question asked of all four backends. `getChildren` refuses it outright, because `recursive: true` asks that verb to stop being itself and `recursive: false` restates it.
 
+**Seven - one arrangement, not three.** The console had grown three ways of drawing rows, and nobody had chosen that: a SQL table came out as stacked key-and-value blocks, a record in state as a value list, and only an address space got a real table with columns, a pager and a panel for the picked row. Three renderings of one idea.
+
+The cause was a single line. `treeResourceAt` decided which arrangement to use, so the question being asked was *is this a tree* when the question that matters is *is this a resource*. A table, a queue and an address space are the same thing to a reader - rows with columns, a page under them, a panel for the row that is picked - and the only thing a tree adds is **something to browse on the left**. So the gate became `declaredResourceAt`, and the branch tree became conditional inside it rather than the thing that selected the whole layout.
+
+`recursive` is what made it possible a week early. `getList` now serves a flat table and a subtree with one question shape, so the table needs no second way to ask: `branchQuestion` is optional and a resource with no depth is asked with `getList` alone. Columns come from `defaultColumns` where the resource declared them and from the row type where it did not, so a table that described no columns draws its fields rather than a lone id.
+
+**What it cost was a regression, and finding it is the point of checking against the running rig rather than against a screenshot in one's head.** The stacked rendering had an `edit` button; the real table never had one, because until now only trees used the real table and no tree here is writable. Switching the SQL table over silently took editing away from it. The fix is that the row's controls now live in one place - arrows, edit, then the declared actions - which is the same consolidation one level down: two renderings meant two places to add `move`, and this session added it to both.
+
+Props and state are untouched and still draw as a value list, which is the remaining format. It is the honest one for a list of *scalars* - `state.zones.top.setpoint  180` is already two columns - but the same argument would make it a table with a picked-row panel, and that is the next thing to try rather than a thing to assume.
+
 ## What the first step found
 
 *Appended after representation was built, which is the part of `branches-and-rows.md` worth imitating.*

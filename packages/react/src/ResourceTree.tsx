@@ -447,14 +447,19 @@ export const BranchTable = ({
     onPickRow,
     actions,
     onAction,
-    onMove
+    onMove,
+    onEdit
 }: {
     resource: readonly string[]
     columns: readonly string[]
     /** The branch being tabulated. Absent asks for the roots, as everywhere else. */
     parentId: string | undefined
     cache: RpcDataCache
-    branchQuestion: BranchQuestion
+    /**
+     * How to ask for one branch. Absent where the resource has none: a flat table is asked with
+     * `scopedQuestion` alone, which is `getList` and is what a resource with no depth answers.
+     */
+    branchQuestion?: BranchQuestion
     /**
      * How to ask for every leaf beneath the branch, where the resource answers for a subtree.
      *
@@ -492,6 +497,14 @@ export const BranchTable = ({
      * because the node knows nothing about how this screen happens to be paged.
      */
     onMove?: (id: string, position: number, resource: readonly string[]) => void
+    /**
+     * Open the editor for a row, where the resource accepts `update` and the store named columns.
+     *
+     * Came across when the flat rendering did: a table drawn as stacked key-and-value blocks had an
+     * `edit` button and the real table did not, because until now only trees used the real table and
+     * no tree here is writable. One rendering means one place for the row's controls.
+     */
+    onEdit?: (resource: readonly string[], id: string) => void
 }) => {
     const [page, setPage] = useState(0)
     /**
@@ -506,7 +519,10 @@ export const BranchTable = ({
     // A subtree where the resource answers for one, a level where it does not. Only the first can
     // be narrowed: a level is a level, and there is nowhere to push a filter to.
     const question = useMemo(
-        () => (scopedQuestion ? scopedQuestion(resource, parentId, page, pageSize, filter) : branchQuestion(resource, parentId, page, pageSize)),
+        () =>
+            // `getList` where the resource serves it - the one question that covers a branch and a
+            // flat table alike - and `getChildren` only where that is all there is.
+            scopedQuestion ? scopedQuestion(resource, parentId, page, pageSize, filter) : branchQuestion!(resource, parentId, page, pageSize),
         [scopedQuestion, branchQuestion, resource, parentId, page, pageSize, filter]
     )
     const { data, error, fetching } = useRpcData(cache, question, period)
@@ -679,7 +695,7 @@ export const BranchTable = ({
                                             </td>
                                         )
                                     })}
-                                    {actions?.length || onMove ? (
+                                    {actions?.length || onMove || onEdit ? (
                                         <td className="branch-actions">
                                             {/* Before the declared actions, because moving is about
                                                 where the row is and an action is about what it is -
@@ -713,6 +729,21 @@ export const BranchTable = ({
                                                         ↓
                                                     </button>
                                                 </>
+                                            )}
+                                            {/* Before the declared actions and after the arrows: an
+                                                action is a method the component named, and this is
+                                                the write contract every store already serves. */}
+                                            {onEdit && (
+                                                <button
+                                                    className="toggle"
+                                                    title={`edit ${id}`}
+                                                    onClick={(event) => {
+                                                        event.stopPropagation()
+                                                        onEdit(resource, id)
+                                                    }}
+                                                >
+                                                    edit
+                                                </button>
                                             )}
                                             {offered.map((action) => (
                                                 <button

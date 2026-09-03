@@ -154,9 +154,30 @@ export const treeResourceAt = (component: DescribedComponent, path: readonly str
  * Matched on the whole path rather than the first segment, so a resource called `state` could not
  * shadow the component's own - not that one should be called that, but a rule that depends on
  * nobody doing so is not a rule.
+ *
+ * Exported as `declaredResourceAt` because a viewer needs the same question `treeResourceAt` asks,
+ * without the tree part: a table, a queue and an address space are one arrangement - rows, with a
+ * panel for the row that is picked - and only the *browsing* differs. Asking whether a resource is
+ * a tree in order to decide how to *draw* it is what produced three renderings of one idea.
  */
 const resourceAt = (component: DescribedComponent, path: string[]) =>
     component.resources?.find((resource) => resource.path.length === path.length && resource.path.every((segment, at) => segment === path[at]))
+
+export const declaredResourceAt = (component: DescribedComponent, path: readonly string[]) => resourceAt(component, [...path])
+
+/**
+ * Which columns to draw for a resource, in order of what actually knows.
+ *
+ * `defaultColumns` first, because it is the resource's own judgement about which four of forty a
+ * person wants before they have chosen anything. Then the row type, which knows every field there
+ * is and no more. A resource with neither gets nothing here and the table falls back to the id,
+ * which is honest: it is what a resource that described nothing actually has.
+ */
+export const columnsFor = (resource: { presentation?: { defaultColumns?: readonly string[] }; row?: TypeNode } | undefined, types?: Types): readonly string[] => {
+    if (resource?.presentation?.defaultColumns?.length) return resource.presentation.defaultColumns
+    const row = resolveOnce(resource?.row, types, new Set()).type
+    return row?.kind === 'object' ? Object.keys(row.fields) : []
+}
 
 /**
  * Every value beneath a path, recursively, all the way down - which is what selecting a scope node
