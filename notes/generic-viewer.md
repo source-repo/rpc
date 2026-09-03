@@ -149,6 +149,23 @@ The console sends `expect: '*'` for a move, which is the sentinel earning its pl
 
 It also put a number on a thing that had only been an argument. The provider interface is one verb-shaped `dataRequest`, so a resource that cannot be written has *no smaller interface* - it has a shorter list. Which is the answer to whether unimplemented capability belongs in the type: it does not, because the type never had per-verb members to leave empty. The verb string is the extension point, and adding one is a case rather than a method every implementor grows. The **write** side has the opposite shape - `create`, `update`, `delete` are ordinary methods on a hand-written service per store package - so a new write verb there *is* a method every implementor must grow. That asymmetry is the next thing to fix, and it is what makes ordering expensive today.
 
+**Six - `under` says where, `recursive` says how deep.** `getList` on a tree descended always, and `getChildren` was a separate verb for one level. Those are not two verbs, they are two of the four answers to *where* and *how deep*, and separating the questions gives all four:
+
+| `under` | `recursive` | asks for | was |
+| - | - | - | - |
+| absent | `false` | the roots | `getChildren()` |
+| a branch | `false` | the children of that branch | `getChildren(parentId)` |
+| absent | `true` | everything the resource holds | `getList()` |
+| a branch | `true` | everything beneath that branch | `getList(under)` |
+
+So `getChildren` is now the `recursive: false` corner of `getList` rather than a thing of its own. It stays on the wire - a caller browsing a branch at a time is not wrong and does not have to change - but nothing new needs it, and a resource that can be browsed can now be browsed by the verb that also filters, sorts and pages. Measured against the live address space, `getList` with no flag and `getChildren` return the same five roots.
+
+**It is a change of default, deliberately.** Asking a four-hundred-node tree for a page used to flatten its whole depth into the answer; now that is something somebody asks for. The expensive answer should be the one with a word in the request rather than the one you get by not knowing to say otherwise. The migration is one word at each call site that meant the old thing - the console's scoped question says `recursive: true`, because *everything beneath this branch* is exactly what it means.
+
+Two implementations rather than one, and neither was much. The aspect provider already had both behaviours side by side - `leaves()` and `children()` - so the flag routes between them; a provider with no `leaves` refuses a recursive list rather than quietly answering one level. And the **library's own path over props and state gained the depth it never had**: `recursive: true` walks the record and answers dotted paths - `zones.top.setpoint` - which is what identifies a leaf there and what `getOne` takes back. A plain object is descended into and everything else is a leaf, so an array is one value rather than a branch, exactly as the scope tree treats it. Key order at every level, so paging a deep list is stable.
+
+On a flat resource the flag is **already true rather than meaningless**, so it is ignored rather than refused - every row of a table is one level down whichever way it points. That is the opposite of `fold` on an ordering comparison, which is refused because honouring it would mean something the caller cannot have meant, and the difference is now a conformance question asked of all four backends. `getChildren` refuses it outright, because `recursive: true` asks that verb to stop being itself and `recursive: false` restates it.
+
 ## What the first step found
 
 *Appended after representation was built, which is the part of `branches-and-rows.md` worth imitating.*

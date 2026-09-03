@@ -98,7 +98,9 @@ const questionsFor = (peer: string, namespace: string) => ({
         namespace,
         method: 'getList',
         resource,
-        params: { pagination: { page, pageSize: size }, ...(under !== undefined ? { under } : {}), ...(filter ? { filter } : {}) }
+        // `recursive`, because this is the question that means *everything beneath this branch* -
+        // which `getList` used to mean on its own and now says out loud.
+        params: { pagination: { page, pageSize: size }, recursive: true, ...(under !== undefined ? { under } : {}), ...(filter ? { filter } : {}) }
     })) as ScopedQuestion,
     manyQuestion: (resource: readonly string[], ids: readonly string[]): RpcQuestion => ({ target: peer, namespace, method: 'getMany', resource, params: { ids: [...ids] } })
 })

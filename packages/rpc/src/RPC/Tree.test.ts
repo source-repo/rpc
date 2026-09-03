@@ -520,3 +520,79 @@ test.serial('fold is refused where it would mean nothing, rather than ignored th
     t.regex(String(refusal?.message), /fold applies to startsWith and contains/)
     await t.notThrowsAsync(face.$data('getChildren', ['pages'], { filter: { field: 'title', op: 'contains', operand: 'a', fold: true } } as never))
 })
+
+/**
+ * `under` says where, `recursive` says how deep, and the four combinations of them are the whole of
+ * what a hierarchy can be asked.
+ *
+ * Which makes `getChildren` the corner where the depth is one, rather than a verb of its own. It
+ * stays on the wire - a caller browsing a branch at a time is not wrong and does not have to change
+ * - but nothing new needs it, and a resource that can be browsed can now be browsed by the verb
+ * that also filters, sorts and pages.
+ *
+ * Tested here against a component's **own record**, where the hierarchy is the shape of the data
+ * rather than something a provider browses, because that is the case every component has and no
+ * provider is needed to exercise it.
+ */
+
+class Zones extends RpcComponent<{ line: string }, { mode: string; zones: { top: { setpoint: number; heating: boolean }; bottom: { setpoint: number } } }> {
+    constructor() {
+        super({ line: 'one' }, { mode: 'auto', zones: { top: { setpoint: 180, heating: true }, bottom: { setpoint: 165 } } })
+    }
+}
+
+test('one level unless the depth was asked for, which is the change of default', async (t) => {
+    const { client } = await linked(t, 4991, new Zones(), 'zones')
+    const face = await client.proxy<DataFace>('zones')
+
+    const shallow = (await face.$data('getList', ['state'], { pagination: { page: 0, pageSize: 20 } })) as unknown as { ids: string[] }
+    // The members of the record, one level down - which is what `getList` over props and state has
+    // always answered, and is now what it answers because nobody asked for more.
+    t.deepEqual(shallow.ids, ['mode', 'zones'])
+
+    const deep = (await face.$data('getList', ['state'], { pagination: { page: 0, pageSize: 20 }, recursive: true })) as unknown as { ids: string[]; data: unknown[]; total?: number }
+    // Dotted paths, because that is what identifies a leaf here and what a caller hands back to
+    // `getOne`. A plain object is descended into and everything else is a leaf.
+    //
+    // In key order at every level, which is the same order the shallow answer comes in and is why
+    // paging a deep list is stable: the walk is a function of the record, not of the order somebody
+    // happened to build it in.
+    t.deepEqual(deep.ids, ['mode', 'zones.bottom.setpoint', 'zones.top.heating', 'zones.top.setpoint'])
+    t.deepEqual(deep.data, ['auto', 165, true, 180])
+    t.is(deep.total, 4)
+})
+
+test('where says where and recursive says how deep, and they are independent', async (t) => {
+    const { client } = await linked(t, 4992, new Zones(), 'zones')
+    const face = await client.proxy<DataFace>('zones')
+
+    // A path narrows the record; the flag decides the depth under it. Neither substitutes for the
+    // other, which is the whole reason there are two of them.
+    const under = (await face.$data('getList', ['state', 'zones'], { pagination: { page: 0, pageSize: 20 } })) as unknown as { ids: string[] }
+    t.deepEqual(under.ids, ['bottom', 'top'])
+
+    const underDeep = (await face.$data('getList', ['state', 'zones'], { pagination: { page: 0, pageSize: 20 }, recursive: true })) as unknown as { ids: string[] }
+    t.deepEqual(underDeep.ids, ['bottom.setpoint', 'top.heating', 'top.setpoint'])
+})
+
+test('the filter is applied to what the depth gathered, and before the page is cut', async (t) => {
+    const { client } = await linked(t, 4993, new Zones(), 'zones')
+    const face = await client.proxy<DataFace>('zones')
+
+    // Order matters and none of the three is interchangeable: gathering, then filtering, then
+    // paging. A filter over one level would be a filter over a different question.
+    const found = (await face.$data('getList', ['state'], { pagination: { page: 0, pageSize: 20 }, recursive: true, filter: { field: 'id', op: 'contains', operand: 'setpoint' } })) as unknown as { ids: string[]; total?: number }
+    t.deepEqual(found.ids, ['zones.bottom.setpoint', 'zones.top.setpoint'])
+    t.is(found.total, 2, 'the count is of what matched at that depth, not of the page')
+})
+
+test('getChildren refuses the flag rather than picking one of its two readings', async (t) => {
+    const { client } = await linked(t, 4994, new Docs(), 'docs')
+    const face = await client.proxy<DataFace>('docs')
+
+    // `recursive: true` asks it to stop being itself and `recursive: false` restates it, so either
+    // reading surprises somebody. The choice lives on `getList`, which is where it is offered.
+    await t.throwsAsync(face.$data('getChildren', ['pages'], { recursive: true }), { message: /one level by definition/ })
+    await t.throwsAsync(face.$data('getChildren', ['pages'], { recursive: false }), { message: /one level by definition/ })
+    await t.throwsAsync(face.$data('getList', ['state'], { recursive: 'yes' }), { message: /how deep to go, not how far/ })
+})

@@ -329,6 +329,36 @@ export interface RpcGetListParams {
      * Absent asks the resource for everything it holds, which is what `getList` has always meant.
      */
     readonly under?: string
+    /**
+     * Whether to descend, or to answer one level.
+     *
+     * `under` says *where* and this says *how deep*, and keeping them apart is what collapses two
+     * verbs into one. The four combinations are the whole of what a hierarchy can be asked:
+     *
+     * | `under` | `recursive` | asks for |
+     * | - | - | - |
+     * | absent | `false` | the roots |
+     * | a branch | `false` | the children of that branch |
+     * | absent | `true` | everything the resource holds, at any depth |
+     * | a branch | `true` | everything beneath that branch |
+     *
+     * The second row is `getChildren`, which is why that verb is now the `recursive: false` corner
+     * of this one rather than a thing of its own. It stays on the wire - a caller that has been
+     * asking for a branch at a time is not wrong and does not have to change - but nothing new needs
+     * it, and a resource that can be browsed can now be browsed by the verb that also filters, sorts
+     * and pages.
+     *
+     * **Opt in, and that is a change of default.** `getList` on a tree used to descend always, so a
+     * caller that asked a four-hundred-node address space for a page got the whole depth of it
+     * flattened; now that is a thing somebody asks for. The expensive answer should be the one with
+     * a word in the request, not the one you get by not knowing to say otherwise.
+     *
+     * On a resource with no hierarchy this is **already true rather than meaningless**, so it is
+     * ignored rather than refused - every row of a flat list is one level down, whichever way the
+     * flag points. That is the opposite of `fold` on an ordering comparison, which is refused
+     * because honouring it would mean something the caller cannot have meant.
+     */
+    readonly recursive?: boolean
 }
 
 /**
@@ -804,6 +834,7 @@ export const readDataRequest = (method: unknown, resource: unknown, params: unkn
     }
     if (given.under !== undefined && (typeof given.under !== 'string' || !given.under))
         return new Error('$data: under is the non-empty id of a branch, or absent for the whole resource')
+    if (given.recursive !== undefined && typeof given.recursive !== 'boolean') return new Error('$data: recursive is true or false - it says how deep to go, not how far')
     if (method === 'getChildren') {
         const branch = given as unknown as RpcGetChildrenParams
         // Checked rather than coerced, as everything else here is: a parentId that arrived as a
@@ -811,6 +842,12 @@ export const readDataRequest = (method: unknown, resource: unknown, params: unkn
         // look exactly like a node that genuinely has no children.
         if (branch.parentId !== undefined && (typeof branch.parentId !== 'string' || !branch.parentId))
             return new Error('$data: getChildren takes a non-empty string parentId, or none at all for the roots')
+        // Refused rather than ignored, because the two readings of it contradict each other and
+        // whichever one a node picked would be a surprise to somebody: `getChildren` *is* one level,
+        // so `recursive: true` asks it to stop being itself and `recursive: false` restates it. A
+        // caller that wants the choice has `getList`, which is where the choice lives.
+        if (branch.recursive !== undefined)
+            return new Error('$data: getChildren is one level by definition - ask getList with recursive for the choice')
     }
     if (method === 'getManyReference') {
         const reference = given as unknown as RpcGetManyReferenceParams
@@ -1205,12 +1242,43 @@ export const getMany = (component: object, resource: RpcResource, params: RpcGet
     return { ids: found, data: found.map((id) => collection[id]), epoch: snapshot.epoch, revision: snapshot.revision }
 }
 
+/** How deep a recursive walk of a component's own record will go before it stops descending. */
+const MAX_WALK_DEPTH = 32
+
+/**
+ * Every value beneath a record, at any depth, keyed by the path to it.
+ *
+ * What `recursive: true` means for a component's own props and state, where the hierarchy is the
+ * shape of the data rather than something a provider browses. Ids are dotted paths - `zones.top.
+ * setpoint` - because that is what identifies a leaf here and what a caller passes back to `getOne`.
+ *
+ * A plain object is descended into and everything else is a leaf, which puts arrays and dates on the
+ * same side of the line as numbers. That is deliberate: an array's members are indices, and indices
+ * are data in the way a record's keys are data - so it is one value here rather than a branch,
+ * exactly as the scope tree treats it.
+ *
+ * Bounded, because this walks a value rather than a type and a value can be deeper than anybody
+ * intended. At the limit the object itself is the leaf, which is a truthful answer rather than a
+ * truncated one: the caller gets the thing, just not taken apart.
+ */
+const walkEntries = (from: RpcComponentData, prefix: string, depth: number): (readonly [string, unknown])[] =>
+    projectionKeyOrder(from).flatMap((key) => {
+        const value = from[key]
+        const id = prefix ? `${prefix}.${key}` : key
+        const nested = value !== null && typeof value === 'object' && !Array.isArray(value) && !(value instanceof Uint8Array) && !(value instanceof Date)
+        return nested && depth < MAX_WALK_DEPTH ? walkEntries(value as RpcComponentData, id, depth + 1) : [[id, value] as const]
+    })
+
 export const getList = (component: object, resource: RpcResource, params: RpcGetListParams): RpcGetListResult => {
     const snapshot = componentSnapshot(component)
     const collection = collectionAt(snapshot, resource) ?? {}
     return {
         ...pageEntries(
-            projectionKeyOrder(collection).map((id) => [id, collection[id]] as const),
+            // One level unless somebody asked for the depth, which is the change of default this
+            // flag exists to make: the answer that costs more should be the one with a word in the
+            // request. Filtering, ordering and paging then happen over whichever set was gathered,
+            // in that order, exactly as they do for a flat one.
+            params.recursive ? walkEntries(collection, '', 0) : projectionKeyOrder(collection).map((id) => [id, collection[id]] as const),
             params
         ),
         epoch: snapshot.epoch,

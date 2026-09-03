@@ -257,12 +257,23 @@ export abstract class AspectProvider<Props extends Record<string, unknown>, Stat
 
         const size = Math.min(params.pagination?.pageSize ?? this.maxPageSize, this.maxPageSize)
         const from = (params.pagination?.page ?? 0) * size
-        // One branch, or every leaf beneath one. The second is what makes a tree filterable: the
-        // scope stops being where you are and becomes which rows the question is about.
-        const branch =
-            method === 'getList'
-                ? await this.leaves!(aspect.id, params.under, { from, size, ...(params.filter ? { filter: params.filter } : {}) })
-                : await this.children(aspect.id, params.parentId, { from, size })
+        /**
+         * One branch, or every leaf beneath one - and which of the two is now the caller's to say.
+         *
+         * `under` says where and `recursive` says how deep, so the four combinations of them are the
+         * whole of what can be asked of a hierarchy, and `getChildren` is the corner where the depth
+         * is one. Both answers already existed here side by side; what changed is that a caller
+         * reaches the cheap one by default instead of by knowing to use the other verb.
+         *
+         * `leaves` is what makes a tree filterable - the scope stops being where you are and becomes
+         * which rows the question is about - so a provider that does not implement it cannot answer
+         * a recursive list, and says so rather than quietly returning one level.
+         */
+        const descend = method === 'getList' && params.recursive === true
+        if (descend && !this.leaves) throw new Error(`${aspect.id} can be browsed a branch at a time but cannot list a subtree - ask without recursive`)
+        const branch = descend
+            ? await this.leaves!(aspect.id, params.under, { from, size, ...(params.filter ? { filter: params.filter } : {}) })
+            : await this.children(aspect.id, method === 'getList' ? params.under : params.parentId, { from, size })
 
         return {
             // The occurrence id is the row id, because that is what a caller passes back as the

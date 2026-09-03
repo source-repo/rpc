@@ -99,6 +99,14 @@ export interface DataQuestion {
 export const DATA_QUESTIONS: readonly DataQuestion[] = [
     { asks: 'everything', collection: 'customers', params: {}, ids: ['1', '2', '3', '4'] },
     {
+        asks: 'recursive, on a resource with no hierarchy to descend',
+        collection: 'customers',
+        params: { recursive: true },
+        ids: ['1', '2', '3', '4'],
+        because:
+            'A table has no depth, so the flag is already satisfied whichever way it points - and the right answer is to ignore it rather than refuse it, which is the opposite of `fold` on an ordering comparison. Asked of every backend because "they all ignore it" is exactly the kind of claim that is true of two engines and quietly false of the third.'
+    },
+    {
         asks: 'ne against a field that is missing on one row',
         collection: 'customers',
         params: { filter: { field: 'city', op: 'ne', operand: 'Berlin' } },
