@@ -465,9 +465,14 @@ export const ValueGrid = ({
                             period={period}
                             selected={branch}
                             branchesOnly
+                            // Offered only where the resource answers for a subtree, because that is
+                            // what makes "everything" a question it can answer: `under` absent is
+                            // every leaf beneath the root. Without it, scope is a branch's own
+                            // children and there is no all of them.
+                            everything={tree.verbs.includes('getList') ? `all of ${tree.label ?? tree.path.join('.')}` : undefined}
                             // The tree holds branches, so a click on one means scope: it decides
                             // which rows are tabulated beside it. Opening is what the table does.
-                            onPickRow={(id: string) => {
+                            onPickRow={(id: string | undefined) => {
                                 // A new branch is a new set of rows, so whatever was open out of the
                                 // last one is not in this one.
                                 setBranch(id)

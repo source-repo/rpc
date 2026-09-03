@@ -1,5 +1,5 @@
-import type { RpcFilter } from '@source-repo/rpc'
-import type { DescribedResource, ServerDescription } from './types.js'
+import type { SearchTarget } from '@source-repo/search'
+import type { ServerDescription } from './types.js'
 
 /**
  * Looking for something across everything one peer serves.
@@ -15,6 +15,10 @@ import type { DescribedResource, ServerDescription } from './types.js'
  * any of it reaches the wire. Ranking, highlights, a cost bound, a verb for stores that can do
  * better than a filter - none of those can be designed honestly from an empty page.
  *
+ * The fan-out itself is `@source-repo/search`: bounding it, merging what comes back and saying what
+ * refused are the same problem whoever asks, and a browser is one asker of three. What is here is
+ * the part that reads a *description* - which resources of a peer can answer at all.
+ *
  * ## What it asks, and what it deliberately does not
  *
  * One clause: the resource's declared `representation` **contains** the text. Not a sweep across
@@ -28,35 +32,31 @@ import type { DescribedResource, ServerDescription } from './types.js'
  * does not contain the text is not found, and that is a limit to state rather than to paper over.
  */
 
-/** One resource that can answer a search, with the field the search is against. */
-export interface Searchable {
-    readonly namespace: string
-    readonly resource: DescribedResource
-    /** The field a query is matched against: the resource's own answer to what names a row. */
-    readonly representation: string
-}
-
 /**
- * Which resources of a peer can be searched at all.
+ * Which resources of a peer can be searched at all, as targets the federation can ask.
  *
  * Two requirements, and each excludes something real. **`getList`**, because that is the verb that
  * takes a filter - a resource answering only `getChildren` is browsed a branch at a time and has no
  * way to be asked a question about all of it, which is why a document library is not searchable here
  * and is the first thing a real search contract would have to fix. And a **`representation`**,
  * because without one there is no field to match and no name to show for what was found.
+ *
+ * The shape returned is `@source-repo/search`'s, not one of this package's own. What a target *is*
+ * belongs beside the fan-out that asks it, so that the CLI and MCP build the same list from the same
+ * description rather than each deciding separately what counts as searchable.
  */
-export const searchable = (description: ServerDescription | undefined): readonly Searchable[] =>
+export const targetsIn = (peer: string, description: ServerDescription | undefined): readonly SearchTarget[] =>
     (description?.namespaces ?? []).flatMap((namespace) =>
         (namespace.component?.resources ?? [])
             .filter((resource) => resource.verbs.includes('getList') && resource.presentation?.representation)
-            .map((resource) => ({ namespace: namespace.name, resource, representation: resource.presentation!.representation! }))
+            .map((resource) => ({
+                peer,
+                namespace: namespace.name,
+                resource: resource.path,
+                representation: resource.presentation!.representation!,
+                ...(resource.label ? { label: resource.label } : {})
+            }))
     )
-
-/** The one clause a search asks. Trimmed, because a trailing space is not part of what was meant. */
-export const searchFilter = (query: string, representation: string): RpcFilter | undefined => {
-    const text = query.trim()
-    return text ? { field: representation, op: 'contains', operand: text } : undefined
-}
 
 /**
  * Where a hit is, as somewhere the console can go.

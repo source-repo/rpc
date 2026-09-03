@@ -1,11 +1,11 @@
 {
-    "name": "@source-repo/react",
+    "name": "@source-repo/search",
     "version": "0.1.0",
-    "description": "A resource UI toolkit for Source RPC: schema-derived tables, trees, records, forms and search over $data, with the rules kept out of the components",
+    "description": "Looking for something across a Source RPC network: one question fanned out over many peers, bounded, merged, and answered with locators rather than links",
     "keywords": [
         "rpc",
-        "react",
-        "data-provider",
+        "search",
+        "federation",
         "scada",
         "typescript"
     ],
@@ -15,7 +15,7 @@
     "repository": {
         "type": "git",
         "url": "git+https://github.com/source-repo/rpc.git",
-        "directory": "packages/react"
+        "directory": "packages/search"
     },
     "engines": {
         "node": ">=22"
@@ -28,34 +28,33 @@
             "types": "./dist/index.d.ts",
             "default": "./dist/index.js"
         },
-        "./package.json": "./package.json",
-        "./styles.css": "./styles.css"
+        "./package.json": "./package.json"
     },
     "files": [
         "dist",
-        "styles.css",
         "!dist/**/*.test.*"
     ],
     "scripts": {
         "build": "tsc -p tsconfig.json",
         "clean": "rimraf dist",
-        "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.test.json",
-        "test": "vitest run",
+        "typecheck": "tsc --noEmit -p tsconfig.json",
+        "test": "npm run clean && npm run build && ava",
         "prepack": "npm run clean && npm run build"
     },
     "dependencies": {
-        "@source-repo/query": "^5.3.2",
-        "@source-repo/rpc": "^5.3.2",
-        "@source-repo/search": "^0.1.0"
-    },
-    "peerDependencies": {
-        "react": ">=18"
+        "@source-repo/rpc": "^5.3.2"
     },
     "devDependencies": {
-        "@types/react": "^19.2.2",
-        "react": "^19.2.0",
+        "@types/node": "^26.1.2",
+        "ava": "^8.0.1",
         "rimraf": "^6.0.1",
-        "typescript": "^7.0.2",
-        "vitest": "^4.1.10"
+        "typescript": "^7.0.2"
+    },
+    "ava": {
+        "files": [
+            "dist/**/*.test.js"
+        ],
+        "workerThreads": false,
+        "concurrency": 1
     }
 }

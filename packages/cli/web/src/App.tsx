@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
-import { RpcServer, TransportEvent, type RpcGetListParams, type RpcGetManyParams, type RpcGetOneParams, type RpcGetOneResult, type RpcGetListResult, type RpcGetManyResult, type RpcSchema } from '@source-repo/rpc'
+import { RpcServer, TransportEvent, type RpcFilter, type RpcGetListParams, type RpcGetManyParams, type RpcGetOneParams, type RpcGetOneResult, type RpcGetListResult, type RpcGetManyResult, type RpcSchema } from '@source-repo/rpc'
 import { RpcDataCache, rpcOnlineFrom } from '@source-repo/query'
 import { RpcOperations } from '@source-repo/rpc'
 import { pageName } from './peerName'
@@ -12,7 +12,8 @@ import chatContract from './chat.types.json'
 import { ComponentPanel } from './ComponentPanel'
 import { ContextPanel } from './ContextPanel'
 import { StructurePanel } from './StructurePanel'
-import { ConsoleService, DescribedEvent, fetchConsoleName, NetworkProblem, PeerChange, PeerRole, PeerStructure, Search, ServerDescription, socketPath, StreamedEvent, TappedFrame, typeText } from '@source-repo/react'
+import { ConsoleService, DescribedEvent, fetchConsoleName, NetworkProblem, PeerChange, PeerRole, PeerStructure, Search, ServerDescription, socketPath, StreamedEvent, TappedFrame, targetsIn, typeText } from '@source-repo/react'
+import type { SearchTarget } from '@source-repo/search'
 import { MethodPanel } from './MethodPanel'
 import { Operations } from './Operations'
 import { Traffic, TRAFFIC_KEPT } from './Traffic'
@@ -280,6 +281,14 @@ export const App = () => {
      */
     const [unread, setUnread] = useState<{ [peer: string]: number }>({})
     const [peers, setPeers] = useState<string[]>([])
+    /**
+     * What each peer serves, as it has been described.
+     *
+     * Filled when somebody searches rather than when the network connects. Describing every peer on
+     * connect would spend a round trip each on peers nobody asked about, and on a plant network that
+     * is the load a console adds by being opened.
+     */
+    const [known, setKnown] = useState<{ readonly [peer: string]: ServerDescription }>({})
     const [offline, setOffline] = useState<Set<string>>(new Set())
     const [selected, setSelected] = useState<string | null>(null)
     /**
@@ -290,6 +299,60 @@ export const App = () => {
      * document was loaded with, because this is a different page rather than a view the console
      * switches between: nothing here pushes history, and there is no state to keep in step.
      */
+    /**
+     * Describe the peers a search is about to ask, once each.
+     *
+     * Lazy and idempotent: the first non-empty query fetches what is missing, and everything after
+     * it is answered from what was already learnt. A peer that refuses to describe itself is simply
+     * absent from the targets - which is the same outcome as a peer that serves nothing searchable,
+     * and both are better than a search box that fails because one node is unreachable.
+     */
+    const onSearching = useCallback(
+        (query: string) => {
+            if (!query.trim() || !service) return
+            const missing = peers.filter((peer) => !(peer in known))
+            if (!missing.length) return
+            void Promise.all(
+                missing.map(async (peer) => {
+                    try {
+                        const answer = await service.describe(peer)
+                        return [peer, answer] as const
+                    } catch {
+                        return undefined
+                    }
+                })
+            ).then((answers) => {
+                const learnt = answers.filter((one): one is readonly [string, ServerDescription] => !!one && 'namespaces' in one[1])
+                if (learnt.length) setKnown((held) => ({ ...held, ...Object.fromEntries(learnt) }))
+            })
+        },
+        [service, peers, known]
+    )
+
+    /** Every resource of every described peer that can answer, which is what the fan-out asks. */
+    const targets = useMemo(() => Object.entries(known).flatMap(([peer, description]) => targetsIn(peer, description)), [known])
+
+    /**
+     * Ask one of them, through this page's own link.
+     *
+     * The federation knows nothing about proxies or peer names; it is handed this. `getList` with
+     * the filter it built and the small page it chose - the same verb the console has always used,
+     * pointed at somebody else's peer.
+     */
+    const askTarget = useCallback(
+        async (target: SearchTarget, filter: RpcFilter, limit: number) => {
+            const link = peer.current
+            if (!link) throw new Error('this page has no link')
+            const proxy = await link.proxy<DataProxy>(target.namespace, target.peer)
+            const answer = (await proxy.$with({ semantics: 'query' }).$data('getList', target.resource, {
+                pagination: { page: 0, pageSize: limit },
+                filter
+            })) as RpcGetListResult
+            return { ids: answer.ids ?? [], rows: answer.data ?? [] }
+        },
+        [peer]
+    )
+
     const observing = useMemo(() => {
         const asked = new URLSearchParams(window.location.search)
         const peer = asked.get('observe')
@@ -657,20 +720,9 @@ export const App = () => {
                             </div>
                         ) : null}
                         <StructurePanel description={description} peers={peers} onSelectPeer={(other) => void select(other)} />
-                        {/* Above the namespaces, because it is a question about all of them. */}
-                        <Search
-                            description={description}
-                            peer={description.name}
-                            cache={data}
-                            period={undefined}
-                            pageQuestion={(namespace, resource, filter, size) => ({
-                                target: description.name,
-                                namespace,
-                                method: 'getList',
-                                resource,
-                                params: { pagination: { page: 0, pageSize: size }, filter }
-                            })}
-                        />
+                        {/* Above the namespaces, and no longer a question about only this peer:
+                            the targets come from every peer that has been described. */}
+                        <Search targets={targets} ask={askTarget} onQuery={onSearching} />
                         {description.namespaces.map((namespace) => (
                             <section key={namespace.name} className="namespace">
                                 <h2>

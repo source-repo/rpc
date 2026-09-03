@@ -711,6 +711,7 @@ export const ResourceTree = ({
     onSelect,
     onPickRow,
     branchesOnly,
+    everything,
     actions,
     onAction
 }: {
@@ -735,7 +736,15 @@ export const ResourceTree = ({
      * only branches drawn it chooses the branch whose children are tabulated beside it. One gesture
      * on one row, so one prop.
      */
-    onPickRow?: (id: string) => void
+    onPickRow?: (id: string | undefined) => void
+    /**
+     * What to call the row that means *everything*, where the host offers one.
+     *
+     * Its presence is the signal, because only the host knows whether scope means a subtree: a
+     * resource that answers `getList` can be asked for every leaf beneath the root, and one that
+     * cannot has no such thing as all of them.
+     */
+    everything?: string
     /**
      * Draw only the rows that have children.
      *
@@ -757,6 +766,29 @@ export const ResourceTree = ({
                 <strong>{resource.label ?? resource.path.join('.')}</strong>
                 <span className="muted"> — a branch at a time</span>
             </div>
+            {/*
+             * Everything, as a row above the branches.
+             *
+             * The scoped list has always been able to answer it - `under` absent means every leaf
+             * beneath the root, and that is what the resource is asked when nothing is picked - but
+             * there was no way to *say* it. A reader could scope to `Line1` or to `Server` and never
+             * back out to the whole address space without reloading the page, which made the widest
+             * question the one question the tree could not ask.
+             *
+             * It matters more the more there is to do with a scope. A filter, a kind chip and a page
+             * of a hundred rows are all worth pointing at everything, and each of them arrived after
+             * the tree had settled into "pick one of these".
+             *
+             * Only where the resource answers for a subtree: without that, scope means a branch's own
+             * children and there is no such thing as all of them.
+             */}
+            {onPickRow && everything && (
+                <div className={`tree-row${selected === undefined ? ' on' : ''}`}>
+                    <button className="tree-label tree-openable" onClick={() => onPickRow(undefined)} title="every row this resource has, from the top">
+                        {everything}
+                    </button>
+                </div>
+            )}
             <BranchRows parentId={undefined} depth={0} resource={resource.path} columns={columns} representation={representation} cache={cache} branchQuestion={branchQuestion} period={period} pageSize={pageSize} selected={selected} onSelect={onSelect} onPickRow={onPickRow} branchesOnly={branchesOnly} actions={actions} onAction={onAction} />
         </div>
     )

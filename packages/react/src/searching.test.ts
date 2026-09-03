@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { hitAddress, searchable, searchFilter } from './searching.js'
+import { hitAddress, targetsIn } from './searching.js'
 import type { ServerDescription } from './types.js'
 
 const described = {
@@ -32,26 +32,19 @@ const described = {
 
 describe('which resources a search can ask', () => {
     it('needs a verb that takes a filter and a field to match', () => {
-        expect(searchable(described).map((one) => `${one.namespace}.${one.resource.path.join('.')}:${one.representation}`)).toEqual(['shop.customers:name'])
+        expect(targetsIn('devserver', described).map((one) => `${one.peer}.${one.namespace}.${one.resource.join('.')}:${one.representation}`)).toEqual([
+            'devserver.shop.customers:name'
+        ])
+    })
+
+    it('carries the peer, because a target is a resource of a *machine*', () => {
+        // What makes the fan-out federated rather than one peer's fan-out: the same resource path
+        // on two peers is two targets, and a hit has to say which one it came from.
+        expect(targetsIn('other', described)[0].peer).toBe('other')
     })
 
     it('has nothing to ask before a peer has been described', () => {
-        expect(searchable(undefined)).toEqual([])
-    })
-})
-
-describe('what a search asks', () => {
-    it('asks one clause, against the field the resource nominated', () => {
-        // Not a sweep across every field: an object-valued field does not match a string in any
-        // meaningful sense, and asking a SQL node to scan every column of every table is a query
-        // nobody sized, issued by a search box.
-        expect(searchFilter('acme', 'name')).toEqual({ field: 'name', op: 'contains', operand: 'acme' })
-    })
-
-    it('asks nothing at all for nothing typed', () => {
-        expect(searchFilter('', 'name')).toBeUndefined()
-        expect(searchFilter('   ', 'name')).toBeUndefined()
-        expect(searchFilter('  acme ', 'name')).toEqual({ field: 'name', op: 'contains', operand: 'acme' })
+        expect(targetsIn('devserver', undefined)).toEqual([])
     })
 })
 

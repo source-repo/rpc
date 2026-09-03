@@ -1,129 +1,135 @@
-import { useMemo, useState } from 'react'
-import type { RpcDataCache, RpcQuestion } from '@source-repo/query'
-import type { RpcFilter, RpcGetListResult } from '@source-repo/rpc'
-import { useRpcData } from './data.js'
+import { useEffect, useState } from 'react'
+import type { RpcFilter } from '@source-repo/rpc'
+import { searchAcross, type SearchAnswer, type SearchResult, type SearchTarget } from '@source-repo/search'
 import { useDebounced } from './timing.js'
-import { hitAddress, searchable, searchFilter, type Searchable } from './searching.js'
-import type { ServerDescription } from './types.js'
+import { hitAddress } from './searching.js'
 
 /**
- * One box, every resource of this peer that can answer.
+ * One box, every resource of every peer that can answer.
  *
- * The experiment the plan calls for, built as a client so that what a real search contract needs can
- * be learnt rather than guessed: it asks the verbs and the filter language that already exist, and
- * what it cannot do is the specification for what would have to be added.
+ * The drawing half of `@source-repo/search`. Which resources can be asked is read from each peer's
+ * description; bounding the fan-out, merging what comes back and reporting what refused all happen
+ * in that package, because they are the same problem whoever is asking and a browser is one asker
+ * of three.
  *
- * Two things it already cannot do, and both are findings rather than omissions. A resource that
- * answers only `getChildren` - a document library - cannot be asked a question about all of it, so
- * it is absent from the results entirely. And there is no ranking: results are grouped by where they
- * came from, in the order the peer describes them, because nothing here can compare a customer
- * against an OPC UA node and say which is the better answer. A real search would have to.
+ * ## Why this asks imperatively rather than watching
+ *
+ * Every other collection on this screen is a *watched* question: it has a period, it re-asks when
+ * the component says something changed, and the cache answers a second viewer for free. A search is
+ * none of those things. It is a question somebody asked once, of a set of resources chosen by what
+ * they typed, and there is nothing to keep current - the answer stops being interesting the moment
+ * the box changes. Watching it would open a subscription per resource per keystroke and close them
+ * again immediately, which is the fan-out the bound exists to prevent, arriving from the cache side.
  */
-
-/** How many hits one resource may contribute. Small on purpose - see `SearchIn`. */
-const PER_RESOURCE = 5
-
-/**
- * One resource, asked.
- *
- * A component per resource rather than a loop over them, because a hook cannot be called in a loop
- * whose length changes and the number of searchable resources changes with the peer. It also means a
- * slow one does not hold up the rest: each arrives when it arrives.
- *
- * **The page is deliberately tiny.** A search box issues a question on every keystroke somebody
- * pauses in, against as many resources as a peer serves, over a link that may be a plant network -
- * so each asks for five. Five is enough to see whether the thing being looked for is there; the way
- * to see the rest is to open the resource, which is what the hit links to.
- */
-const SearchIn = ({
-    cache,
-    where,
-    filter,
-    peer,
-    pageQuestion,
-    period
-}: {
-    cache: RpcDataCache
-    where: Searchable
-    filter: RpcFilter
-    peer: string
-    pageQuestion: (namespace: string, resource: readonly string[], filter: RpcFilter, size: number) => RpcQuestion
-    period: number | undefined
-}) => {
-    const question = useMemo(() => pageQuestion(where.namespace, where.resource.path, filter, PER_RESOURCE), [pageQuestion, where, filter])
-    const { data, error, fetching } = useRpcData<RpcGetListResult>(cache, question, period)
-
-    const rows = data?.ids?.length ? data.ids.map((id, at) => ({ id, row: data.data?.[at] })) : []
-    // Nothing found is not worth a line. A reader looking for `acme` does not need to be told that
-    // eleven resources do not have it - the ones that do are the answer.
-    if (!rows.length && !error) return null
-
-    const label = where.resource.label ?? where.resource.path.join('.')
-    return (
-        <div className="search-group">
-            <div className="search-where">
-                <span className="mono">{where.namespace}</span> <span className="muted">{label}</span>
-                {fetching && <span className="muted"> · looking</span>}
-                {/* A count only where the peer could afford one, which is the same rule the pager
-                    follows: a number nobody counted is a number somebody would believe. */}
-                {data?.total !== undefined && data.total > rows.length && <span className="muted"> · {data.total} in all</span>}
-            </div>
-            {error && <p className="component-error">{error}</p>}
-            <ul className="search-hits">
-                {rows.map(({ id, row }) => {
-                    const named = row && typeof row === 'object' ? (row as Record<string, unknown>)[where.representation] : undefined
-                    return (
-                        <li key={String(id)}>
-                            <a href={hitAddress(peer, where.namespace, where.resource.path)} title={`${where.namespace}.${where.resource.path.join('.')} · ${String(id)}`}>
-                                {typeof named === 'string' && named ? named : String(id)}
-                            </a>
-                        </li>
-                    )
-                })}
-            </ul>
-        </div>
-    )
-}
 
 export const Search = ({
-    description,
-    peer,
-    cache,
-    pageQuestion,
-    period
+    targets,
+    ask,
+    onQuery
 }: {
-    description: ServerDescription | undefined
-    peer: string
-    cache: RpcDataCache
-    pageQuestion: (namespace: string, resource: readonly string[], filter: RpcFilter, size: number) => RpcQuestion
-    period: number | undefined
+    /** Everything that can be asked, built from the descriptions the host already holds. */
+    targets: readonly SearchTarget[]
+    /**
+     * How to ask one of them. Supplied by the host for the reason every other question here is:
+     * what a peer is called and how it is reached belongs to whoever holds the link.
+     */
+    ask: (target: SearchTarget, filter: RpcFilter, limit: number) => Promise<SearchAnswer>
+    /**
+     * Somebody is searching. The host uses this to fetch the descriptions it does not have yet -
+     * a network is not described until somebody looks, and describing every peer on connect would
+     * spend a round trip each on peers nobody asked about.
+     */
+    onQuery?: (query: string) => void
 }) => {
     const [typed, setTyped] = useState('')
-    // Settled rather than live, for the reason the collection's own box settles: eight keystrokes
-    // are one question and not eight - and here one question is one *per resource*.
+    // Settled rather than live: eight keystrokes are one question, and here one question is one per
+    // resource per peer.
     const query = useDebounced(typed, 400)
-    const where = useMemo(() => searchable(description), [description])
+    const [found, setFound] = useState<SearchResult | undefined>()
+    const [looking, setLooking] = useState(false)
+
+    useEffect(() => {
+        onQuery?.(query)
+    }, [query, onQuery])
+
+    useEffect(() => {
+        let cancelled = false
+        if (!query.trim()) {
+            setFound(undefined)
+            return
+        }
+        setLooking(true)
+        void searchAcross(targets, query, ask)
+            .then((answer) => {
+                // A slower answer to an older question must not land on a newer one - the box has
+                // moved on, and the rows underneath it would be from a query nobody can see.
+                if (!cancelled) setFound(answer)
+            })
+            .finally(() => {
+                if (!cancelled) setLooking(false)
+            })
+        return () => {
+            cancelled = true
+        }
+    }, [query, targets, ask])
+
+    const where = (hit: { at: { peer: string; namespace: string; resource: readonly string[] } }) =>
+        targets.find((one) => one.peer === hit.at.peer && one.namespace === hit.at.namespace && one.resource.join('.') === hit.at.resource.join('.'))
 
     return (
         <section className="search">
             <div className="search-head">
-                <input className="control" value={typed} placeholder={`search ${where.length} resource${where.length === 1 ? '' : 's'} by name`} onChange={(event) => setTyped(event.target.value)} />
+                <input
+                    className="control"
+                    value={typed}
+                    placeholder={`search ${targets.length} resource${targets.length === 1 ? '' : 's'} by name`}
+                    onChange={(event) => setTyped(event.target.value)}
+                />
                 {typed && (
                     <button className="toggle" onClick={() => setTyped('')}>
                         clear
                     </button>
                 )}
+                {looking && <span className="muted">looking…</span>}
                 {/* Said plainly, because it is the bound: this finds things by the name their
                     resource nominated, not by anything else they contain. */}
                 <span className="muted">by the field each resource says names a row</span>
             </div>
-            {query.trim() &&
-                where.map((one) => {
-                    const filter = searchFilter(query, one.representation)
-                    return filter ? (
-                        <SearchIn key={`${one.namespace}.${one.resource.path.join('.')}`} cache={cache} where={one} filter={filter} peer={peer} pageQuestion={pageQuestion} period={period} />
-                    ) : null
+
+            {found && (
+                <div className="search-where">
+                    {found.total === 0 ? 'nothing of that name' : `${found.total} found`}
+                    <span className="muted">
+                        {' '}
+                        · asked {found.asked} resource{found.asked === 1 ? '' : 's'}
+                        {found.hits.length < found.total ? ` · showing ${found.hits.length}` : ''}
+                    </span>
+                </div>
+            )}
+
+            <ul className="search-hits">
+                {found?.hits.map((hit) => {
+                    const target = where(hit)
+                    return (
+                        <li key={`${hit.at.peer}.${hit.at.namespace}.${hit.at.resource.join('.')}.${hit.at.id}`}>
+                            <a href={hitAddress(hit.at.peer, hit.at.namespace, hit.at.resource)} title={`${hit.at.peer} · ${hit.at.namespace}.${hit.at.resource.join('.')} · ${hit.at.id}`}>
+                                {hit.name}
+                            </a>{' '}
+                            <span className="muted">
+                                {hit.at.peer} · {target?.label ?? hit.at.resource.join('.')}
+                            </span>
+                        </li>
+                    )
                 })}
+            </ul>
+
+            {/* Named rather than counted. A network where one node is rebooting still answers, and a
+                reader deciding the thing is not there deserves to know which peer did not look. */}
+            {found?.refused.map((refusal) => (
+                <p className="component-error" key={`${refusal.target.peer}.${refusal.target.namespace}.${refusal.target.resource.join('.')}`}>
+                    {refusal.target.peer} · {refusal.target.namespace}.{refusal.target.resource.join('.')} could not answer: {refusal.reason}
+                </p>
+            ))}
         </section>
     )
 }
