@@ -122,6 +122,21 @@ export const DATA_QUESTIONS: readonly DataQuestion[] = [
         because: "case folding differs per engine and per collation, and 'borg' must not match"
     },
     {
+        asks: 'contains, folded, which is what a search box actually needs',
+        collection: 'customers',
+        params: { filter: { field: 'name', op: 'contains', operand: 'borg', fold: true } },
+        ids: ['2', '3'],
+        because:
+            'the same question one line up, asked the other way: a filter is case-sensitive because two rows differ by case, and a person typing borg means both of them. Four implementations reach it differently - lower() on two engines, dropped binary casts on MySQL, $options i on Mongo - and this is the only thing that says they agree'
+    },
+    {
+        asks: 'startsWith, folded',
+        collection: 'customers',
+        params: { filter: { field: 'name', op: 'startsWith', operand: 'ACME', fold: true } },
+        ids: ['1'],
+        because: 'folding is on both sides, so a shouted operand finds a row that is not shouting'
+    },
+    {
         asks: 'startsWith',
         collection: 'customers',
         params: { filter: { field: 'name', op: 'startsWith', operand: 'B' } },

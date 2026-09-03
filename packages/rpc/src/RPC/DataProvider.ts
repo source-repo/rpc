@@ -235,6 +235,26 @@ export interface RpcFilterCondition {
     readonly field?: string
     readonly op: RpcFilterOp
     readonly operand: string | number | boolean | null
+    /**
+     * Compare without regard to case. Only on `startsWith` and `contains`, and off by default.
+     *
+     * **A filter is case-sensitive because a filter has to be.** `borg` and `Borg AB` are different
+     * rows, the conformance fixture keeps them apart on purpose, and the three SQL flavours go to
+     * some trouble to force a binary collation so that a query means the same thing on each - a
+     * default that folded case would silently change what a condition selects depending on how a
+     * database happened to be created.
+     *
+     * A **search box** wants the opposite, and it is not a preference: somebody typing `acme` means
+     * `Acme Ltd`, and a search that answers "nothing of that name" because they used the wrong
+     * capital is a search nobody can use. That is a real requirement, so it is asked for explicitly
+     * rather than guessed from context - the caller says which of the two they meant, and the
+     * condition still says the same thing wherever it is evaluated.
+     *
+     * Refused on the ordering operators rather than ignored there. "Case-insensitively less than"
+     * is a collation question and not a comparison, and this library has been careful enough about
+     * collations not to answer one by accident.
+     */
+    readonly fold?: boolean
 }
 
 /** A condition, or all of these, or any of these. Closed, so it can be checked rather than trusted. */
@@ -925,6 +945,14 @@ const readFilter = (filter: unknown, depth: number, count: { nodes: number }): E
     const operand = condition.operand
     if (operand !== null && typeof operand !== 'string' && typeof operand !== 'number' && typeof operand !== 'boolean')
         return new Error('$data: an operand is a string, number, boolean or null')
+    // Refused where it would mean nothing rather than ignored there. A caller who asked for a folded
+    // comparison and silently got a sensitive one would be reading a wrong answer as a right one -
+    // which is the same failure a dropped field is, and this file refuses those too.
+    if (condition.fold !== undefined) {
+        if (typeof condition.fold !== 'boolean') return new Error('$data: fold is true or false')
+        if (condition.fold && condition.op !== 'startsWith' && condition.op !== 'contains')
+            return new Error(`$data: fold applies to startsWith and contains, not to ${condition.op} - "case-insensitively less than" is a collation, not a comparison`)
+    }
     return undefined
 }
 
@@ -986,7 +1014,7 @@ const fieldOf = (row: unknown, id: string, field?: string): unknown => {
  * strings lexicographically; anything else answers false rather than inventing an order, because
  * `20 > '9'` having an answer at all is how a threshold silently stops working.
  */
-const satisfies = (value: unknown, { op, operand }: RpcFilterCondition): boolean => {
+const satisfies = (value: unknown, { op, operand, fold }: RpcFilterCondition): boolean => {
     if (op === 'ne') return value !== operand
     if (value === undefined) return false
     switch (op) {
@@ -994,8 +1022,11 @@ const satisfies = (value: unknown, { op, operand }: RpcFilterCondition): boolean
             return value === operand
         case 'startsWith':
         case 'contains': {
-            const text = typeof value === 'string' ? value : String(value)
-            const needle = String(operand)
+            const held = typeof value === 'string' ? value : String(value)
+            // Both sides, and only when asked. Folding one side would make the comparison depend on
+            // which of them happened to be capitalised.
+            const text = fold ? held.toLowerCase() : held
+            const needle = fold ? String(operand).toLowerCase() : String(operand)
             return op === 'startsWith' ? text.startsWith(needle) : text.includes(needle)
         }
         default: {

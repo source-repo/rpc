@@ -1,6 +1,6 @@
 import test from 'ava'
 import { randomUUID } from 'node:crypto'
-import { RpcClient, RpcComponent, RpcServer, groupFields, rpc, rpcNamespace } from '../index.js'
+import { RpcClient, RpcComponent, RpcServer, groupFields, matchesFilter, rpc, rpcNamespace, type RpcFilter } from '../index.js'
 import type { RpcDataMethod, RpcDataResource, RpcGetChildrenParams, RpcGetChildrenResult, RpcResource } from './DataProvider.js'
 
 /**
@@ -495,4 +495,28 @@ test.serial('a default column that is really there says nothing at all', async (
         said.some((line) => line.includes('presentation.defaultColumns')),
         'a hint that is correct is not worth a line of anybody’s log'
     )
+})
+
+test('a folded comparison is asked for, never inherited', (t) => {
+    const rows = [{ name: 'Acme Ltd' }, { name: 'borg' }, { name: 'Borg AB' }]
+    const matching = (filter: RpcFilter) => rows.filter((row) => matchesFilter(filter, row, row.name)).map((row) => row.name)
+
+    // The default stays what a filter has to be. Two rows differ only by case and they are two rows.
+    t.deepEqual(matching({ field: 'name', op: 'contains', operand: 'borg' }), ['borg'])
+    t.deepEqual(matching({ field: 'name', op: 'contains', operand: 'borg', fold: true }), ['borg', 'Borg AB'])
+    // Both sides, so a shouted operand finds a row that is not shouting.
+    t.deepEqual(matching({ field: 'name', op: 'startsWith', operand: 'ACME', fold: true }), ['Acme Ltd'])
+})
+
+test.serial('fold is refused where it would mean nothing, rather than ignored there', async (t) => {
+    const { client } = await linked(t, 4983, new Docs(), 'refusing')
+    const face = await client.proxy<DataFace>('refusing')
+
+    // A caller who asked for a folded comparison and silently got a sensitive one would be reading a
+    // wrong answer as a right one. "Case-insensitively less than" is a collation, not a comparison.
+    const refusal = await t.throwsAsync(
+        face.$data('getChildren', ['pages'], { filter: { field: 'title', op: 'gt', operand: 'a', fold: true } } as never)
+    )
+    t.regex(String(refusal?.message), /fold applies to startsWith and contains/)
+    await t.notThrowsAsync(face.$data('getChildren', ['pages'], { filter: { field: 'title', op: 'contains', operand: 'a', fold: true } } as never))
 })

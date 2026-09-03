@@ -93,10 +93,19 @@ export interface SearchOptions {
 
 const DEFAULTS = { perTarget: 5, limit: 50, concurrency: 8 } as const
 
-/** The one clause a search asks of a target. Trimmed: a trailing space is not part of what was meant. */
+/**
+ * The one clause a search asks of a target. Trimmed: a trailing space is not part of what was meant.
+ *
+ * **Folded**, which is the difference between a filter and a search. A filter is case-sensitive
+ * because `borg` and `Borg AB` are two rows and a condition must not quietly conflate them; a person
+ * typing `acme` into a search box means `Acme Ltd`, and a box that answered "nothing of that name"
+ * because they used the wrong capital would be one nobody could use. The distinction is asked for
+ * here rather than configured anywhere, because it is a property of *searching* rather than of any
+ * particular query.
+ */
 export const searchFilter = (query: string, representation: string): RpcFilter | undefined => {
     const text = query.trim()
-    return text ? { field: representation, op: 'contains', operand: text } : undefined
+    return text ? { field: representation, op: 'contains', operand: text, fold: true } : undefined
 }
 
 /**

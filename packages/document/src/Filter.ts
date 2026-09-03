@@ -114,7 +114,7 @@ const literal = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 
 const condition = (given: RpcFilterCondition): Filter<Document> => {
     const field = fieldFor(given.field, 'a filter condition')
-    const { op, operand } = given
+    const { op, operand, fold } = given
 
     if (operand === null) {
         // `{ field: null }` would match a document that *lacks* the field as well as one that holds
@@ -142,10 +142,13 @@ const condition = (given: RpcFilterCondition): Filter<Document> => {
             return { [field]: { $gte: operand } }
         case 'startsWith':
             if (typeof operand !== 'string') return refuse(`startsWith compares text, and ${JSON.stringify(operand)} is a ${typeof operand}`)
-            return { [field]: { $regex: `^${literal(operand)}` } }
+            // `$options: 'i'` where the caller asked to fold, and the operand is still escaped: the
+            // safety of `literal()` is about what a caller may inject into a pattern, and asking for
+            // a case-insensitive comparison does not loosen it.
+            return { [field]: { $regex: `^${literal(operand)}`, ...(fold ? { $options: 'i' } : {}) } }
         case 'contains':
             if (typeof operand !== 'string') return refuse(`contains compares text, and ${JSON.stringify(operand)} is a ${typeof operand}`)
-            return { [field]: { $regex: literal(operand) } }
+            return { [field]: { $regex: literal(operand), ...(fold ? { $options: 'i' } : {}) } }
         default:
             return refuse(`${String(op)} is not a comparison this node serves`)
     }

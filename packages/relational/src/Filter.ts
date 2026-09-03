@@ -127,7 +127,7 @@ const PATTERN: readonly RpcFilterOp[] = ['startsWith', 'contains']
 const conditionFor = (condition: RpcFilterCondition, table: TableInfo, flavour: SqlFlavour): Expression<SqlBool> => {
     const column = columnFor(table, condition.field, 'a filter condition')
     const name = sql.id(column.name)
-    const { op, operand } = condition
+    const { op, operand, fold } = condition
 
     if (operand === null) {
         if (op === 'eq') return sql<SqlBool>`${name} is null`
@@ -142,7 +142,7 @@ const conditionFor = (condition: RpcFilterCondition, table: TableInfo, flavour: 
         if (typeof operand !== 'string') return refuse(`${op} compares text, and ${JSON.stringify(operand)} is a ${typeof operand}`)
         if (column.kind !== 'string' && column.kind !== 'unknown')
             return refuse(`${op} compares text, and ${column.name} holds ${column.dataType}`)
-        return op === 'startsWith' ? flavour.startsWith(column.name, operand) : flavour.contains(column.name, operand)
+        return op === 'startsWith' ? flavour.startsWith(column.name, operand, fold) : flavour.contains(column.name, operand, fold)
     }
 
     if (!accepts(column, operand))

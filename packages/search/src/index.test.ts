@@ -19,12 +19,14 @@ const answering = (rows: { readonly [where: string]: readonly string[] }) => {
     return { ask, asked }
 }
 
-test('one clause, against the field the resource nominated', (t) => {
-    t.deepEqual(searchFilter('acme', 'name'), { field: 'name', op: 'contains', operand: 'acme' })
+test('one clause, against the field the resource nominated, folded', (t) => {
+    // Folded is what separates a search from a filter. A filter keeps `borg` and `Borg AB` apart
+    // because they are two rows; somebody typing `acme` means `Acme Ltd`.
+    t.deepEqual(searchFilter('acme', 'name'), { field: 'name', op: 'contains', operand: 'acme', fold: true })
     // Not a sweep across every field: an object-valued field does not match a string meaningfully,
     // and scanning every column of every table is a query nobody sized.
     t.is(searchFilter('  ', 'name'), undefined)
-    t.deepEqual(searchFilter('  acme ', 'name'), { field: 'name', op: 'contains', operand: 'acme' })
+    t.deepEqual(searchFilter('  acme ', 'name'), { field: 'name', op: 'contains', operand: 'acme', fold: true })
 })
 
 test('how well a name matched is a claim about two strings, not about relevance', (t) => {

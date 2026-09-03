@@ -31,10 +31,18 @@ import type { ColumnInfo, TableInfo } from './Catalogue.js'
  */
 export interface SqlFlavour {
     readonly name: 'sqlite' | 'postgres' | 'mysql'
-    /** Case-sensitive prefix match. Never matches a NULL column, which is the missing-field rule. */
-    startsWith(column: string, operand: string): Expression<SqlBool>
-    /** Case-sensitive substring match, with the same NULL behaviour. */
-    contains(column: string, operand: string): Expression<SqlBool>
+    /**
+     * Prefix match. Never matches a NULL column, which is the missing-field rule.
+     *
+     * `fold` compares without regard to case, and each engine needs its own way to say so: the
+     * expressions below are written to be case-*sensitive* on databases whose defaults are not, so
+     * folding is not simply leaving that off. It is asked for by a caller rather than inherited from
+     * however a database was created, which is the whole point of forcing the collation in the first
+     * place.
+     */
+    startsWith(column: string, operand: string, fold?: boolean): Expression<SqlBool>
+    /** Substring match, with the same NULL behaviour and the same `fold`. */
+    contains(column: string, operand: string, fold?: boolean): Expression<SqlBool>
     /**
      * One column's `ORDER BY` terms, with a missing value placed where the in-memory implementation
      * puts it.
@@ -152,11 +160,17 @@ export const sqliteFlavour: SqlFlavour = {
     // is measured by SQL's `length()` rather than JavaScript's `.length`, since one counts
     // characters and the other counts UTF-16 code units - they differ the moment somebody searches
     // for an emoji.
-    startsWith: (column, operand) => sql<SqlBool>`substr(${id(column)}, 1, length(${operand})) = ${operand}`,
+    startsWith: (column, operand, fold) =>
+        fold
+            ? // `lower()` on both sides. SQLite folds ASCII only unless it was built with ICU, so a
+              // folded match on `Ä` is the one case where the three engines can disagree - said here
+              // rather than found later, and immaterial to the search box this exists for.
+              sql<SqlBool>`substr(lower(${id(column)}), 1, length(${operand})) = lower(${operand})`
+            : sql<SqlBool>`substr(${id(column)}, 1, length(${operand})) = ${operand}`,
     // `instr` is a byte-wise search, so it is case-sensitive without asking. It returns 0 for no
     // match and NULL for a NULL column, and NULL > 0 is unknown rather than true - which is exactly
     // the rule that a row missing the field never matches.
-    contains: (column, operand) => sql<SqlBool>`instr(${id(column)}, ${operand}) > 0`,
+    contains: (column, operand, fold) => (fold ? sql<SqlBool>`instr(lower(${id(column)}), lower(${operand})) > 0` : sql<SqlBool>`instr(${id(column)}, ${operand}) > 0`),
     // SQLite treats NULL as the smallest value, so ascending would put missing rows first. It has
     // understood NULLS FIRST/LAST since 3.30, which is well below anything Node has shipped.
     // BINARY is already its default collation; naming it costs nothing and stops a column declared
@@ -188,8 +202,8 @@ export const postgresFlavour: SqlFlavour = {
     // `starts_with` and `strpos` are case-sensitive and take their needle as a value, so neither
     // needs an operand escaped. Postgres' LIKE would have been case-correct already; it is the
     // escaping that rules it out.
-    startsWith: (column, operand) => sql<SqlBool>`starts_with(${id(column)}, ${operand})`,
-    contains: (column, operand) => sql<SqlBool>`strpos(${id(column)}, ${operand}) > 0`,
+    startsWith: (column, operand, fold) => (fold ? sql<SqlBool>`starts_with(lower(${id(column)}), lower(${operand}))` : sql<SqlBool>`starts_with(${id(column)}, ${operand})`),
+    contains: (column, operand, fold) => (fold ? sql<SqlBool>`strpos(lower(${id(column)}), lower(${operand})) > 0` : sql<SqlBool>`strpos(${id(column)}, ${operand}) > 0`),
     // Postgres already places NULL where the in-memory rule wants it - greatest, so last ascending.
     // Said out loud anyway, because a default is a thing an installation can change and a sort that
     // silently depends on one is a sort that differs between two deployments of the same node. The
@@ -218,8 +232,15 @@ export const mysqlFlavour: SqlFlavour = {
     // byte-wise comparison. That makes matching accent-sensitive as well as case-sensitive, which
     // is a divergence from a collation-aware search and is declared rather than hidden: it is the
     // only reading that agrees with the in-memory implementation.
-    startsWith: (column, operand) => sql<SqlBool>`locate(cast(${operand} as binary), cast(${id(column)} as binary)) = 1`,
-    contains: (column, operand) => sql<SqlBool>`locate(cast(${operand} as binary), cast(${id(column)} as binary)) > 0`,
+    // The binary casts are what make these case-sensitive on an engine whose usual collation is not,
+    // so a folded match drops them and lowers both sides instead - which is the same comparison the
+    // other two make, rather than MySQL's default one that happens to look similar.
+    startsWith: (column, operand, fold) =>
+        fold
+            ? sql<SqlBool>`locate(lower(${operand}), lower(${id(column)})) = 1`
+            : sql<SqlBool>`locate(cast(${operand} as binary), cast(${id(column)} as binary)) = 1`,
+    contains: (column, operand, fold) =>
+        fold ? sql<SqlBool>`locate(lower(${operand}), lower(${id(column)})) > 0` : sql<SqlBool>`locate(cast(${operand} as binary), cast(${id(column)} as binary)) > 0`,
     // MySQL has no NULLS FIRST/LAST at all, so the nullness is ordered first as its own term and
     // the column follows. `(col is null)` is 0 for a value and 1 for a missing one, which under the
     // same direction puts missing last ascending and first descending - the rule, by arithmetic.
