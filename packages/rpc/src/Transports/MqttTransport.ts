@@ -1,7 +1,7 @@
 import * as mqtt from 'mqtt'
 
 import { stringToUint8Array, uint8ArrayToBase64 } from 'uint8array-extras'
-import { GenericModule, IGenericModule, Message, MessageHeader, TransportEvent, type RelayedFrame } from '../RPC/Core.js'
+import { GenericModule, IGenericModule, Message, MessageHeader, publicTransportEndpoint, TransportEvent, type RelayedFrame, type RpcTransportDescription } from '../RPC/Core.js'
 import { FrameCodec, jsonCodec, msgPackCodec } from '../RPC/Codec.js'
 import type { IPublishPacket } from 'mqtt-packet'
 import { MessageSigner, MessageVerifier, RpcIdentity } from '../RPC/Auth.js'
@@ -343,6 +343,11 @@ export class MqttTransport extends GenericModule<Message, unknown, Message, unkn
         // no target and be dropped. A fresh session never exposes this, because nothing arrives
         // that early.
         queueMicrotask(() => void this.open().catch((e) => this.emit(TransportEvent.transportError, e)))
+    }
+
+    rpcDescription(): RpcTransportDescription {
+        const endpoint = publicTransportEndpoint(this.url)
+        return { name: this.getName(), protocol: 'mqtt', role: 'broker', ...(endpoint ? { endpoint } : {}) }
     }
 
     /**

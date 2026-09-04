@@ -1,6 +1,7 @@
-import { groupFields, type RpcGetOneResult, type RpcPresentationSection } from '@source-repo/rpc'
+import { groupFields, type RpcGetManyResult, type RpcGetOneResult, type RpcPresentationSection } from '@source-repo/rpc'
 import type { RpcDataCache, RpcQuestion } from '@source-repo/query'
 import { useRpcData } from './data.js'
+import { rowFromAnswer } from './row-preview.js'
 
 /**
  * One row, opened.
@@ -72,9 +73,9 @@ export const RecordPanel = ({
     sections?: readonly RpcPresentationSection[]
     onClose?: () => void
 }) => {
-    const { data, error, fetching } = useRpcData<RpcGetOneResult>(cache, question, period)
+    const { data, error, fetching } = useRpcData<RpcGetOneResult | RpcGetManyResult>(cache, question, period)
 
-    const row = data?.data
+    const row = rowFromAnswer(data, id)
     const all = isRecord(row) ? Object.entries(row) : undefined
     const promoted = (detail ?? []).filter((name) => all?.some(([field]) => field === name))
     const fields = all
@@ -105,10 +106,9 @@ export const RecordPanel = ({
                 )}
             </div>
             {error && <p className="component-error">{error}</p>}
-            {/* The one answer that is neither a row nor a failure. `getOne` leaves `data` out when
-                nothing has that id, because a row can be removed between the list that named it and
-                the click that opened it - a race nobody can avoid, and not a fault to report as
-                one. Said plainly, so an operator knows to go back rather than to retry. */}
+            {/* The one answer that is neither a row nor a failure. `getOne` leaves `data` out and
+                `getMany` leaves the id out when nothing has it, because a row can be removed between
+                the list and the click - a race nobody can avoid, not a fault to report as one. */}
             {data && row === undefined && <p className="muted">there is no longer a row with this id</p>}
             {fields &&
                 groups.map((group, at) => (

@@ -1,5 +1,5 @@
 import { canonicalText } from './Canonical.js'
-import { MessageModule, Message, MessageType, GenericModule } from './Core.js'
+import { MessageModule, Message, MessageType, GenericModule, type RpcTransportDescription } from './Core.js'
 import {
     RpcCallInstanceMethodPayload,
     RpcErrorCode,
@@ -54,7 +54,7 @@ import {
     type RpcProjectionEntry,
     type RpcProjectionSlice
 } from './Component.js'
-import { declaredResource, getList, getMany, getOne, getManyReference, readDataRequest, servesDataResources, SLOW_DATA_REQUEST_MS, type RpcDataMethod, type RpcDataResource, type RpcDataResources, type RpcDataTiming, type RpcGetListParams, type RpcGetOneParams, type RpcGetManyParams, type RpcGetManyReferenceParams } from './DataProvider.js'
+import { declaredResource, getChildren, getList, getMany, getOne, getManyReference, readDataRequest, servesDataResources, SLOW_DATA_REQUEST_MS, type RpcDataMethod, type RpcDataResource, type RpcDataResources, type RpcDataTiming, type RpcGetChildrenParams, type RpcGetListParams, type RpcGetOneParams, type RpcGetManyParams, type RpcGetManyReferenceParams } from './DataProvider.js'
 import { readWriteRequest, servesWrites } from './DataWrites.js'
 import { RpcSchema, validateParams, validateValue, type ComponentSchema } from './Schema.js'
 import { describeProblems, namespaceProblems } from './Compatibility.js'
@@ -343,6 +343,8 @@ export interface ExposedNamespace {
 export class RpcServerHandler extends MessageModule<Message<RpcMessage>, RpcMessage, Message<RpcMessage>, RpcMessage> {
     manageRpc = new ManageRpc()
     eventProxies = new Map<string, EventProxy>()
+    /** Read lazily by introspection because transports are built after the handler is constructed. */
+    transportDescriptions: () => readonly RpcTransportDescription[] = () => []
     /**
      * Elevations the host declared itself, beside those its exposed instances announce.
      *
@@ -989,20 +991,9 @@ export class RpcServerHandler extends MessageModule<Message<RpcMessage>, RpcMess
                         await this.sendError(payload.id, source, 'InvalidParams', `$data: ${request.resource.join('.')} answers ${declared.verbs.join(', ')}, not ${request.method}`)
                         return
                     }
-                    // A tree is a hierarchy the resource knows about and the library does not. The
-                    // contract-served path reads a record out of props or state, which is flat by
-                    // construction, so there is no parent to ask about - and answering the whole
-                    // record to a caller that asked for one branch would look like a node with a
-                    // great many children rather than like the mistake it is.
-                    if (!declared && request.method === 'getChildren') {
-                        await this.sendError(
-                            payload.id,
-                            source,
-                            'InvalidParams',
-                            `$data: getChildren is answered by a resource that declares shape 'tree'; ${request.resource.join('.')} is served from this component's own record, which is a list`
-                        )
-                        return
-                    }
+                    // Props and state are the library's built-in tree resources. Their hierarchy
+                    // is the record itself, so the base provider answers getChildren just as a
+                    // component-owned provider does for an address space or document tree.
                     // A name that is not a resource and does not reach into props or state, on a
                     // component that serves resources at all, is a caller that mistyped a resource -
                     // and it is refused rather than answered.
@@ -1045,7 +1036,9 @@ export class RpcServerHandler extends MessageModule<Message<RpcMessage>, RpcMess
                     const began = Date.now()
                     const answer = declared
                         ? await (inst as unknown as RpcDataResources).dataRequest(request.method, request.resource, request.params)
-                        : request.method === 'getMany'
+                        : request.method === 'getChildren'
+                          ? getChildren(inst, request.resource, request.params as RpcGetChildrenParams)
+                          : request.method === 'getMany'
                           ? getMany(inst, request.resource, request.params as RpcGetManyParams)
                           : request.method === 'getManyReference'
                           ? getManyReference(inst, request.resource, request.params as RpcGetManyReferenceParams)

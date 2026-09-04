@@ -1,7 +1,7 @@
 import * as SocketIo from 'socket.io'
 import { createServer as createHttpServer, Server as HttpServer } from 'http'
 import { createServer as createHttpsServer, Server as HttpsServer, type ServerOptions as TlsServerOptions } from 'https'
-import { GenericModule, IGenericModule, Message, TransportEvent, type RelayedFrame } from '../RPC/Core.js'
+import { GenericModule, IGenericModule, Message, TransportEvent, type RelayedFrame, type RpcTransportDescription } from '../RPC/Core.js'
 import { FrameCodec, msgPackCodec } from '../RPC/Codec.js'
 import { RpcAuthenticator, RpcIdentity } from '../RPC/Auth.js'
 import { refuseDelivery } from '../RPC/Undeliverable.js'
@@ -18,6 +18,7 @@ export class SocketIoServerTransport extends GenericModule<Message, unknown, Mes
     codec: FrameCodec = msgPackCodec
     io?: SocketIo.Server
     ourServer = false
+    private readonly describedEndpoint?: string
     /**
      * Peer name -> the socket it was last seen on, learned from the source field of inbound frames.
      * Without it this transport can only broadcast, which puts every reply and every event on every
@@ -66,6 +67,11 @@ export class SocketIoServerTransport extends GenericModule<Message, unknown, Mes
         host?: string
     ) {
         super(name, sources)
+        if (port && port > 0) {
+            const address = host ?? '0.0.0.0'
+            const path = typeof socketIoOptions.path === 'string' ? socketIoOptions.path : ''
+            this.describedEndpoint = `${tls ? 'https' : 'http'}://${address}:${port}${path}`
+        }
         this.ourServer = server === undefined
         if (tls && !tls.cert && !tls.pfx && !tls.SNICallback)
             throw new Error(`SocketIoServerTransport '${name}': tls needs a certificate - pass cert and key, or pfx, or an SNICallback that supplies them`)
@@ -176,6 +182,15 @@ export class SocketIoServerTransport extends GenericModule<Message, unknown, Mes
             if (host) listener.listen(port, host, bound)
             else listener.listen(port, bound)
         } else this.readyFlag = true
+    }
+
+    rpcDescription(): RpcTransportDescription {
+        return {
+            name: this.getName(),
+            protocol: 'socket.io',
+            role: 'listen',
+            ...(this.describedEndpoint ? { endpoint: this.describedEndpoint } : {})
+        }
     }
 
     /** The `$`-delimited layout. Kept whole, so a v1 peer is served exactly as it was. */

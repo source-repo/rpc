@@ -1,5 +1,5 @@
 import { io, ManagerOptions, Socket, SocketOptions } from 'socket.io-client'
-import { GenericModule, IGenericModule, Message, TransportEvent } from '../RPC/Core.js'
+import { GenericModule, IGenericModule, Message, publicTransportEndpoint, TransportEvent, type RpcTransportDescription } from '../RPC/Core.js'
 import { FrameCodec, msgPackCodec } from '../RPC/Codec.js'
 import { refuseDelivery } from '../RPC/Undeliverable.js'
 import { isUsablePeerName, isUsableShape, MAX_RELAY_HOPS, PRESENCE_EVENT, PresenceAnnouncement, PresenceUpdate } from './Presence.js'
@@ -79,6 +79,11 @@ export class SocketIoClientTransport extends GenericModule<Message, unknown, Mes
         // no target and be dropped. A fresh session never exposes this, because nothing arrives
         // that early.
         queueMicrotask(() => void this.open().catch((e) => this.emit(TransportEvent.transportError, e)))
+    }
+
+    rpcDescription(): RpcTransportDescription {
+        const endpoint = this.url ? publicTransportEndpoint(this.url) : undefined
+        return { name: this.getName(), protocol: 'socket.io', role: 'connect', ...(endpoint ? { endpoint } : {}) }
     }
 
     /** Set for good by close(). What stops the server-restart retry from resurrecting the link. */

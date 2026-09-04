@@ -215,6 +215,16 @@
             "kind": "boolean"
           }
         },
+        "transports": {
+          "type": {
+            "kind": "array",
+            "items": {
+              "kind": "ref",
+              "name": "RpcTransportDescription"
+            }
+          },
+          "optional": true
+        },
         "namespaces": {
           "type": {
             "kind": "array",
@@ -306,6 +316,54 @@
               "kind": "ref",
               "name": "TypeNode"
             }
+          },
+          "optional": true
+        }
+      }
+    },
+    "RpcTransportDescription": {
+      "kind": "object",
+      "fields": {
+        "name": {
+          "type": {
+            "kind": "string"
+          }
+        },
+        "protocol": {
+          "type": {
+            "kind": "string"
+          }
+        },
+        "role": {
+          "type": {
+            "kind": "union",
+            "options": [
+              {
+                "kind": "literal",
+                "value": "listen"
+              },
+              {
+                "kind": "literal",
+                "value": "connect"
+              },
+              {
+                "kind": "literal",
+                "value": "broker"
+              },
+              {
+                "kind": "literal",
+                "value": "port"
+              },
+              {
+                "kind": "literal",
+                "value": "custom"
+              }
+            ]
+          }
+        },
+        "endpoint": {
+          "type": {
+            "kind": "string"
           },
           "optional": true
         }

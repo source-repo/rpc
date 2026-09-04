@@ -1,7 +1,12 @@
 import test from 'ava'
-import { PeerRegistry } from './RPC/Core.js'
+import { PeerRegistry, publicTransportEndpoint } from './RPC/Core.js'
 import { RpcClient } from './RpcClient.js'
 import { RpcServer } from './index.js'
+
+test('a published transport endpoint carries no credentials or token-shaped URL parts', (t) => {
+    t.is(publicTransportEndpoint('mqtt://operator:secret@broker:1883/rpc?token=hidden#private'), 'mqtt://broker:1883/rpc')
+    t.is(publicTransportEndpoint('not a URL with possibly secret text'), undefined)
+})
 
 class Echo {
     constructor(

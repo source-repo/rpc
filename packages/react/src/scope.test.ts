@@ -39,8 +39,8 @@ const leafNames = (component: DescribedComponent, at: string[], named?: { [name:
     leavesUnder(typeAt(component, at, named), at, named).map((leaf) => `${leaf.path.join('.')}${leaf.collection ? ' []' : ''}`)
 
 describe('the scope tree', () => {
-    it('holds typed containers and nothing else', () => {
-        expect(paths(scopeTree(oven, types))).toEqual(['props', 'state', 'state.zones', 'state.readings', 'state.readings.window'])
+    it('holds provider resources and leaves their hierarchy to getChildren', () => {
+        expect(paths(scopeTree(oven, types))).toEqual(['props', 'state'])
     })
 
     it('leaves a record out entirely, however much is behind it', () => {
@@ -50,11 +50,10 @@ describe('the scope tree', () => {
         expect(paths(scopeTree(oven, types))).not.toContain('state.tags')
     })
 
-    it('treats a process value as a leaf despite it being an object', () => {
-        // Three fields to a schema, one thing to a reader. `zones` is a node with no children
-        // rather than a node with two, because a reading is what the operator is looking at.
-        const zones = scopeTree(oven, types)[1].children.find((node) => node.name === 'zones')
-        expect(zones?.children).toEqual([])
+    it('does not infer process-value branches from the schema', () => {
+        // Leaf classification belongs to the provider answer. The catalogue knows only that state
+        // is a resource, so it cannot accidentally turn a reading's fields into UI tree nodes.
+        expect(scopeTree(oven, types)[1].children).toEqual([])
     })
 
     it('treats a reading stamped with a time as a leaf too', () => {
@@ -69,14 +68,12 @@ describe('the scope tree', () => {
         }
         // A leaf is not a node, so the test is that `state` gained no branch at all - and that the
         // reading is still reachable as one leaf rather than two.
-        expect(scopeTree(stamped)[0].children).toEqual([])
+        expect(scopeTree(stamped).find((node) => node.name === 'state')?.children).toEqual([])
         expect(leafNames(stamped, ['state'])).toEqual(['state.flue'])
     })
 
-    it('omits a root the contract does not publish, rather than showing an empty one', () => {
-        // A component serving no schema has no scope to show. An empty `props` node would claim it
-        // had one and that it was empty, which is a different and wrong statement.
-        expect(paths(scopeTree({ subscribers: 0, state: { kind: 'object', fields: {} } }))).toEqual(['state'])
+    it('publishes both resources even when one currently has no schema fields', () => {
+        expect(paths(scopeTree({ subscribers: 0, state: { kind: 'object', fields: {} } }))).toEqual(['props', 'state'])
     })
 })
 
@@ -119,8 +116,8 @@ describe('a self-referential contract', () => {
         Node: { kind: 'object', fields: { name: { type: { kind: 'string' } }, child: { type: { kind: 'ref', name: 'Node' } } } }
     }
 
-    it('terminates, and stops the tree where the type turns back on itself', () => {
-        expect(paths(scopeTree(recursive, recursiveTypes))).toEqual(['state', 'state.root'])
+    it('does not walk the schema at all', () => {
+        expect(paths(scopeTree(recursive, recursiveTypes))).toEqual(['props', 'state'])
     })
 
     it('terminates in the grid too, with the repeat as a leaf', () => {
@@ -142,7 +139,7 @@ describe('a component that serves resources of its own', () => {
     }
 
     it('gives each one a root of its own, labelled as the component named it', () => {
-        expect(paths(scopeTree(store))).toEqual(['state', 'customers'])
+        expect(paths(scopeTree(store))).toEqual(['props', 'state', 'customers'])
     })
 
     it('offers only what the resource says it answers', () => {

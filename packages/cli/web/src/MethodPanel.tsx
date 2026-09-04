@@ -102,7 +102,8 @@ export const MethodPanel = ({
     service,
     network,
     operations,
-    relay
+    relay,
+    initiallyOpen = false
 }: {
     peer: string
     namespace: string
@@ -114,10 +115,12 @@ export const MethodPanel = ({
     operations: RpcOperations
     /** The console relaying it. A relayed command has two places to fail, and they differ. */
     relay: string
+    /** Open immediately when a method row's Call action brought the reader here. */
+    initiallyOpen?: boolean
 }) => {
     const params = method.params ?? []
     const names = method.paramNames ?? params.map((_, index) => `argument ${index}`)
-    const [open, setOpen] = useState(false)
+    const [open, setOpen] = useState(initiallyOpen)
     const [fields, setFields] = useState<FieldState[]>(() =>
         params.map((type) => ({ text: initialText(type, types), include: !isOptional(type) }))
     )

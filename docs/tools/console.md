@@ -6,13 +6,41 @@ source-rpc console --hub http://hub:7843               # a socket.io network
 source-rpc console --broker mqtt://... --hub http://... # both at once
 ```
 
-Opens a console at `http://127.0.0.1:7844` listing every peer that is up, what each one exposes, a form to call it, and a live stream of its events.
+Opens a console at `http://127.0.0.1:7844`. Its primary workspace is one Network DataProvider:
+the tree scopes across peers, components, resources and provider-owned branches, while the grid
+shows every leaf in that scope. Network-wide destinations—Traffic, Problems, Presence and this
+page's Operations—live beside Network in the left menu and use the main workspace. Actions, events
+and peer chat stay in the contextual panel on the right.
+
+Each described peer also contributes an **Interfaces** resource. Its RPC namespaces are branches
+carrying description metadata (including implemented capabilities), and its methods are the leaves
+shown in the same grid. A method row keeps named argument types, its return type, semantics, effect
+and authority requirement together; arguments are not separate leaves, so a method with no
+arguments remains visible and selectable. This resource is answered from the peer's cached
+`describe()` result and opening a method preview does not call the method.
+The resource also has a **Transports** branch. Each transport is a descriptive leaf carrying its
+protocol, role and public endpoint when known. It has no Call action, and descriptions omit live
+connection state, credentials and connection options.
+Each method row has a **call** action. It opens that method in the contextual Actions panel with the
+same typed arguments, confirmation rules, presets, timings, copy-as-CLI command, idempotency and
+operation tracking as before. The side panel no longer lists every method a second time.
+
+Selecting a branch also shows its own record in a compact **scope** section above the grid. This is
+the same provider-owned data for every kind of branch: an RPC component can show its class,
+capabilities and subscriber count; an interface namespace its version and implementation; another
+tree may show folder or equipment metadata. The record is not turned into a leaf—the grid beneath
+it still contains the leaves in that scope.
 
 **Discovery costs nothing.** Every peer announces itself, so the console is handed everyone already online the moment it connects. There is no scan, no probe and no configured list of hosts. Over MQTT that is retained presence under `<prefix>/presence/+`; over socket.io the hub keeps the list.
 
 With both, one list covers both networks and each peer is called over the link it was found on — which is the useful shape when a plant runs on a broker and the HMIs are browser pages. A peer hosted *in* a browser shows up like any other, since a page that dials a hub can serve as well as call.
 
-**Descriptions stay honest without being fetched on sight.** The console describes a peer when someone selects it, and caches what that taught — but presence carries a short hash of each peer's served description, so a peer that restarts with a different surface, or exposes something new after it started, is noticed the moment it announces. The console drops what it cached and re-describes on next use; an open panel refreshes itself rather than waiting to be reselected, and an unchanged peer costs no extra describes.
+**Descriptions stay honest.** The Network workspace describes announced peers with bounded
+concurrency and caches what that taught, because it needs their component/resource catalogues to
+draw the top-level scope. Presence carries a short hash of each peer's served description, so a peer
+that restarts with a different surface, or exposes something new after it started, is noticed the
+moment it announces. The console drops the stale catalogue entry and refreshes it; an unchanged peer
+costs no extra describes.
 
 A peer only appears in detail if its server was started with `exposeIntrospection`; otherwise the console says so rather than guessing.
 
@@ -46,7 +74,8 @@ Both ends of the same idea: the page always asks relative to where it was served
 
 ### Calling a method
 
-Each method folds open into a form with **one field per argument**, built from the argument's own type rather than asking for the whole call as a JSON array:
+Choose **call** on a method row and the Actions panel opens a form with **one field per argument**,
+built from the argument's own type rather than asking for the whole call as a JSON array:
 
 | the schema says | you get |
 | --- | --- |
@@ -73,15 +102,15 @@ The status sits beside the values and keeps its meaning: a dropped link marks th
 
 One tree of everything is right for an oven and wrong for anything carrying hundreds of values, which plants have. So the panel is two panes.
 
-The left holds **scope**: only the typed containers the contract enumerates, with `props` and `state` as the two roots of one tree. Selecting a node narrows the grid to everything beneath it — *recursively, all the way down* — so the tree acts as a filter rather than as a navigator, and finding a value never costs as many clicks as the state has depth.
+The left first chooses a **resource**. `props` and `state` are ordinary built-in DataProvider resources beside tables, queues and any others the component declares. Choosing a tree-shaped resource opens the same scope tree used everywhere else; selecting a branch asks that provider for everything beneath it — *recursively, all the way down* — so the tree scopes the grid rather than becoming a second value display.
 
 The right holds **values**, flat, one row each.
 
-**A record is a value leaf and never a tree node.** `tags: { [tag: string]: Reading }` does not appear in the scope tree at all; its entries are grid rows. That is principled rather than a threshold on size: an object's members are named by the contract, and a record's keys are *data*. Type ends, data begins, and the tree stops exactly there.
+The provider decides what is scope and what is a leaf. For the built-in component provider, ordinary nested objects are branches, arrays and scalars are leaves, and a process reading carrying `value` with `quality`, `unit`, `forced` or `at` remains one leaf. A store-backed provider can make a different truthful choice: an OPC UA Variable may have children and still be a leaf, while an empty folder is scope despite having no children. `grouping` and `hasChildren` state those two facts separately.
 
-Which yields the property worth holding onto: **the scope tree is exactly the contract, and costs nothing on the wire, ever.** It is drawn before a single value arrives, however much data sits behind it.
+Only the resource catalogue is known before a value arrives. Branches are loaded lazily through `getChildren`, so a record with thousands of keys does not become thousands of tree nodes until somebody opens that branch.
 
-The same line decides how the two halves of the grid are fed. **Typed leaves are subscribed to** — the contract bounds how many there are, so a [projection](../guide/components.md#asking-for-less-than-the-whole-state) naming them is cheap and stays current by itself. **Collection rows are asked for**, a page at a time, through [`$data`](../guide/components.md#asking-for-a-page-instead-of-watching-one). A panel that pulled fifty rows while its subscription pushed all three hundred would look exactly like the feature working, so it never takes the whole snapshot.
+Every grid is fed through [`$data`](../guide/components.md#asking-for-a-page-instead-of-watching-one). For `props` and `state`, the base component is the provider: `getChildren` answers one branch and recursive `getList` answers the paged leaves beneath the selected scope. A table or queue answers the same verbs from its own store. The component observation remains open for live revision/freshness and source bindings; it is no longer a second rendering path.
 
 ### The observer on a page of its own
 
@@ -93,15 +122,27 @@ The address is `?observe=<peer>&ns=<namespace>` under wherever the console is se
 
 ### Filtering happens on the peer
 
-One box serves the pane, and both halves of the grid answer it. The subscribed fields are filtered where they are already held; the collections carry the same condition to the peer, so a search matching nothing there costs a sentence on the wire rather than a record.
+One box serves the pane, and its condition goes to the provider, so a search matching nothing costs a sentence on the wire rather than a record.
 
-A bare word matches the path, `field:word` narrows to a field of the row, `&` is and and `|` is or — so `setp` finds `state.zones.top.setpoint` two levels down, and `quality:bad` is answerable at all, which it is not from the browser at any bandwidth: finding out which thirty of three hundred are bad is exactly what a local filter would have to receive all three hundred to discover.
+A bare word matches the row id, `field:word` narrows to a field of the row, `&` is and and `|` is or — so `setp` finds `zones.top.setpoint` inside the `state` resource, and `quality:bad` is answerable at all, which it is not from the browser at any bandwidth: finding out which thirty of three hundred are bad is exactly what a local filter would have to receive all three hundred to discover.
 
 Both ends call the library's own matcher rather than each keeping a version of it. A search that meant two different things either side of one pane would be worse than no search at all, and that is the sort of difference nobody notices until it has been trusted.
 
 What the box compiles to is **data, never a program**: `{ field: 'quality', op: 'contains', operand: 'bad' }`, which the peer checks and can refuse. The console this grammar came from ended the same function with `new RegExp`, which is safe in a browser against an in-memory store and is a stall on a plant server that re-evaluates it on every request.
 
 Typing settles before it asks, so eight keystrokes are one question. The count beside the pager is the number of *matches*, and the three ways a page can be empty stay distinguishable: `empty`, `nothing matches`, and `past the end` for a set that shrank while it was being read.
+
+### Filtering across the network
+
+The same grid filter works at every scope. At Network or peer scope, structural conditions such as
+`peer`, `namespace`, `resource` and `interface` first prune providers; remaining row conditions are
+sent to those providers. Results keep complete peer, component, resource and row identity, so a row
+can be previewed through the provider that owns it rather than copied into a search-only view.
+
+Filtering is case-insensitive, settles for 400 ms before fanning out, and stays bounded. The answer
+names sources that refused or could not answer while keeping successful rows usable. The current
+aggregate is deliberately a bounded first page; exact pagination across independently changing
+providers requires a distributed continuation cursor rather than a fake global offset.
 
 ### When nothing is happening, it says so
 
@@ -354,6 +395,6 @@ $ source-rpc watch myConsole console.frame --broker mqtt://localhost:1883
 
 ### In the console
 
-The side panel has a **Traffic** tab next to Events and Chat. It is off until you press **tap**, and the setup above it decides what to ask for: arguments and results, only the selected peer, and which kinds. Once running it shows the source it found, a filter box, **pause**, and one row per frame — colour-coded by kind, with the reply carrying the method it answers and the time it took.
+The left menu has a **Traffic** workspace. It is off until you press **tap**, and the setup above it decides what to ask for: arguments and results, only the selected peer, and which kinds. Once running it shows the source it found, a filter box, **pause**, and one row per frame — colour-coded by kind, with the reply carrying the method it answers and the time it took.
 
-The tab stays tapping while you look at another tab; the count on the tab label is what arrived while you were away.
+The workspace stays tapping while you look elsewhere; the count in the left menu is what has arrived.

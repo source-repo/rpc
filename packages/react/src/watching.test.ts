@@ -105,7 +105,7 @@ const service = (name: string) => ({ name, methods: [], events: [] })
 
 test('every scope of every observable namespace, of every peer described', () => {
     const known = { devserver: description([observable('plant'), service('msgrpc')]), depot: description([observable('stock')]) }
-    expect(everythingIn(known).map((node) => `${node.peer}/${node.namespace}/${node.path.join('.')}`)).toEqual(['devserver/plant/state', 'depot/stock/state'])
+    expect(everythingIn(known).map((node) => `${node.peer}/${node.namespace}/${node.path.join('.')}`)).toEqual(['devserver/plant/props', 'devserver/plant/state', 'depot/stock/props', 'depot/stock/state'])
 })
 
 test('a peer serving only services contributes no headings, rather than an empty one', () => {
@@ -122,14 +122,14 @@ test('roots only, because the way into a tree is to open it', () => {
     // Not every node of every scope tree: a list of everything is for finding out what is there, and
     // the depth is already inside the pane that opens.
     const nodes = everythingIn({ p: description([observable('plant')]) })
-    expect(nodes).toHaveLength(1)
-    expect(nodes[0].path).toEqual(['state'])
+    expect(nodes).toHaveLength(2)
+    expect(nodes.map((node) => node.path)).toEqual([['props'], ['state']])
 })
 
 test('one peer at a time is the same derivation, which is what the console draws grouped', () => {
     // The console lists peers and describes one when it is opened, so the per-peer form is the one
     // it actually uses; the flat form is what a CLI printing the network would want.
     const one = description([observable('plant'), service('msgrpc')])
-    expect(scopesIn('devserver', one).map((node) => `${node.namespace}/${node.path.join('.')}`)).toEqual(['plant/state'])
+    expect(scopesIn('devserver', one).map((node) => `${node.namespace}/${node.path.join('.')}`)).toEqual(['plant/props', 'plant/state'])
     expect(everythingIn({ devserver: one })).toEqual(scopesIn('devserver', one))
 })

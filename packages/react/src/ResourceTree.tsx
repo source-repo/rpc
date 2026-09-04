@@ -1,12 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { RpcDataCache, RpcQuestion } from '@source-repo/query'
-import type { RpcFilter } from '@source-repo/rpc'
+import type { RpcFilter, RpcSort } from '@source-repo/rpc'
 import { useRpcData } from './data.js'
 import type { Ref } from './ObjectPanel.js'
 import type { DescribedAction, DescribedResource } from './types.js'
 import { pageControls } from './paging.js'
 import { actionsOn } from './scope.js'
 import { Pager } from './Pager.js'
+import { compileFilter } from './filter.js'
+import { useDebounced } from './timing.js'
 
 /**
  * A resource declared `shape: 'tree'`, browsed one branch at a time.
@@ -41,7 +43,7 @@ export type RowQuestion = (resource: readonly string[], id: string) => RpcQuesti
  * and an order are *about* - a set of rows rather than a level of them. The peer answers it and
  * nothing here walks anything.
  */
-export type ScopedQuestion = (resource: readonly string[], under: string | undefined, page: number, pageSize: number, filter?: RpcFilter) => RpcQuestion
+export type ScopedQuestion = (resource: readonly string[], under: string | undefined, page: number, pageSize: number, filter?: RpcFilter, sort?: RpcSort) => RpcQuestion
 
 interface Branch {
     readonly ids: readonly string[]
@@ -64,7 +66,12 @@ interface Branch {
  */
 const isScope = (branch: Branch, index: number): boolean => branch.grouping?.[index] ?? branch.hasChildren?.[index] === true
 
-const field = (row: unknown, name: string): unknown => (row && typeof row === 'object' ? (row as Record<string, unknown>)[name] : undefined)
+const field = (row: unknown, name: string): unknown => {
+    // `value` is the generic projection of a scalar row. Object rows keep their actual value field,
+    // so process readings and ordinary records still mean exactly what their provider returned.
+    if (name === 'value' && (row === null || typeof row !== 'object' || Array.isArray(row) || row instanceof Uint8Array || row instanceof Date)) return row
+    return row && typeof row === 'object' ? (row as Record<string, unknown>)[name] : undefined
+}
 
 /**
  * The object a row stands for, when it stands for one.
@@ -157,7 +164,7 @@ const Node = ({
      * only branches drawn it chooses the branch whose children are tabulated beside it. One gesture
      * on one row, so one prop.
      */
-    onPickRow?: (id: string) => void
+    onPickRow?: (id: string, row?: unknown, label?: string) => void
     /**
      * Draw only the rows that have children.
      *
@@ -234,7 +241,7 @@ const Node = ({
                     component's rows have no reference, which is why it looked right there and was
                     broken everywhere else. */}
                 {branchesOnly && onPickRow ? (
-                    <button className={`tree-label tree-openable${selected === id ? ' tree-selected' : ''}`} onClick={() => onPickRow(id)} title={id}>
+                    <button className={`tree-label tree-openable${selected === id ? ' tree-selected' : ''}`} onClick={() => onPickRow(id, row, label)} title={id}>
                         {label}
                     </button>
                 ) : ref && onSelect ? (
@@ -242,7 +249,7 @@ const Node = ({
                         {label}
                     </button>
                 ) : onPickRow ? (
-                    <button className={`tree-label tree-openable${selected === id ? ' tree-selected' : ''}`} onClick={() => onPickRow(id)} title={id}>
+                    <button className={`tree-label tree-openable${selected === id ? ' tree-selected' : ''}`} onClick={() => onPickRow(id, row, label)} title={id}>
                         {label}
                     </button>
                 ) : (
@@ -347,7 +354,7 @@ const BranchRows = ({
      * only branches drawn it chooses the branch whose children are tabulated beside it. One gesture
      * on one row, so one prop.
      */
-    onPickRow?: (id: string) => void
+    onPickRow?: (id: string, row?: unknown, label?: string) => void
     /**
      * Draw only the rows that have children.
      *
@@ -507,6 +514,10 @@ export const BranchTable = ({
     onEdit?: (resource: readonly string[], id: string) => void
 }) => {
     const [page, setPage] = useState(0)
+    const [typed, setTyped] = useState('')
+    const search = useDebounced(typed, 400)
+    const searched = useMemo(() => compileFilter(search), [search])
+    const [sort, setSort] = useState<RpcSort | undefined>()
     /**
      * The one kind of thing being listed, where the reader has picked one.
      *
@@ -515,21 +526,24 @@ export const BranchTable = ({
      * fifty *rows* of which some are Variables, with a pager counting the wrong set.
      */
     const [kind, setKind] = useState<string | undefined>()
-    const filter = useMemo(() => (kind ? ({ field: 'kind', op: 'eq', operand: kind } as RpcFilter) : undefined), [kind])
+    const filter = useMemo(() => {
+        const narrowed = kind ? ({ field: 'kind', op: 'eq', operand: kind } as RpcFilter) : undefined
+        return narrowed && searched ? ({ all: [narrowed, searched] } as RpcFilter) : narrowed ?? searched
+    }, [kind, searched])
     // A subtree where the resource answers for one, a level where it does not. Only the first can
     // be narrowed: a level is a level, and there is nowhere to push a filter to.
     const question = useMemo(
         () =>
             // `getList` where the resource serves it - the one question that covers a branch and a
             // flat table alike - and `getChildren` only where that is all there is.
-            scopedQuestion ? scopedQuestion(resource, parentId, page, pageSize, filter) : branchQuestion!(resource, parentId, page, pageSize),
-        [scopedQuestion, branchQuestion, resource, parentId, page, pageSize, filter]
+            scopedQuestion ? scopedQuestion(resource, parentId, page, pageSize, filter, sort) : branchQuestion!(resource, parentId, page, pageSize),
+        [scopedQuestion, branchQuestion, resource, parentId, page, pageSize, filter, sort]
     )
     const { data, error, fetching } = useRpcData(cache, question, period)
     const branch = data as Branch | undefined
     // Back to the first page when the branch changes: page four of one branch is not page four of
     // the next, and staying put would land somebody past the end of a list they never scrolled.
-    useEffect(() => setPage(0), [parentId, scopedQuestion, filter])
+    useEffect(() => setPage(0), [parentId, scopedQuestion, filter, sort])
     // A branch is a different set of things, so which kinds are in it is a different question.
     useEffect(() => setKind(undefined), [parentId])
 
@@ -572,7 +586,7 @@ export const BranchTable = ({
      */
     const [seen, setSeen] = useState<[string, number][]>([])
     useEffect(() => {
-        if (filter || !branch) return
+        if (kind || !branch) return
         const tally = new Map<string, number>()
         for (const [, index] of listed) {
             const named = field(branch.data[index], 'kind')
@@ -580,7 +594,7 @@ export const BranchTable = ({
         }
         const next = [...tally.entries()].sort(([a], [b]) => a.localeCompare(b))
         setSeen((held) => (JSON.stringify(held) === JSON.stringify(next) ? held : next))
-    }, [branch, filter, listed])
+    }, [branch, kind, listed])
     const suggested = branch && listed.length ? (listed.some(([id]) => id === branch.defaultChild) ? branch.defaultChild : listed[0][0]) : undefined
     const opening = `${parentId ?? ''}\u0000${suggested ?? ''}`
     const taken = useRef<string | undefined>(undefined)
@@ -598,9 +612,61 @@ export const BranchTable = ({
         else if (onPickRow) onPickRow(suggested)
     }, [fetching, branch, suggested, opening, selected, onSelect, onPickRow])
 
-    if (error) return <p className="tree-note error">{String(error)}</p>
-    if (!branch) return fetching ? <p className="tree-note muted">reading…</p> : null
-    if (!branch.ids.length) return <p className="tree-note muted">nothing here</p>
+    // Kept outside the result branches so a search that finds nothing does not remove the only
+    // control that can clear it. It also stays visible while the replacement page is arriving.
+    const tools = scopedQuestion ? (
+        <div className="branch-table-tools">
+            <input
+                className="value-edit filter-box"
+                value={typed}
+                placeholder="filter"
+                title="a word searches the id; field:word narrows to a row field; peer, namespace, resource and interface narrow a network source"
+                onChange={(event) => setTyped(event.target.value)}
+            />
+            <select
+                className="period"
+                value={sort?.field ?? ''}
+                title="order the whole matched set"
+                onChange={(event) => setSort(event.target.value ? { field: event.target.value, order: sort?.order ?? 'ASC' } : undefined)}
+            >
+                <option value="">by key</option>
+                {columns
+                    .filter((column) => column !== 'id')
+                    .map((column) => (
+                        <option key={column} value={column}>
+                            by {column}
+                        </option>
+                    ))}
+            </select>
+            {sort && (
+                <button className="toggle" title={sort.order === 'DESC' ? 'descending' : 'ascending'} onClick={() => setSort({ ...sort, order: sort.order === 'DESC' ? 'ASC' : 'DESC' })}>
+                    {sort.order === 'DESC' ? '▾' : '▴'}
+                </button>
+            )}
+        </div>
+    ) : null
+
+    if (error)
+        return (
+            <div className="branch-table-wrap">
+                {tools}
+                <p className="tree-note error">{String(error)}</p>
+            </div>
+        )
+    if (!branch)
+        return fetching ? (
+            <div className="branch-table-wrap">
+                {tools}
+                <p className="tree-note muted">reading…</p>
+            </div>
+        ) : null
+    if (!branch.ids.length)
+        return (
+            <div className="branch-table-wrap">
+                {tools}
+                <p className="tree-note muted">{filter ? 'nothing matches' : 'nothing here'}</p>
+            </div>
+        )
 
     /**
      * A level that is entirely branches is scope, not content.
@@ -616,7 +682,13 @@ export const BranchTable = ({
      * is a leaf, the level holds rows and is tabulated.
      */
     // Nothing here is a thing to list - it is all scope, and the tree beside this is how it is read.
-    if (!listed.length) return <p className="tree-note muted">pick a branch on the left to list what is in it</p>
+    if (!listed.length)
+        return (
+            <div className="branch-table-wrap">
+                {tools}
+                <p className="tree-note muted">pick a branch on the left to list what is in it</p>
+            </div>
+        )
 
     const controls = pageControls(page, pageSize, branch, filter !== undefined)
     // A column for the label even when the resource named none: a table of ids and nothing else is
@@ -625,6 +697,7 @@ export const BranchTable = ({
 
     return (
         <div className="branch-table-wrap">
+            {tools}
             {/* Which kinds of thing are in here, where there is more than one.
              *
              * An address space lists Variables beside Methods and both are leaves; a reader looking
@@ -813,7 +886,7 @@ export const ResourceTree = ({
      * only branches drawn it chooses the branch whose children are tabulated beside it. One gesture
      * on one row, so one prop.
      */
-    onPickRow?: (id: string | undefined) => void
+    onPickRow?: (id: string | undefined, row?: unknown, label?: string) => void
     /**
      * What to call the row that means *everything*, where the host offers one.
      *

@@ -10,7 +10,6 @@ import {
     withNode,
     withoutNode,
     type BranchQuestion,
-    type PageQuestion,
     type RowQuestion,
     type ScopedQuestion,
     type ServerDescription,
@@ -78,13 +77,6 @@ import { useWatchParts, type WatchPart } from './watchParts'
 
 /** The questions one section asks, which differ from another's only in which peer answers them. */
 const questionsFor = (peer: string, namespace: string) => ({
-    pageQuestion: ((resource, page, pageSize, filter, sort) => ({
-        target: peer,
-        namespace,
-        method: 'getList',
-        resource,
-        params: { pagination: { page, pageSize }, ...(filter ? { filter } : {}), ...(sort ? { sort } : {}) }
-    })) as PageQuestion,
     branchQuestion: ((resource, parentId, page, pageSize) => ({
         target: peer,
         namespace,
@@ -93,14 +85,14 @@ const questionsFor = (peer: string, namespace: string) => ({
         params: { pagination: { page, pageSize }, ...(parentId !== undefined ? { parentId } : {}) }
     })) as BranchQuestion,
     rowQuestion: ((resource, id) => ({ target: peer, namespace, method: 'getOne', resource, params: { id } })) as RowQuestion,
-    scopedQuestion: ((resource, under, page, size, filter) => ({
+    scopedQuestion: ((resource, under, page, size, filter, sort) => ({
         target: peer,
         namespace,
         method: 'getList',
         resource,
         // `recursive`, because this is the question that means *everything beneath this branch* -
         // which `getList` used to mean on its own and now says out loud.
-        params: { pagination: { page, pageSize: size }, recursive: true, ...(under !== undefined ? { under } : {}), ...(filter ? { filter } : {}) }
+        params: { pagination: { page, pageSize: size }, recursive: true, ...(under !== undefined ? { under } : {}), ...(filter ? { filter } : {}), ...(sort ? { sort } : {}) }
     })) as ScopedQuestion,
     manyQuestion: (resource: readonly string[], ids: readonly string[]): RpcQuestion => ({ target: peer, namespace, method: 'getMany', resource, params: { ids: [...ids] } })
 })
@@ -185,7 +177,6 @@ const Section = ({
                     component={part.component}
                     types={part.types}
                     scope={[...part.node.path]}
-                    source={part.source}
                     cache={cache}
                     period={period}
                     pageSize={pageSize}

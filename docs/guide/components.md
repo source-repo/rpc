@@ -224,11 +224,11 @@ page.data      // the rows, positionally
 page.total     // how many matched — which is what a pager needs, not how many exist
 ```
 
-A component gets this **free** wherever its state holds a record: the base class serves it from the contract, the way `$acquire` is served, and the author writes nothing.
+A component gets this **free** for all of `props` and `state`: the base class publishes both as tree-shaped resources and serves their branches and leaves from the current snapshot, the way `$acquire` is served. The author writes nothing.
 
 ### Serving collections the contract cannot describe
 
-A record in `props` or `state` needs nothing declared: it is in the published type, so a viewer finds it by reading the contract and addresses it by the path it already has. A table, a document collection or a queue is the other kind — **what resources exist is itself data**, discovered when the component connects to its store, so it cannot be extracted from source and has to be said at runtime:
+`props` and `state` need nothing declared by the component author: `describe()` includes their built-in resource declarations, and `$data` addresses them by those root paths. A table, document collection or queue is the additional kind — **what resources exist is itself data**, discovered when the component connects to its store, so it cannot be extracted from source and has to be said at runtime:
 
 ```typescript
 class Store extends RpcComponent<StoreProps, StoreState> implements RpcDataResources {
@@ -242,9 +242,46 @@ class Store extends RpcComponent<StoreProps, StoreState> implements RpcDataResou
 }
 ```
 
+#### The provider contract, exactly
+
+`RpcDataResources` is the host-side DataProvider interface. A component implementing it supplies
+both of these methods:
+
+- `dataResources()` synchronously declares the resources discoverable by `describe()`;
+- `dataRequest(method, resource, params)` answers only the verbs those declarations advertise.
+
+There is deliberately no requirement to implement every react-admin verb. Capability is per
+resource, and the minimum depends on what the resource claims to be:
+
+| Resource behaviour | Verbs it must declare and answer | What that enables |
+| --- | --- | --- |
+| flat rows in the generic grid | `getList` | paging, filtering and sorting |
+| scoped tree with leaf grid | `getList`, `getChildren`; `shape: 'tree'` | lazy branches and recursive leaves beneath a selected scope |
+| same-shape row preview and reference resolution | `getMany` | selected rows and many ids in one bounded call |
+| richer row preview | `getOne` | detail fields that need not be populated by `getList` |
+| reverse one-to-many navigation | `getManyReference` | rows whose declared field points at one id |
+
+The first row is the baseline DataProvider. Everything after it is an advertised capability. A
+preview is optional: a viewer prefers `getOne` when present and otherwise uses
+`getMany({ ids: [id] })`; a resource with neither remains listable but cannot open a row. A tree
+needs `getList` as well as `getChildren` because the latter enumerates branches while the former is
+the bounded, filtered question for every leaf in the selected scope.
+
+Every declaration has a stable `path` and a truthful `verbs` list. A useful generic provider also
+declares `row`; without it values can still be shown, but columns, field filters, references and
+detail presentation cannot be derived safely. `label`, `presentation`, `actions`, `references` and
+write verbs enrich that contract and are never inferred by the viewer.
+
+The method-specific TypeScript contract is exported as `RpcDataContract`, with
+`RpcDataParamsFor<M>` and `RpcDataResultFor<M>` pairing each verb to its exact request and answer.
+All list-like answers keep `ids` and `data` positional, return ids as strings, and carry `epoch` and
+`revision`. Missing rows are ordinary results: `getOne` omits `data`, while `getMany` omits the id
+and its corresponding value. Malformed or unsupported questions reject; they do not silently
+degrade to a different operation.
+
 `describe()` then carries them under the component — the path, the shape of a row, and the verbs each answers — so a viewer that has never heard of this component draws its columns from the contract exactly as it draws an oven's. Structure and never a row, like everything else `describe()` says.
 
-Both methods are required together on purpose: a component that listed resources it could not answer for would publish a table that renders as a permanent error, and one that answered for resources it never listed could not be found at all. A declared path is answered by the component; anything else falls through to the record rule above, so a component that serves a store keeps ordinary access to its own state.
+Both methods are required together on purpose: a component that listed resources it could not answer for would publish a table that renders as a permanent error, and one that answered for resources it never listed could not be found at all. An additional declared path is answered by the component; the reserved `props` and `state` roots are answered by the base provider, so a component that also serves a store keeps ordinary access to both.
 
 **A declared row type is checked against the rows, not against the source.** Nothing connects `row` to whatever the values really are — it is written by hand, or built at runtime from a store's own schema — so a renamed column, a SQL type mapped to the wrong `TypeNode`, or an interface changed without its declaration changing with it all produce a grid drawing the wrong columns and saying nothing. A viewer cannot tell, and neither can `check`: the contract describes what a *call* to a resource answers, not what its rows look like.
 

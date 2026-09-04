@@ -26,10 +26,9 @@ import type { RpcSchema, TypeNode } from './Schema.js'
  * a period it chooses - which is also the only rate control a subscriber has on a slow link, since a
  * subscription's rate belongs to the component.
  *
- * What is here is the first cut: `getList` over a record in a component's own state, served from the
- * contract without the author writing anything. `getOne`, `getMany` and the relational verbs come
- * next, and a component that has its own store - a database, a document collection, a queue - serves
- * them itself instead.
+ * `props` and `state` are built-in tree resources served without the author writing anything. A
+ * component that has its own store - a database, document collection or queue - appends resources
+ * and serves those itself.
  */
 
 /** What a caller may ask for. */
@@ -678,9 +677,16 @@ export const groupFields = (fields: readonly string[], sections?: readonly RpcPr
 }
 
 export interface RpcDataResource {
-    /** How `$data` names it. A single segment for a resource of its own, never `props` or `state`. */
+    /** How `$data` names it. `props` and `state` are the component's built-in resources. */
     readonly path: RpcResource
-    /** The shape of one row, so a viewer can draw columns for a table it has never heard of. */
+    /**
+     * The shape of one row, so a viewer can draw columns for a table it has never heard of.
+     *
+     * Optional for compatibility and for a resource whose values genuinely have no narrower
+     * contract. A generic viewer can still show those values, but a provider that wants typed
+     * columns, filters, detail fields or references supplies it. In practice that makes `row` part
+     * of the useful minimum for a store-backed provider even though it is not a wire requirement.
+     */
     readonly row?: TypeNode
     /**
      * Which verbs it answers - **reading and writing, one list**. A viewer offers what is here and
@@ -757,12 +763,53 @@ export interface RpcDataResource {
 }
 
 /**
+ * The resources every described component already provides.
+ *
+ * Props and state used to be merely paths accepted by the `$data` fallback while a viewer rebuilt
+ * their hierarchy from the schema. Publishing them here makes the fallback a real provider: the
+ * same catalogue, branch and list operations used for a database table or an address space now
+ * describe a component record too. `any` is deliberate. A recursive list may contain differently
+ * typed leaves, and the provider returns each leaf value as the row rather than wrapping it in a
+ * second, invented domain object. `id` and `value` are the two generic table projections over that
+ * row: its provider identity and the row itself.
+ */
+export const componentDataResources = (_component?: { readonly props?: TypeNode; readonly state?: TypeNode }): readonly RpcDataResource[] =>
+    (['props', 'state'] as const).map((root) => ({
+            path: [root],
+            row: { kind: 'any' },
+            verbs: ['getChildren', 'getList', 'getOne', 'getMany'],
+            shape: 'tree',
+            label: root,
+            presentation: { defaultColumns: ['id', 'value'] }
+        }))
+
+/**
  * A component that serves collections of its own, rather than only the records in its state.
  *
  * Implementing this is what Source Relational, Source Document and Source Queue do; an ordinary
  * component implements nothing and still answers `getList` over any record it holds, because the
  * base class serves that from the contract.
  */
+/**
+ * The complete read protocol, in one place.
+ *
+ * `RpcDataResources` uses the unions because its dispatcher receives a verb at runtime. Generic
+ * callers use the indexed forms to keep a concrete verb paired with exactly its request and answer
+ * shapes: `RpcDataParamsFor<'getMany'>` cannot accidentally become list parameters.
+ */
+export interface RpcDataContract {
+    readonly getList: { readonly params: RpcGetListParams; readonly result: RpcGetListResult }
+    readonly getOne: { readonly params: RpcGetOneParams; readonly result: RpcGetOneResult }
+    readonly getMany: { readonly params: RpcGetManyParams; readonly result: RpcGetManyResult }
+    readonly getManyReference: { readonly params: RpcGetManyReferenceParams; readonly result: RpcGetListResult }
+    readonly getChildren: { readonly params: RpcGetChildrenParams; readonly result: RpcGetChildrenResult }
+}
+
+export type RpcDataParamsFor<M extends RpcDataMethod> = RpcDataContract[M]['params']
+export type RpcDataResultFor<M extends RpcDataMethod> = RpcDataContract[M]['result']
+export type RpcDataParams = RpcDataParamsFor<RpcDataMethod>
+export type RpcDataResult = RpcDataResultFor<RpcDataMethod>
+
 export interface RpcDataResources {
     /** What this component serves. Read at describe time, so it may change as the store does. */
     dataResources(): readonly RpcDataResource[]
@@ -782,8 +829,8 @@ export interface RpcDataResources {
     dataRequest(
         method: RpcDataMethod,
         resource: RpcResource,
-        params: RpcGetListParams | RpcGetOneParams | RpcGetManyParams | RpcGetManyReferenceParams | RpcGetChildrenParams
-    ): unknown | Promise<unknown>
+        params: RpcDataParams
+    ): RpcDataResult | Promise<RpcDataResult>
 }
 
 /**
@@ -796,9 +843,11 @@ export interface RpcDataResources {
 export const servesDataResources = (instance: object): instance is RpcDataResources =>
     typeof (instance as RpcDataResources).dataResources === 'function' && typeof (instance as RpcDataResources).dataRequest === 'function'
 
-/** The declared resource a path names, if any. Paths into the component's own state match nothing. */
+/** An additional component-owned resource, excluding the two roots reserved for the base provider. */
 export const declaredResource = (instance: object, resource: RpcResource): RpcDataResource | undefined =>
-    servesDataResources(instance)
+    resource.length === 1 && (resource[0] === 'props' || resource[0] === 'state')
+        ? undefined
+        : servesDataResources(instance)
         ? instance.dataResources().find((declared) => declared.path.length === resource.length && declared.path.every((segment, at) => segment === resource[at]))
         : undefined
 
@@ -1083,6 +1132,37 @@ const collectionAt = (snapshot: { props: RpcComponentData; state: RpcComponentDa
     return at !== null && typeof at === 'object' && !Array.isArray(at) ? (at as RpcComponentData) : undefined
 }
 
+/** A row id is a dotted path for a recursively listed component record. Prefer an exact key. */
+const valueAt = (collection: RpcComponentData, id: string): { held: boolean; value?: unknown } => {
+    if (Object.prototype.hasOwnProperty.call(collection, id)) return { held: true, value: collection[id] }
+    const find = (from: unknown, parts: readonly string[]): { held: boolean; value?: unknown } => {
+        if (from === null || typeof from !== 'object') return { held: false }
+        const record = from as Record<string, unknown>
+        // Longest key first preserves record ids containing dots: `tags.tag.007` reaches the key
+        // `tag.007` after entering `tags`, instead of assuming every dot came from object depth.
+        for (let length = parts.length; length > 0; length--) {
+            const key = parts.slice(0, length).join('.')
+            if (!Object.prototype.hasOwnProperty.call(record, key)) continue
+            if (length === parts.length) return { held: true, value: record[key] }
+            const nested = find(record[key], parts.slice(length))
+            if (nested.held) return nested
+        }
+        return { held: false }
+    }
+    return find(collection, id.split('.'))
+}
+
+/** Process readings are domain values, not folders merely because their wire shape is an object. */
+const processValue = (value: unknown): boolean => {
+    if (value === null || typeof value !== 'object' || Array.isArray(value)) return false
+    const fields = value as Record<string, unknown>
+    return 'value' in fields && ('quality' in fields || 'unit' in fields || 'forced' in fields || 'at' in fields)
+}
+
+/** The built-in component provider's leaf decision. */
+const groupingValue = (value: unknown): value is RpcComponentData =>
+    value !== null && typeof value === 'object' && !Array.isArray(value) && !(value instanceof Uint8Array) && !(value instanceof Date) && !processValue(value)
+
 /**
  * What a condition compares: the key, a field inside the row, or the row itself.
  *
@@ -1093,6 +1173,9 @@ const collectionAt = (snapshot: { props: RpcComponentData; state: RpcComponentDa
 const fieldOf = (row: unknown, id: string, field?: string): unknown => {
     if (field === undefined) return row
     if (field === 'id') return id
+    // The base props/state provider exposes heterogeneous leaf values directly. `value` is the
+    // generic table projection of a scalar row; object rows keep their real field of that name.
+    if (field === 'value' && (row === null || typeof row !== 'object' || Array.isArray(row) || row instanceof Uint8Array || row instanceof Date)) return row
     let at: unknown = row
     for (const step of field.split('.')) {
         if (at === null || typeof at !== 'object') return undefined
@@ -1228,18 +1311,18 @@ export const getManyReference = (component: object, resource: RpcResource, param
 export const getOne = (component: object, resource: RpcResource, params: RpcGetOneParams): RpcGetOneResult => {
     const snapshot = componentSnapshot(component)
     const collection = collectionAt(snapshot, resource) ?? {}
-    const held = Object.prototype.hasOwnProperty.call(collection, params.id)
+    const row = valueAt(collection, params.id)
     // Spread rather than `data: undefined`, so an absent row is a key that is not there. A frame
     // carrying `data: undefined` says the same thing in JSON and something else in a format that
     // encodes fields positionally.
-    return { ...(held ? { data: collection[params.id] } : {}), epoch: snapshot.epoch, revision: snapshot.revision }
+    return { ...(row.held ? { data: row.value } : {}), epoch: snapshot.epoch, revision: snapshot.revision }
 }
 
 export const getMany = (component: object, resource: RpcResource, params: RpcGetManyParams): RpcGetManyResult => {
     const snapshot = componentSnapshot(component)
     const collection = collectionAt(snapshot, resource) ?? {}
-    const found = params.ids.filter((id) => Object.prototype.hasOwnProperty.call(collection, id))
-    return { ids: found, data: found.map((id) => collection[id]), epoch: snapshot.epoch, revision: snapshot.revision }
+    const rows = params.ids.map((id) => [id, valueAt(collection, id)] as const).filter(([, row]) => row.held)
+    return { ids: rows.map(([id]) => id), data: rows.map(([, row]) => row.value), epoch: snapshot.epoch, revision: snapshot.revision }
 }
 
 /** How deep a recursive walk of a component's own record will go before it stops descending. */
@@ -1265,22 +1348,54 @@ const walkEntries = (from: RpcComponentData, prefix: string, depth: number): (re
     projectionKeyOrder(from).flatMap((key) => {
         const value = from[key]
         const id = prefix ? `${prefix}.${key}` : key
-        const nested = value !== null && typeof value === 'object' && !Array.isArray(value) && !(value instanceof Uint8Array) && !(value instanceof Date)
-        return nested && depth < MAX_WALK_DEPTH ? walkEntries(value as RpcComponentData, id, depth + 1) : [[id, value] as const]
+        return groupingValue(value) && depth < MAX_WALK_DEPTH ? walkEntries(value, id, depth + 1) : [[id, value] as const]
     })
 
 export const getList = (component: object, resource: RpcResource, params: RpcGetListParams): RpcGetListResult => {
     const snapshot = componentSnapshot(component)
     const collection = collectionAt(snapshot, resource) ?? {}
+    const beneath = params.under ? valueAt(collection, params.under) : { held: true, value: collection }
+    const from = beneath.held && groupingValue(beneath.value) ? beneath.value : {}
+    const prefix = params.under ?? ''
     return {
         ...pageEntries(
             // One level unless somebody asked for the depth, which is the change of default this
             // flag exists to make: the answer that costs more should be the one with a word in the
             // request. Filtering, ordering and paging then happen over whichever set was gathered,
             // in that order, exactly as they do for a flat one.
-            params.recursive ? walkEntries(collection, '', 0) : projectionKeyOrder(collection).map((id) => [id, collection[id]] as const),
+            params.recursive
+                ? walkEntries(from, prefix, 0)
+                : projectionKeyOrder(from).map((id) => [prefix ? `${prefix}.${id}` : id, from[id]] as const),
             params
         ),
+        epoch: snapshot.epoch,
+        revision: snapshot.revision
+    }
+}
+
+/**
+ * One level of the component provider's hierarchy.
+ *
+ * IDs stay relative to the resource root and therefore remain stable as the caller moves between
+ * branches. `grouping` says which rows are scope; `hasChildren` separately says whether opening the
+ * expander can currently reveal anything. An empty object is still a scope even though it has no
+ * children, while a process reading is a leaf even though it carries fields.
+ */
+export const getChildren = (component: object, resource: RpcResource, params: RpcGetChildrenParams): RpcGetChildrenResult => {
+    const snapshot = componentSnapshot(component)
+    const collection = collectionAt(snapshot, resource) ?? {}
+    const beneath = params.parentId ? valueAt(collection, params.parentId) : { held: true, value: collection }
+    const from = beneath.held && groupingValue(beneath.value) ? beneath.value : {}
+    const prefix = params.parentId ?? ''
+    const page = pageEntries(
+        projectionKeyOrder(from).map((id) => [prefix ? `${prefix}.${id}` : id, from[id]] as const),
+        params
+    )
+    const grouping = page.data.map(groupingValue)
+    return {
+        ...page,
+        grouping,
+        hasChildren: page.data.map((value, at) => grouping[at] && Object.keys(value as RpcComponentData).length > 0),
         epoch: snapshot.epoch,
         revision: snapshot.revision
     }

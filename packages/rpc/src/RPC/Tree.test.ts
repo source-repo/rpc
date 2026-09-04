@@ -325,12 +325,14 @@ test('a parentId that is not a string is refused rather than read as the roots',
     // which is the failure this check exists to prevent.
 })
 
-test('a resource that did not declare the verb says what it does answer', async (t) => {
+test('the built-in props resource answers branches without a component declaration', async (t) => {
     const { client } = await linked(t, 4975, new Docs(), 'docs')
 
     const face = await client.proxy<DataFace>('docs')
-    const refused = await t.throwsAsync(face.$data('getChildren', ['props'], {}))
-    t.regex(String(refused?.message), /getChildren is answered by a resource that declares shape 'tree'/)
+    const branch = await face.$data('getChildren', ['props'], {}) as unknown as RpcGetChildrenResult
+    t.deepEqual(branch.ids, ['title'])
+    t.deepEqual(branch.data, ['Documentation'])
+    t.deepEqual(branch.hasChildren, [false])
 })
 
 test('a branch whose flags do not line up with its rows is refused at the peer that served it', async (t) => {
@@ -347,7 +349,7 @@ test('the tree shape and the default columns reach a viewer through describe', a
 
     const introspection = await client.proxy<{ describe(): Promise<{ namespaces: { name: string; component?: { resources?: RpcDataResource[] } }[] }> }>('msgrpc')
     const described = await introspection.describe()
-    const resource = described.namespaces.find((namespace) => namespace.name === 'docs')?.component?.resources?.[0]
+    const resource = described.namespaces.find((namespace) => namespace.name === 'docs')?.component?.resources?.find((one) => one.path[0] === 'pages')
 
     t.is(resource?.shape, 'tree', 'so a viewer knows to draw a tree rather than a long list')
     t.deepEqual(resource?.verbs, ['getChildren'])

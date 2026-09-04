@@ -97,11 +97,7 @@ export interface DescribedComponent {
     props?: TypeNode
     state?: TypeNode
     subscribers: number
-    /**
-     * Absent from an ordinary component, and that is not the same as empty: a record in `props` or
-     * `state` is addressable without appearing here, because the published type already describes
-     * it. This carries the other kind, where what resources exist is itself data.
-     */
+    /** Built-in `props`/`state` resources followed by any resources the component adds. */
     resources?: DescribedResource[]
 }
 

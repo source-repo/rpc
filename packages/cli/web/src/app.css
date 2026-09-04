@@ -44,7 +44,7 @@ button {
 
 .app {
     display: grid;
-    grid-template-columns: 240px minmax(0, 1fr) 340px;
+    grid-template-columns: 180px minmax(0, 1fr) 360px;
     height: 100vh;
 }
 
@@ -127,6 +127,91 @@ aside {
 main {
     overflow-y: auto;
     padding: 22px 26px 60px;
+}
+
+.console-nav {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+}
+
+.console-nav .peer {
+    justify-content: space-between;
+}
+
+.console-status {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    margin-top: 18px;
+    padding: 10px;
+    border-top: 1px solid var(--line);
+}
+
+/* Network is the workspace, not a page of component details: give the generic three-pane view the
+   remaining height and let its tree, table and preview scroll independently. */
+.console-main {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    overflow: hidden;
+    padding: 16px 20px;
+}
+
+.network-workspace {
+    display: flex;
+    flex: 1 1 auto;
+    flex-direction: column;
+    min-height: 0;
+}
+
+.network-workspace.hidden {
+    display: none;
+}
+
+.network-head {
+    flex: 0 0 auto;
+    margin-bottom: 12px;
+}
+
+.console-main .network-value-grid,
+.console-main .value-grid {
+    display: flex;
+    flex: 1 1 auto;
+    flex-direction: column;
+    min-height: 0;
+}
+
+.console-main .tree-and-object {
+    flex: 1 1 auto;
+    min-height: 0;
+    align-items: stretch;
+    overflow-y: auto;
+}
+
+.console-main .tree-and-object > .collection,
+.console-main .branch-table-wrap,
+.console-main .object-panel,
+.console-main .record-panel {
+    min-height: 0;
+    max-height: 100%;
+}
+
+.console-main .tree-and-object > .collection,
+.console-main .object-panel,
+.console-main .record-panel {
+    overflow-y: auto;
+}
+
+.console-main .branch-table-wrap {
+    display: flex;
+    flex-direction: column;
+}
+
+.console-main .branch-table-scroll {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
 }
 
 aside header,
@@ -451,30 +536,38 @@ h1 {
 
 @media (max-width: 1100px) {
     .app {
-        grid-template-columns: 200px minmax(0, 1fr);
-        grid-template-rows: minmax(0, 1fr) 220px;
+        grid-template-columns: 160px minmax(0, 1fr);
+        grid-template-rows: minmax(0, 1fr) 260px;
     }
 
-    .stream {
-        grid-column: 1 / -1;
+    aside {
+        grid-row: 1 / -1;
+    }
+
+    .console-main {
+        grid-column: 2;
+        grid-row: 1;
+    }
+
+    .side {
+        grid-column: 2;
+        grid-row: 2;
         border-left: none;
         border-top: 1px solid var(--line);
     }
 }
 
-/*
- * The side column's three views. Traffic is a list that fills on a busy network, so it gets the
- * whole column when it is showing rather than a third of it.
- */
+/* The side column is selection context only: events, actions and peer chat. */
 .tabs {
     display: flex;
     flex: 0 0 auto;
+    overflow-x: auto;
     border-bottom: 1px solid var(--line);
     background: var(--panel-2);
 }
 
 .tab {
-    flex: 1 1 0;
+    flex: 0 0 auto;
     padding: 9px 6px;
     font-size: 11px;
     font-family: var(--mono);
@@ -482,6 +575,13 @@ h1 {
     text-transform: uppercase;
     color: var(--muted);
     border-bottom: 2px solid transparent;
+}
+
+.node-tools {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    padding: 14px;
 }
 
 .tab:hover {
@@ -500,6 +600,33 @@ h1 {
     background: var(--accent-dim);
     color: #cfe6ff;
     font-size: 10px;
+}
+
+.side-context {
+    display: flex;
+    flex: 0 0 auto;
+    flex-direction: column;
+    gap: 2px;
+    padding: 9px 14px;
+    border-bottom: 1px solid var(--line);
+    background: rgba(14, 17, 22, 0.45);
+    font-size: 12px;
+}
+
+.event-catalogue {
+    margin-bottom: 14px;
+    padding-bottom: 10px;
+    border-bottom: 1px solid var(--line);
+}
+
+.event-catalogue summary {
+    margin-bottom: 8px;
+    color: var(--muted);
+    cursor: pointer;
+}
+
+.event-catalogue .events {
+    margin-bottom: 12px;
 }
 
 .traffic {
@@ -632,7 +759,7 @@ h1 {
     word-break: break-word;
 }
 
-/* Kept mounted so the tap survives a glance at another tab; see Traffic's `hidden`. */
+/* Kept mounted so the tap survives a glance at another workspace; see Traffic's `hidden`. */
 .traffic.hidden {
     display: none;
 }
@@ -727,6 +854,11 @@ h1 {
     background: var(--accent-dim);
     color: #cfe6ff;
     font-size: 10px;
+}
+
+.peer .count.bad {
+    background: rgba(255, 107, 107, 0.18);
+    color: #ffb3b3;
 }
 
 /* The link a peer was found on, next to its name in the list. */
@@ -1288,8 +1420,18 @@ h1 {
    Built on the problems list, which is the same shape of thing - a bounded log of rows somebody
    reads when a call did not come back - so they look alike on purpose. */
 .operations {
+    flex: 1 1 auto;
+    min-height: 0;
     padding: 8px 10px;
     overflow-y: auto;
+}
+
+.operations header {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 8px;
+    margin-bottom: 12px;
 }
 
 .operation {

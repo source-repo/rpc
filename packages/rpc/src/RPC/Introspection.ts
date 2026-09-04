@@ -1,6 +1,7 @@
 import EventEmitter from "events";
 import { componentSnapshotEvent, RpcComponent } from "./Component.js";
 import {
+  componentDataResources,
   describedResources,
   servesDataResources,
   type RpcDataResource,
@@ -29,6 +30,7 @@ import {
   type RpcTopologyRecord,
 } from "./Topology.js";
 import type { RpcMethodSemantics } from "./Messages.js";
+import type { RpcTransportDescription } from "./Core.js";
 // Extracted from this file by `npm run contract` in the CLI package and committed, so building
 // msgrpc never needs the extractor that reads it. A test there asserts it still matches this source.
 import extracted from "./Introspection.types.json" with { type: "json" };
@@ -95,13 +97,8 @@ export interface DescribedComponent {
   /** How many peers currently observe this component. */
   subscribers: number;
   /**
-   * Collections this component serves that its contract cannot describe - a table, a document
-   * collection, a queue - each with the shape of a row and the verbs it answers.
-   *
-   * Absent from an ordinary component, and that is not the same as empty: a record in `props` or
-   * `state` is addressable without appearing here, because the published type already describes
-   * it and a viewer finds it by reading the contract. This carries the other kind, where **what
-   * resources exist is itself data** and only the component knows.
+   * DataProvider resources this component serves. Every described component publishes `props`
+   * and `state` here; a table, document collection or queue is appended by the component itself.
    *
    * Read at describe time rather than fixed at exposure, so a store that gains a table says so on
    * the next describe rather than at the next restart.
@@ -153,6 +150,8 @@ export interface ServerDescription {
   version?: string;
   /** True when arguments are being checked, which tells a caller how much to trust the types. */
   validating: boolean;
+  /** RPC links this peer serves over. Stable configuration only; never credentials or live state. */
+  transports?: readonly RpcTransportDescription[];
   namespaces: DescribedNamespace[];
   /**
    * What this peer can currently do that is dangerous, announced rather than asked for.
@@ -484,6 +483,17 @@ export class Introspection {
               }
             : undefined;
           const execution = held.execution;
+          const resources = [
+            ...componentDataResources(described?.component),
+            ...(servesDataResources(instance)
+              ? describedResources(
+                  instance,
+                  name,
+                  this.handler.schema?.types,
+                  await writesFor(name),
+                )
+              : []),
+          ];
           // Structure and a live count, never the snapshot itself: current values go only to
           // authorized subscribers, and describe() must not become the unauthorized way in.
           const component: DescribedComponent | undefined =
@@ -500,19 +510,11 @@ export class Introspection {
                       proxy.instanceName === name &&
                       proxy.event === componentSnapshotEvent,
                   ).length,
-                  // Structure, like everything else here: what collections exist and the
-                  // shape of a row, never a row. A store that gained a table since the last
-                  // describe says so now, which is why this is read rather than remembered.
-                  ...(servesDataResources(instance)
-                    ? {
-                        resources: describedResources(
-                          instance,
-                          name,
-                          this.handler.schema?.types,
-                          await writesFor(name),
-                        ),
-                      }
-                    : {}),
+                  // Structure, like everything else here: the built-in props/state providers and
+                  // any collections the component adds, never a row. A store that gained a table
+                  // since the last describe says so now, which is why this is read rather than
+                  // remembered.
+                  ...(resources.length ? { resources } : {}),
                 }
               : undefined;
           return {
@@ -558,6 +560,7 @@ export class Introspection {
       name: this.handler.name,
       ...(schema?.version ? { version: schema.version } : {}),
       validating: !!schema && this.handler.validation !== "off",
+      transports: this.handler.transportDescriptions(),
       namespaces: namespaces.sort((a, b) => a.name.localeCompare(b.name)),
       // Gathered from what is exposed rather than from what somebody remembered to declare:
       // composing a dangerous capability into a host is what makes the host dangerous, so
@@ -650,5 +653,12 @@ export const surfaceShape = (handler: RpcServerHandler): string => {
         ...(described?.component ? { component: described.component } : {}),
       };
     });
-  return fnv1a64(JSON.stringify(namespaces));
+  const transports = [...handler.transportDescriptions()].sort(
+    (a, b) =>
+      a.protocol.localeCompare(b.protocol) ||
+      a.role.localeCompare(b.role) ||
+      (a.endpoint ?? "").localeCompare(b.endpoint ?? "") ||
+      a.name.localeCompare(b.name),
+  );
+  return fnv1a64(JSON.stringify({ namespaces, transports }));
 };

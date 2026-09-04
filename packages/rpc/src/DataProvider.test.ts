@@ -1,6 +1,6 @@
 import test from 'ava'
 import { randomUUID } from 'crypto'
-import { pageEntries, rpc, rpcNamespace, rpcComponent, RpcClient, RpcComponent, RpcServer, type Introspection, type RpcComponentProxy, type RpcDataMethod, type RpcDataResources, type RpcGetManyParams, type RpcGetListResult, type RpcGetManyReferenceParams, type RpcGetListParams } from './index.js'
+import { componentDataResources, getChildren, getList, getOne, pageEntries, rpc, rpcNamespace, rpcComponent, RpcClient, RpcComponent, RpcServer, type Introspection, type RpcComponentProxy, type RpcDataMethod, type RpcDataResources, type RpcGetManyParams, type RpcGetListResult, type RpcGetManyReferenceParams, type RpcGetListParams } from './index.js'
 
 /**
  * Paging a collection by asking for it, which is the half a projection cannot do.
@@ -51,6 +51,25 @@ class Field extends RpcComponent<FieldProps, FieldState> {
         return this.state.fast
     }
 }
+
+test('props and state are provider resources, including branches and recursively scoped leaves', (t) => {
+    const resources = componentDataResources({ props: { kind: 'any' }, state: { kind: 'any' } })
+    t.deepEqual(resources.map((resource) => resource.path), [['props'], ['state']])
+    t.deepEqual(resources[1]?.verbs, ['getChildren', 'getList', 'getOne', 'getMany'])
+    t.is(resources[1]?.shape, 'tree')
+
+    const field = new Field()
+    const roots = getChildren(field, ['state'], {})
+    t.deepEqual(roots.ids, ['fast', 'tags', 'zones'])
+    t.deepEqual(roots.grouping, [false, true, true])
+    t.deepEqual(roots.hasChildren, [false, true, true])
+
+    const zone = getList(field, ['state'], { under: 'zones', recursive: true })
+    t.deepEqual(zone.ids, ['zones.top.setpoint'])
+    t.deepEqual(zone.data, [20])
+    t.is(getOne(field, ['state'], { id: 'zones.top.setpoint' }).data, 20)
+    t.deepEqual(getOne(field, ['state'], { id: 'tags.tag.007' }).data, { value: 7, unit: '°C', quality: 'good' })
+})
 
 /** What the caller sees: an ordinary component proxy, with the DataProvider verb on it. */
 type FieldProxy = RpcComponentProxy<Field>
@@ -365,10 +384,11 @@ test('a component may serve collections its contract cannot describe', async (t)
     const store = description.namespaces.find((namespace) => namespace.name === 'store')
     t.deepEqual(
         store?.component?.resources?.map((resource) => resource.path.join('.')),
-        ['customers', 'orders']
+        ['props', 'state', 'customers', 'orders']
     )
-    t.is(store?.component?.resources?.[0].label, 'Customers')
-    t.is(store?.component?.resources?.[0].row?.kind, 'object')
+    const customers = store?.component?.resources?.find((resource) => resource.path[0] === 'customers')
+    t.is(customers?.label, 'Customers')
+    t.is(customers?.row?.kind, 'object')
 
     // And the same verb reaches it, answered by the component rather than from its state.
     const proxy = await client.proxy<RpcComponentProxy<Store>>('store')

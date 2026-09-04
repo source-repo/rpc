@@ -1,4 +1,4 @@
-import { GenericModule, IGenericModule, Message, TransportEvent } from '../RPC/Core.js'
+import { GenericModule, IGenericModule, Message, TransportEvent, type RpcTransportDescription } from '../RPC/Core.js'
 import { FrameCodec, msgPackCodec } from '../RPC/Codec.js'
 import { valueRefusal } from '../RPC/Value.js'
 import { refuseDelivery } from '../RPC/Undeliverable.js'
@@ -94,6 +94,10 @@ export class MessagePortTransport extends GenericModule<Message, unknown, Messag
     ) {
         super(name, sources)
         queueMicrotask(() => void this.open().catch((e) => this.emit(TransportEvent.transportError, e)))
+    }
+
+    rpcDescription(): RpcTransportDescription {
+        return { name: this.getName(), protocol: 'message-port', role: 'port' }
     }
 
     /**

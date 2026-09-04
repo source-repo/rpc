@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
-import { RpcServer, TransportEvent, type RpcFilter, type RpcGetListParams, type RpcGetManyParams, type RpcGetOneParams, type RpcGetOneResult, type RpcGetListResult, type RpcGetManyResult, type RpcSchema } from '@source-repo/rpc'
-import { RpcDataCache, rpcOnlineFrom } from '@source-repo/query'
+import { RpcServer, TransportEvent, type RpcGetListParams, type RpcGetManyParams, type RpcGetOneParams, type RpcGetOneResult, type RpcGetListResult, type RpcGetManyResult, type RpcSchema } from '@source-repo/rpc'
+import { NetworkDataProvider, NetworkRpcDataProvider, NetworkScopeCatalogue, RpcDataCache, rpcOnlineFrom } from '@source-repo/query'
 import { RpcOperations } from '@source-repo/rpc'
 import { pageName } from './peerName'
 import { Chat } from './Chat'
@@ -10,11 +10,9 @@ import { ChatMessage, ChatService } from './ChatService'
 // `say(from: string, text: string)` instead of `say(…)`.
 import chatContract from './chat.types.json'
 import { ComponentPanel } from './ComponentPanel'
-import { WatchPane } from './WatchPane'
 import { ContextPanel } from './ContextPanel'
-import { StructurePanel } from './StructurePanel'
-import { asWatch, ConsoleService, holds, DescribedEvent, fetchConsoleName, NetworkProblem, PeerChange, PeerRole, PeerStructure, Search, ServerDescription, socketPath, StreamedEvent, TappedFrame, targetsIn, typeText, withNode, type Watch, type WatchNode } from '@source-repo/react'
-import { throttled, type SearchTarget } from '@source-repo/search'
+import { asWatch, ConsoleService, holds, DescribedEvent, fetchConsoleName, NetworkProblem, NetworkValueGrid, PeerChange, PeerStructure, ServerDescription, socketPath, StreamedEvent, TappedFrame, typeText, withNode, type NetworkMethodSelection, type Watch, type WatchNode } from '@source-repo/react'
+import { throttled } from '@source-repo/search'
 import { MethodPanel } from './MethodPanel'
 import { Operations } from './Operations'
 import { Traffic, TRAFFIC_KEPT } from './Traffic'
@@ -81,7 +79,7 @@ const useConsole = () => {
     const frames = useRef<((frame: TappedFrame) => void) | null>(null)
     const problems = useRef<((problem: NetworkProblem) => void) | null>(null)
     const peer = useRef<RpcServer | null>(null)
-    /** Who is relaying. The tray names it, because a relayed command has two places to fail. */
+    /** Who relays calls made from the right-side actions panel. */
     const [relay, setRelay] = useState('')
 
     /**
@@ -299,8 +297,11 @@ type DataProxy = {
     ): Promise<RpcGetListResult | RpcGetOneResult | RpcGetManyResult>
 }
 
-/** Which of the side panel's three views is showing. */
-type SideTab = 'chat' | 'events' | 'traffic' | 'problems' | 'presence' | 'operations'
+/** A console-wide destination that owns the main workspace. */
+type Workspace = 'network' | 'traffic' | 'problems' | 'presence' | 'operations'
+
+/** Detail and interaction for the scope selected in the Network workspace. */
+type SideTab = 'actions' | 'chat' | 'events'
 
 export const App = () => {
     const { service, status, me, events, peerChange, said, frames, problems, peer, data, operations, relay } = useConsole()
@@ -309,7 +310,7 @@ export const App = () => {
      * Messages that have arrived and not been looked at, per peer.
      *
      * Without this a message changes nothing on screen at all: the log is keyed by the peer selected
-     * in the sidebar and the chat tab is one of five, so unless you already had that exact peer
+     * in the Network scope and chat is one contextual tab, so unless you already had that exact peer
      * selected with that tab open, a peer could say hello and you would never learn it had. Traffic
      * and problems have carried a count since they were written; chat was the one that let its
      * arrivals pass in silence.
@@ -334,18 +335,16 @@ export const App = () => {
     const [describeRefusals, setDescribeRefusals] = useState<{ readonly [peer: string]: string }>({})
     /** Which describes are in flight, so two panes asking at once ask once. A ref: renders must not lose it. */
     const asking = useRef(new Set<string>())
-    const [offline, setOffline] = useState<Set<string>>(new Set())
     const [selected, setSelected] = useState<string | null>(null)
+    /** The method whose Call row action opened the contextual call form. */
+    const [calling, setCalling] = useState<NetworkMethodSelection | undefined>()
+    /** Guards the right panel against a slower description from the scope selected just before it. */
+    const selectedPeer = useRef<string | null>(null)
     /**
-     * The nodes this reader chose, and whether they are looking at them.
-     *
-     * Kept here rather than inside the panel because it outlives the panel: the whole point of a
-     * view is that it survives walking away to another peer, which is the walk that made a reader
-     * want one. `showingWatch` is exclusive with `selected` for the same reason a peer is exclusive
-     * with another peer - the main pane shows one thing.
+     * The saved component scopes this reader chose. Standalone observers can still add to it while
+     * its eventual home in the unified console navigation is being decided.
      */
     const [watch, setView] = useState<Watch>(rememberedWatch)
-    const [showingWatch, setShowingWatch] = useState(false)
     /**
      * The observer this page was opened onto, when it was opened as one.
      *
@@ -399,7 +398,21 @@ export const App = () => {
         [service, known, describeRefusals]
     )
 
-    const onSearching = useCallback((query: string) => (query.trim() ? describePeers(peers) : undefined), [describePeers, peers])
+    /**
+     * The network as one local DataProvider resource.
+     *
+     * Rebuilt from descriptions already held by the page. The always-mounted workspace requests
+     * missing descriptions below; until each arrives its peer remains visible and explicitly
+     * undescribed, so discovery grows the tree instead of replacing it.
+     */
+    const networkCatalogue = useMemo(() => new NetworkScopeCatalogue(peers, known), [peers, known])
+    const networkProvider = useMemo(() => new NetworkDataProvider({ catalogue: networkCatalogue, ask: (question) => data.fetch(question) }), [networkCatalogue, data])
+    const networkResource = useMemo(() => new NetworkRpcDataProvider({ provider: networkProvider }), [networkProvider])
+
+    // The network resource is the console's primary screen, so its structural catalogue is always
+    // populated. Descriptions remain bounded by the shared throttler above.
+    useEffect(() => describePeers(peers), [peers, describePeers])
+
 
     /**
      * Change the view and remember it in one move.
@@ -427,30 +440,6 @@ export const App = () => {
      */
     const viewing = useMemo(() => ({ holds: (node: WatchNode) => holds(watch, node), add: addToWatch }), [watch, addToWatch])
 
-    /** Every resource of every described peer that can answer, which is what the fan-out asks. */
-    const targets = useMemo(() => Object.entries(known).flatMap(([peer, description]) => targetsIn(peer, description)), [known])
-
-    /**
-     * Ask one of them, through this page's own link.
-     *
-     * The federation knows nothing about proxies or peer names; it is handed this. `getList` with
-     * the filter it built and the small page it chose - the same verb the console has always used,
-     * pointed at somebody else's peer.
-     */
-    const askTarget = useCallback(
-        async (target: SearchTarget, filter: RpcFilter, limit: number) => {
-            const link = peer.current
-            if (!link) throw new Error('this page has no link')
-            const proxy = await link.proxy<DataProxy>(target.namespace, target.peer)
-            const answer = (await proxy.$with({ semantics: 'query' }).$data('getList', target.resource, {
-                pagination: { page: 0, pageSize: limit },
-                filter
-            })) as RpcGetListResult
-            return { ids: answer.ids ?? [], rows: answer.data ?? [] }
-        },
-        [peer]
-    )
-
     const observing = useMemo(() => {
         const asked = new URLSearchParams(window.location.search)
         const peer = asked.get('observe')
@@ -463,17 +452,13 @@ export const App = () => {
     const [described, setDescribed] = useState<ServerDescription | { error: string; code?: string } | null>(null)
     const [watching, setWatching] = useState<Set<string>>(new Set())
     const [stream, setStream] = useState<StreamedEvent[]>([])
+    const [workspace, setWorkspace] = useState<Workspace>('network')
     const [tab, setTab] = useState<SideTab>('events')
     const [traffic, setTraffic] = useState<TappedFrame[]>([])
     const [trafficPaused, setTrafficPaused] = useState(false)
     const [trouble, setTrouble] = useState<NetworkProblem[]>([])
-    const [links, setLinks] = useState<{ [peer: string]: string }>({})
-    const [network, setNetwork] = useState<{ broker?: string; hub?: string; prefix?: string }>({})
-    const [roles, setRoles] = useState<{ [peer: string]: PeerRole }>({})
     const [structure, setStructure] = useState<{ [peer: string]: PeerStructure }>({})
-
-    /** What to call a place in the watch, under the same display names the rest of the console uses. */
-    const watchTitle = useCallback((other: string, namespace: string) => `${peerDisplayName(other, structure[other])} · ${namespace}`, [structure])
+    const [network, setNetwork] = useState<{ broker?: string; hub?: string; prefix?: string }>({})
     const [comings, setComings] = useState<PeerChange[]>([])
     const [eventFilter, setEventFilter] = useState('')
     const [eventsPaused, setEventsPaused] = useState(false)
@@ -483,10 +468,8 @@ export const App = () => {
         const state = await service.peers()
         setPeers(state.peers)
         setWatching(new Set(state.watching))
-        setLinks(state.links ?? {})
-        setNetwork(state.network ?? {})
-        setRoles(state.roles ?? {})
         setStructure(state.structure ?? {})
+        setNetwork(state.network ?? {})
     }, [service])
 
     // The tab is where two consoles are told apart when both are open, so it carries the peer name
@@ -531,7 +514,7 @@ export const App = () => {
     useEffect(() => {
         void refreshPeers()
         // Paused stops the buffer filling rather than only the list rendering, the same way the
-        // traffic tab does - a paused pane on a busy network should stay as it was.
+        // Traffic workspace does - a paused pane on a busy network should stay as it was.
         events.current = (event) => {
             if (eventsPaused) return
             setStream((current) => [event, ...current].slice(0, 500))
@@ -540,17 +523,26 @@ export const App = () => {
             if (state === 'reshaped') {
                 // The peer is still here - its surface changed and the console has dropped what it
                 // cached. Not a coming or a going, so the presence history is left alone; what
-                // matters is that an open panel stops showing the old shape without a reselection.
+                // matters is that an open panel and the network catalogue stop showing the old
+                // shape without a reselection.
                 void refreshPeers()
-                if (service && peer === selected) void service.describe(peer).then(setDescribed).catch(() => undefined)
+                setKnown((current) => Object.fromEntries(Object.entries(current).filter(([name]) => name !== peer)))
+                if (service)
+                    void service
+                        .describe(peer)
+                        .then((next) => {
+                            if ('error' in next) {
+                                setDescribeRefusals((current) => ({ ...current, [peer]: next.error }))
+                                if (peer === selected) setDescribed(next)
+                                return
+                            }
+                            setKnown((current) => ({ ...current, [peer]: next }))
+                            setDescribeRefusals((current) => Object.fromEntries(Object.entries(current).filter(([name]) => name !== peer)))
+                            if (peer === selected) setDescribed(next)
+                        })
+                        .catch((failure) => setDescribeRefusals((current) => ({ ...current, [peer]: (failure as { message?: string }).message ?? String(failure) })))
                 return
             }
-            setOffline((current) => {
-                const next = new Set(current)
-                if (state === 'offline') next.add(peer)
-                else next.delete(peer)
-                return next
-            })
             setComings((current) => [change, ...current].slice(0, 200))
             void refreshPeers()
         }
@@ -574,11 +566,23 @@ export const App = () => {
     }, [service, problems])
 
     const select = async (peer: string) => {
+        selectedPeer.current = peer
         setSelected(peer)
-        setShowingWatch(false)
         setDescribed(null)
+        if (known[peer]) {
+            setDescribed(known[peer])
+            return
+        }
         if (!service) return
-        setDescribed(await service.describe(peer))
+        const next = await service.describe(peer)
+        if (selectedPeer.current === peer) setDescribed(next)
+        // The network catalogue and side panel consume the same description. Selecting a peer in
+        // both places should not cost a second describe.
+        if ('error' in next) setDescribeRefusals((current) => ({ ...current, [peer]: next.error }))
+        else {
+            setKnown((current) => ({ ...current, [peer]: next }))
+            setDescribeRefusals((current) => Object.fromEntries(Object.entries(current).filter(([name]) => name !== peer)))
+        }
         await refreshPeers()
     }
 
@@ -630,6 +634,9 @@ export const App = () => {
 
     const failed = described && 'error' in described ? described : null
     const description = described && !('error' in described) ? described : null
+    const callingDescription = calling ? known[calling.peer] ?? (description?.name === calling.peer ? description : undefined) : undefined
+    const callingNamespace = callingDescription?.namespaces.find((namespace) => namespace.name === calling?.namespace)
+    const callingMethod = callingNamespace?.methods.find((method) => method.name === calling?.method)
     const unreadTotal = Object.values(unread).reduce((total, count) => total + count, 0)
     /**
      * How many commands were left in the air.
@@ -704,12 +711,6 @@ export const App = () => {
     return (
         <div className="app">
             <aside>
-                {/*
-                 * This page is a peer of the network, not a viewer of it - it hosts an RpcServer of
-                 * its own - so it says which peer it is, in the one place that is always visible.
-                 * The same name appears in the list below, marked, because that is where someone
-                 * looking at two consoles side by side will actually compare them.
-                 */}
                 <div className="identity">
                     <span className="muted">this page is</span>
                     <span className="name">{me ? displayNameForId(me) : '…'}</span>
@@ -719,243 +720,69 @@ export const App = () => {
                         </span>
                     )}
                 </div>
-                {/* Above the peers, because it is not one of them and is not under any of them.
-                    A view crosses the network, so putting it inside the list would be filing it
-                    under whichever peer happened to be first - and the whole point is that it
-                    belongs to none of them. */}
-                <button className={`peer watch-entry${showingWatch ? ' selected' : ''}`} onClick={() => setShowingWatch(true)}>
-                    <span className="entity-title">
-                        <span>watch</span>
-                    </span>
-                    {watch.length > 0 && <span className="badge">{watch.length}</span>}
-                </button>
-                <header>
-                    <h1>Peers</h1>
-                    <span className={`status ${status === 'connected' ? 'ok' : 'warn'}`}>{status}</span>
-                </header>
-                {peers.length === 0 && <p className="muted">Waiting for a peer to announce itself…</p>}
-                {/*
-                 * A tree over what the descriptions have taught so far: a peer whose host root is
-                 * attached under another renders beneath it, place beside the name. A peer with no
-                 * declared structure - or whose parent is not here - sits at the root, which is
-                 * where an unknown belongs. The tree grows as the network is used, like the roles.
-                 */}
-                {(() => {
-                    const known = new Set(peers)
-                    const roots = peers.filter((name) => {
-                        const parent = structure[name]?.parent
-                        return !parent || parent === name || !known.has(parent)
-                    })
-                    const entry = (name: string, depth: number, seen: Set<string>) => (
-                        <div key={name}>
-                            <button
-                                className={`peer${name === selected ? ' selected' : ''}`}
-                                style={depth > 0 ? { paddingLeft: 10 + depth * 14 } : undefined}
-                                onClick={() => void select(name)}
-                            >
-                                <span className={`dot${offline.has(name) ? ' off' : ''}`} />
-                                <span className="peer-lines">
-                                    <span className="peer-primary">
-                                        <span className="peer-display">{peerDisplayName(name, structure[name])}</span>
-                                        <span className="peer-id mono">{name}</span>
-                                        {name === me && <span className="you">you</span>}
-                                        {/* Which peer to select. The tab count says a message is
-                                            waiting; without this you would have to click through
-                                            every peer to find out whose. */}
-                                        {unread[name] > 0 && <span className="count">{unread[name]}</span>}
-                                        {/* Learned from a description already made, so peers label
-                                            themselves as the network is used rather than by
-                                            describing everything on sight. */}
-                                        {roles[name] && <span className={`role ${roles[name]}`}>{roles[name] === 'undescribed' ? 'no contract' : roles[name]}</span>}
-                                        {/* Which link it was found on. On a plant with the devices
-                                            on a broker and the HMIs on a hub, that is the first
-                                            thing worth knowing about a peer. */}
-                                        {links[name] && links[name] !== 'this console' && <span className="link">{links[name]}</span>}
-                                    </span>
-                                    {structure[name]?.place && (
-                                        <span className="peer-place">
-                                            {structure[name]?.place?.join(' / ') ?? ''}
-                                        </span>
-                                    )}
-                                </span>
-                            </button>
-                            {/* The visited set is the cycle guard: two hosts each claiming the
-                                other as parent must not recurse the sidebar to death. */}
-                            {!seen.has(name) &&
-                                peers
-                                    .filter((child) => structure[child]?.parent === name && child !== name)
-                                    .map((child) => entry(child, depth + 1, new Set([...seen, name])))}
-                        </div>
-                    )
-                    return roots.map((name) => entry(name, 0, new Set()))
-                })()}
-            </aside>
-
-            <main>
-                {showingWatch && <WatchPane watch={watch} onChange={changeWatch} server={peer} known={known} refusals={describeRefusals} onNeed={describePeers} peers={peers} title={watchTitle} peerTitle={(other) => peerDisplayName(other, structure[other])} cache={data} period={5000} pageSize={25} />}
-                {!showingWatch && !selected && <p className="muted">Select a peer to see what it exposes.</p>}
-                {!showingWatch && selected && !described && <p className="muted">Describing {selected}…</p>}
-                {!showingWatch && failed && (
-                    <div className="notice">
-                        <strong>{failed.code ?? 'Error'}</strong>
-                        <p>{failed.error}</p>
-                        <p className="muted">A server answers this only when it is started with exposeIntrospection.</p>
-                    </div>
-                )}
-                {!showingWatch && description && (
-                    <>
-                        <header className="peer-head">
-                            <h1>
-                                <span>{peerDisplayName(description.name, structure[description.name])}</span>
-                                <span className="entity-id mono">{description.name}</span>
-                            </h1>
-                            <span className="muted">
-                                {description.version ? `contract ${description.version} · ` : ''}
-                                {description.validating ? 'arguments checked' : 'arguments not checked'}
+                <nav className="console-nav" aria-label="console">
+                    {(['network', 'traffic', 'problems', 'presence', 'operations'] as const).map((name) => (
+                        <button
+                            key={name}
+                            className={workspace === name ? 'peer selected' : 'peer'}
+                            aria-current={workspace === name ? 'page' : undefined}
+                            onClick={() => setWorkspace(name)}
+                        >
+                            <span className="entity-title">
+                                <span>{name.charAt(0).toUpperCase() + name.slice(1)}</span>
                             </span>
-                        </header>
-                        {/* Above everything, and impossible to scroll past. A peer that can do
-                            something dangerous says so continuously, so the question "is anything
-                            unlocked on this network right now" has an answer without asking. An
-                            entry with no `until` is drawn as the worse case, because nothing will
-                            close it and somebody has to remember to - which is the failure the
-                            whole idea exists to catch. */}
-                        {description.elevated?.length ? (
-                            <div className="elevated" role="alert">
-                                <strong>elevated</strong>
-                                {description.elevated.map((one) => (
-                                    <span key={one.capability} className={`elevation${one.until === undefined ? ' unbounded' : ''}`}>
-                                        <span className="mono">{one.capability}</span>
-                                        {one.reason ? ` — ${one.reason}` : ''}
-                                        {one.until === undefined ? ' · until someone closes it' : ` · until ${new Date(one.until).toLocaleTimeString()}`}
-                                        {one.grantedBy ? ` · by ${one.grantedBy}` : ''}
-                                    </span>
-                                ))}
-                            </div>
-                        ) : null}
-                        <StructurePanel description={description} peers={peers} onSelectPeer={(other) => void select(other)} />
-                        {/* Above the namespaces, and no longer a question about only this peer:
-                            the targets come from every peer that has been described. */}
-                        <Search targets={targets} ask={askTarget} onQuery={onSearching} />
-                        {description.namespaces.map((namespace) => (
-                            <section key={namespace.name} className="namespace">
-                                <h2>
-                                    <span className="entity-title">
-                                        <span>{namespaceDisplayName(namespace)}</span>
-                                        <span className="entity-id mono">{namespace.name}</span>
-                                    </span>
-                                    {namespace.version && <span className="badge">@{namespace.version}</span>}
-                                    <span className="muted mono">
-                                        {namespace.className}
-                                        {namespace.created ? ' · created at runtime' : ''}
-                                    </span>
-                                    {/* From the schema, never the class name above - which a bundle
-                                        mangles while the extracted contract stays intact. */}
-                                    {namespace.capabilities?.map((capability) => (
-                                        <span key={capability} className="capability" title="implements this contract interface">
-                                            {capability}
-                                        </span>
-                                    ))}
-                                </h2>
-                                {/* Observed by the page itself over its own peer link - the console
-                                    relays nothing. Refreshing the description after subscribing is
-                                    only so the observer count moves while you watch it. */}
-                                {namespace.component && (
-                                    <ComponentPanel
-                                        peer={selected!}
-                                        namespace={namespace.name}
-                                        component={namespace.component}
-                                        methods={namespace.methods}
-                                        types={description.types}
-                                        server={peer}
-                                        data={data}
-                                        viewing={viewing}
-                                        onSubscribed={() => {
-                                            if (service && selected) void service.describe(selected).then(setDescribed).catch(() => undefined)
-                                        }}
-                                    />
-                                )}
-                                {/* A namespace with a place in the topology is a node, and a node
-                                    is the thing context is resolved for. One without is just a
-                                    service, and has no chain to walk. */}
-                                {namespace.topology && <ContextPanel peer={selected!} node={namespace.name} server={peer} />}
-                                {namespace.methods.map((method) => (
-                                    <MethodPanel
-                                        key={method.name}
-                                        peer={selected!}
-                                        namespace={namespace.name}
-                                        method={method}
-                                        types={description.types}
-                                        service={service!}
-                                        network={network}
-                                        operations={operations}
-                                        relay={relay}
-                                    />
-                                ))}
-                                {namespace.events.length > 0 && (
-                                    <div className="events">
-                                        <h3>
-                                            events
-                                            {namespace.events.some((event) => !watching.has(`${selected}/${namespace.name}/${event.name}`)) && (
-                                                <button className="toggle" onClick={() => void watchAll(namespace.name, namespace.events)}>
-                                                    watch all
-                                                </button>
-                                            )}
-                                        </h3>
-                                        {namespace.events.map((event) => {
-                                            const on = watching.has(`${selected}/${namespace.name}/${event.name}`)
-                                            return (
-                                                <div key={event.name} className="event-row">
-                                                    <code>
-                                                        {event.name}({event.params ? event.params.map(typeText).join(', ') : '…'})
-                                                    </code>
-                                                    <button className={on ? 'toggle on' : 'toggle'} onClick={() => void toggleWatch(namespace.name, event)}>
-                                                        {on ? 'unwatch' : 'watch'}
-                                                    </button>
-                                                    <span className="muted">
-                                                        {event.subscribers} subscriber{event.subscribers === 1 ? '' : 's'}
-                                                    </span>
-                                                </div>
-                                            )
-                                        })}
-                                    </div>
-                                )}
-                            </section>
-                        ))}
-                    </>
-                )}
-            </main>
-
-            <section className="side">
-                {/*
-                 * Three views of one column rather than three stacked panes: traffic is a list that
-                 * fills, and giving it a third of the height would make it useless on the network
-                 * where it matters most.
-                 */}
-                <nav className="tabs">
-                    {(['events', 'operations', 'traffic', 'problems', 'presence', 'chat'] as const).map((name) => (
-                        <button key={name} className={tab === name ? 'tab on' : 'tab'} onClick={() => setTab(name)}>
-                            {name}
+                            {name === 'network' && peers.length > 0 && <span className="badge">{peers.length}</span>}
                             {name === 'traffic' && traffic.length > 0 && <span className="count">{traffic.length}</span>}
                             {name === 'problems' && trouble.length > 0 && <span className="count bad">{trouble.length}</span>}
-                            {/* The one badge that is not a count of things to read: it is a count of
-                                commands nobody knows the outcome of, so it stays until somebody
-                                deals with each of them rather than clearing when the tab is opened. */}
+                            {/* This is the number of commands whose outcome remains unknown, not
+                                merely the number of rows waiting to be read. */}
                             {name === 'operations' && uncertain > 0 && <span className="count bad">{uncertain}</span>}
-                            {name === 'chat' && unreadTotal > 0 && <span className="count">{unreadTotal}</span>}
                         </button>
                     ))}
                 </nav>
+                <div className="console-status">
+                    <span className={`status ${status === 'connected' ? 'ok' : 'warn'}`}>{status}</span>
+                    {selected && <span className="small-id mono">scope: {selected}</span>}
+                </div>
+            </aside>
 
-                {tab === 'chat' && <Chat peer={selected} messages={selected ? (chats[selected] ?? []) : []} onSend={sendChat} />}
+            <main className="console-main">
+                {/* Kept mounted so a trip to a diagnostic workspace does not discard the selected
+                    scope, filter or preview. The provider remains bounded and current meanwhile. */}
+                <div className={workspace === 'network' ? 'network-workspace' : 'network-workspace hidden'}>
+                    <header className="peer-head network-head">
+                        <h1>Network</h1>
+                        <span className="muted">scope every DataProvider resource on the RPC network</span>
+                    </header>
+                    {peers.length === 0 && <p className="muted">Waiting for a peer to announce itself…</p>}
+                    <NetworkValueGrid
+                        provider={networkResource}
+                        period={5000}
+                        pageSize={50}
+                        onScope={(scope) => {
+                            const scopedPeer = scope.kind === 'network' ? null : scope.peer
+                            if (scopedPeer === selected) return
+                            if (scopedPeer) void select(scopedPeer)
+                            else {
+                                selectedPeer.current = null
+                                setSelected(null)
+                                setDescribed(null)
+                                setCalling(undefined)
+                            }
+                        }}
+                        onCallMethod={(method) => {
+                            setCalling(method)
+                            setTab('actions')
+                            if (method.peer !== selected) void select(method.peer)
+                        }}
+                    />
+                </div>
 
-                {tab === 'operations' && <Operations operations={operations} />}
+                {workspace === 'operations' && <Operations operations={operations} />}
+                {workspace === 'problems' && <Problems problems={trouble} onClear={() => setTrouble([])} />}
+                {workspace === 'presence' && <Presence changes={comings} onClear={() => setComings([])} />}
 
-                {tab === 'problems' && <Problems problems={trouble} onClear={() => setTrouble([])} />}
-
-                {tab === 'presence' && <Presence changes={comings} onClear={() => setComings([])} />}
-
-                {/* Always mounted, so switching tabs does not drop the tap. See Traffic's `hidden`. */}
+                {/* Always mounted so switching workspaces does not silently stop an active tap. */}
                 <Traffic
                     service={service}
                     selected={selected}
@@ -963,8 +790,73 @@ export const App = () => {
                     onClear={() => setTraffic([])}
                     paused={trafficPaused}
                     onPaused={setTrafficPaused}
-                    hidden={tab !== 'traffic'}
+                    hidden={workspace !== 'traffic'}
                 />
+            </main>
+
+            <section className="side">
+                {/*
+                 * Only selection context lives here. Network-wide logs have main workspaces in the
+                 * left navigation, where they have enough room and do not impersonate peer detail.
+                 */}
+                <nav className="tabs">
+                    {(['events', 'actions', 'chat'] as const).map((name) => (
+                        <button key={name} className={tab === name ? 'tab on' : 'tab'} onClick={() => setTab(name)}>
+                            {name}
+                            {name === 'chat' && unreadTotal > 0 && <span className="count">{unreadTotal}</span>}
+                        </button>
+                    ))}
+                </nav>
+
+                <div className="side-context">
+                    <span className="muted">scope context</span>
+                    {selected ? (
+                        <span className="entity-title compact">
+                            <strong>{peerDisplayName(selected, structure[selected])}</strong>
+                            <span className="entity-id mono">{selected}</span>
+                        </span>
+                    ) : (
+                        <strong>whole network</strong>
+                    )}
+                </div>
+
+                {tab === 'actions' && (
+                    <div className="node-tools">
+                        {!calling && <p className="muted">Choose Call on a method row in the Network grid.</p>}
+                        {calling && !callingDescription && <p className="muted">Describing {calling.peer}…</p>}
+                        {calling && callingDescription && (!callingNamespace || !callingMethod) && (
+                            <p className="component-error">
+                                {calling.peer} no longer describes {calling.namespace}.{calling.method}.
+                            </p>
+                        )}
+                        {calling && callingNamespace && callingMethod && (
+                            <section key={`${calling.peer}/${calling.namespace}/${calling.method}`} className="namespace">
+                                <h2>
+                                    <span className="entity-title compact">
+                                        <span>{namespaceDisplayName(callingNamespace)}</span>
+                                        <span className="entity-id mono">
+                                            {calling.peer} · {callingNamespace.name}
+                                        </span>
+                                    </span>
+                                </h2>
+                                {callingNamespace.topology && <ContextPanel peer={calling.peer} node={callingNamespace.name} server={peer} />}
+                                <MethodPanel
+                                    peer={calling.peer}
+                                    namespace={callingNamespace.name}
+                                    method={callingMethod}
+                                    types={callingDescription?.types}
+                                    service={service!}
+                                    network={network}
+                                    operations={operations}
+                                    relay={relay}
+                                    initiallyOpen
+                                />
+                            </section>
+                        )}
+                    </div>
+                )}
+
+                {tab === 'chat' && <Chat peer={selected} messages={selected ? (chats[selected] ?? []) : []} onSend={sendChat} />}
 
                 {tab === 'events' && (
                     <div className="stream">
@@ -986,6 +878,38 @@ export const App = () => {
                                 </button>
                             </div>
                         </header>
+                        {selected && !described && <p className="muted">Describing {selected}…</p>}
+                        {failed && <p className="component-error">{failed.error}</p>}
+                        {description && description.namespaces.some((namespace) => namespace.events.length > 0) && (
+                            <details className="event-catalogue">
+                                <summary>event subscriptions on {peerDisplayName(description.name, structure[description.name])}</summary>
+                                {description.namespaces
+                                    .filter((namespace) => namespace.events.length > 0)
+                                    .map((namespace) => (
+                                        <section key={namespace.name} className="events">
+                                            <h3>
+                                                {namespaceDisplayName(namespace)}
+                                                {namespace.events.some((event) => !watching.has(`${selected}/${namespace.name}/${event.name}`)) && (
+                                                    <button className="toggle" onClick={() => void watchAll(namespace.name, namespace.events)}>
+                                                        watch all
+                                                    </button>
+                                                )}
+                                            </h3>
+                                            {namespace.events.map((event) => {
+                                                const on = watching.has(`${selected}/${namespace.name}/${event.name}`)
+                                                return (
+                                                    <div key={event.name} className="event-row">
+                                                        <code>{event.name}({event.params ? event.params.map(typeText).join(', ') : '…'})</code>
+                                                        <button className={on ? 'toggle on' : 'toggle'} onClick={() => void toggleWatch(namespace.name, event)}>
+                                                            {on ? 'unwatch' : 'watch'}
+                                                        </button>
+                                                    </div>
+                                                )
+                                            })}
+                                        </section>
+                                    ))}
+                            </details>
+                        )}
                         {stream.length > 0 && (
                             <input className="control" placeholder="filter by peer, event or payload" value={eventFilter} onChange={(e) => setEventFilter(e.target.value)} />
                         )}

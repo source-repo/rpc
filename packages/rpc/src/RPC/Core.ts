@@ -193,10 +193,48 @@ export class PeerRegistry {
 }
 
 /**
+ * Stable, non-secret facts a transport may publish through `msgrpc.describe()`.
+ *
+ * Connection state is deliberately absent. A description is cached as part of a peer's surface,
+ * while readiness changes independently of that surface. Credentials and transport options are
+ * absent for the more important reason that introspection must never turn them into network data.
+ */
+export interface RpcTransportDescription {
+    /** The name the transport speaks as. Usually the containing peer's name. */
+    name: string
+    /** Wire protocol or link kind, e.g. `socket.io`, `mqtt` or `message-port`. */
+    protocol: string
+    /** How this peer participates in the link. Third-party transports use `custom`. */
+    role: 'listen' | 'connect' | 'broker' | 'port' | 'custom'
+    /** Public network endpoint with credentials, query and fragment removed. */
+    endpoint?: string
+}
+
+/** Strip the parts of a connection URL that commonly carry credentials or tokens. */
+export const publicTransportEndpoint = (endpoint: string): string | undefined => {
+    try {
+        const parsed = new URL(endpoint)
+        parsed.username = ''
+        parsed.password = ''
+        parsed.search = ''
+        parsed.hash = ''
+        return parsed.toString()
+    } catch {
+        // An unparseable value cannot be published safely: unlike a parsed URL, there is no sound
+        // way to tell which portion might be a credential.
+        return undefined
+    }
+}
+
+/**
  * A module that owns its wire format. RpcClient and RpcServer drive these directly rather than
  * through a converter, so a transport whose framing is structured can see the message itself.
  */
-export type Transport = GenericModule<Message, unknown, Message, unknown> & { codec: FrameCodec }
+export type Transport = GenericModule<Message, unknown, Message, unknown> & {
+    codec: FrameCodec
+    /** Optional so an existing third-party transport remains a valid transport. */
+    rpcDescription?: () => RpcTransportDescription
+}
 
 export interface MessageHeader {
     source: string

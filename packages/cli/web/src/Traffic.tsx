@@ -46,8 +46,8 @@ export const Traffic = ({
     paused: boolean
     onPaused: (paused: boolean) => void
     /**
-     * Hidden rather than unmounted when another tab is showing. Unmounting would drop the tap, so
-     * glancing at the events pane and coming back would quietly have stopped the watching - and the
+     * Hidden rather than unmounted when another workspace is showing. Unmounting would drop the tap,
+     * so glancing at Network and coming back would quietly have stopped the watching - and the
      * frames that crossed while you looked away would be the ones you were waiting for.
      */
     hidden: boolean

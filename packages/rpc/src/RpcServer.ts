@@ -252,6 +252,14 @@ export class RpcServerBase extends EventEmitter implements IManageRpc {
         // transports be imported on demand, so a browser bundle carrying RpcServer does not carry
         // socket.io's server and the MQTT client to reach a hub it dials.
         this.rpc = new RpcServerHandler(this.options.name)
+        this.rpc.transportDescriptions = () =>
+            this.transports.map((transport) =>
+                transport.rpcDescription?.() ?? {
+                    name: transport.getName(),
+                    protocol: transport.constructor?.name || 'custom',
+                    role: 'custom'
+                }
+            )
         this.caller = new RpcClientHandler(this.options.name, [], this.options.callTimeout ?? defaultCallTimeout, this.options.operations)
         this.caller.batchCalls = this.options.batchCalls ?? true
         this.switch = new Switch([this.rpc, this.caller])
@@ -380,6 +388,9 @@ export class RpcServerBase extends EventEmitter implements IManageRpc {
             if (this.options.relay !== undefined && 'relay' in transport) (transport as { relay: RelayRule }).relay = this.options.relay
             this.attach(transport)
         }
+        // The first link is announced before later siblings exist. Repeat with the complete set,
+        // because transport descriptions participate in the cached surface hash.
+        this.announceShape()
     }
 
     /**

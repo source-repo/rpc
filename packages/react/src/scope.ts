@@ -1,38 +1,15 @@
-import type { DescribedAction, DescribedComponent, DescribedMethod, TypeNode } from './types.js'
+import { componentDataResources } from '@source-repo/rpc'
+import type { DescribedAction, DescribedComponent, DescribedMethod, DescribedResource, TypeNode } from './types.js'
 
-/**
- * What is a container and what is a value, decided once from the contract and nothing else.
- *
- * The component panel used to draw one tree of everything, which is right for an oven and wrong for
- * anything carrying hundreds of values - a plant screen is three hundred tags, and three hundred
- * tree nodes is not a screen. So the panel splits in two: a scope tree of *typed containers* on the
- * left, and a grid of *values* on the right, where selecting a node narrows the grid to everything
- * beneath it recursively. The tree filters; it does not navigate.
- *
- * **The rule that makes it work is that a record is a value leaf, and never a tree node.** A
- * `{ [tag: string]: Reading }` does not appear in the tree at all - its entries are grid rows. That
- * is principled rather than a threshold on size: an object's members are named by the contract, and
- * a record's keys are *data*. Type ends, data begins, and the tree stops exactly there.
- *
- * Which yields the invariant this file exists to keep: **the tree is exactly the contract, and costs
- * nothing on the wire, ever.** Everything here is a function of `props` and `state` as `describe()`
- * published them, so the whole scope tree is drawn before a single value arrives, however much data
- * sits behind it. Nothing in this file reads a value, and nothing in it may ever issue a request -
- * a scope node whose children came from a peer would end the invariant silently, and the tree would
- * start costing what it is here to avoid. A hierarchy among *rows* is a different tree, fetched
- * lazily, and it belongs to the grid rather than to this one.
- *
- * The leaf rule is shared with `ValueTree` rather than restated, because the tree, the grid and the
- * renderer disagreeing about what counts as a leaf is how a value appears twice or not at all.
- */
+/** Resource catalogue and schema helpers shared by the generic tree/scope/grid. */
 
 type Types = { [name: string]: TypeNode } | undefined
 
-/** A typed container: a node the scope tree draws. Never a leaf, never a record. */
+/** One resource-catalogue node. Provider-owned branches are fetched by ResourceTree. */
 export interface ScopeNode {
-    /** Spelled from the component root, so `['state', 'zones', 'top']` - what `sets` and a projection use. */
+    /** The resource path. */
     path: string[]
-    /** The last segment, which for the two roots is `props` or `state`. */
+    /** Its display name. */
     name: string
     children: ScopeNode[]
 }
@@ -48,6 +25,21 @@ export interface ScopeLeaf {
      * tree never expands it.
      */
     collection?: boolean
+}
+
+/**
+ * The provider catalogue, including the two resources supplied by RpcComponent itself.
+ *
+ * Kept as a compatibility fold at the client boundary: new peers publish these in `resources`,
+ * while an older description still has enough contract to name them. Either way the renderer sees
+ * resources only; it never rebuilds their branch tree from `props` or `state`.
+ */
+const resourcesOf = (component: DescribedComponent): DescribedResource[] => {
+    const declared = component.resources ?? []
+    const builtIn = componentDataResources(component).filter(
+        (resource) => !declared.some((one) => one.path.length === resource.path.length && one.path.every((segment, at) => segment === resource.path[at]))
+    )
+    return [...(builtIn as DescribedResource[]), ...declared]
 }
 
 /**
@@ -96,41 +88,19 @@ const resolveOnce = (type: TypeNode | undefined, types: Types, seen: ReadonlySet
     return resolveOnce(types?.[type.name], types, new Set(seen).add(type.name))
 }
 
-const childrenOf = (type: TypeNode | undefined, path: string[], types: Types, seen: ReadonlySet<string>): ScopeNode[] => {
-    const here = resolveOnce(type, types, seen)
-    if (!enumerable(here.type)) return []
-    return membersOf(here.type)
-        .map((member) => ({ member, at: resolveOnce(member.type, types, here.seen) }))
-        .filter(({ at }) => enumerable(at.type))
-        .map(({ member, at }) => ({
-            name: member.name,
-            path: [...path, member.name],
-            children: childrenOf(member.type, [...path, member.name], types, at.seen)
-        }))
-}
-
 /**
- * The whole scope tree for a component, which is two roots of one tree rather than two panels.
+ * The resource catalogue for a component.
  *
- * `props` and `state` sit side by side because they are one list to whoever is reading the screen,
- * and because a path spelled from either root is the same kind of thing everywhere else here - what
- * `sets` claims, what a projection names, what a grid row is labelled with. A root the contract does
- * not publish is absent rather than empty: a component serving no schema has no scope to show, and
- * an empty `state` node would claim it had one and that it was empty.
+ * This tree contains resource roots only. Every hierarchy beneath a root belongs to that resource
+ * and is fetched through `getChildren` by `ResourceTree`; props and state are not a second kind of
+ * tree assembled from schema. That is what lets Line, Stock, SQL and an address space use the same
+ * scoping interaction.
  */
-export const scopeTree = (component: DescribedComponent, types?: Types): ScopeNode[] => [
-    ...(['props', 'state'] as const)
-        .filter((root) => component[root] !== undefined)
-        .map((root) => ({ name: root, path: [root], children: childrenOf(component[root], [root], types, new Set()) })),
-    // A declared resource is a root of its own, beside props and state, because it is neither: a
-    // table or a queue is not part of the component's state and has no path into it. It has no
-    // children, which is the record rule holding one level up - the resource is named by the
-    // component, its rows are data, and selecting it puts those rows in the grid.
-    //
+export const scopeTree = (component: DescribedComponent, _types?: Types): ScopeNode[] => [
     // Only those this pane can actually show, which the verb list is there to say: `getList` for a
     // page of rows, and `getChildren` for a tree browsed a branch at a time. A resource that
     // appeared and then refused every selection would be worse than one that is not offered.
-    ...(component.resources ?? [])
+    ...resourcesOf(component)
         .filter((resource) => resource.verbs.includes('getList') || resource.verbs.includes('getChildren'))
         .map((resource) => ({ name: resource.label ?? resource.path.join('.'), path: [...resource.path], children: [] }))
 ]
@@ -144,7 +114,7 @@ export const scopeTree = (component: DescribedComponent, types?: Types): ScopeNo
  * to prevent.
  */
 export const treeResourceAt = (component: DescribedComponent, path: readonly string[]) => {
-    const resource = component.resources?.find((declared) => declared.path.length === path.length && declared.path.every((segment, at) => segment === path[at]))
+    const resource = resourcesOf(component).find((declared) => declared.path.length === path.length && declared.path.every((segment, at) => segment === path[at]))
     return resource?.shape === 'tree' && resource.verbs.includes('getChildren') ? resource : undefined
 }
 
@@ -163,7 +133,8 @@ export const treeResourceAt = (component: DescribedComponent, path: readonly str
 const resourceAt = (component: DescribedComponent, path: string[]) =>
     component.resources?.find((resource) => resource.path.length === path.length && resource.path.every((segment, at) => segment === path[at]))
 
-export const declaredResourceAt = (component: DescribedComponent, path: readonly string[]) => resourceAt(component, [...path])
+export const declaredResourceAt = (component: DescribedComponent, path: readonly string[]) =>
+    resourcesOf(component).find((resource) => resource.path.length === path.length && resource.path.every((segment, at) => segment === path[at]))
 
 /**
  * Which columns to draw for a resource, in order of what actually knows.

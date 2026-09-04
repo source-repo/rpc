@@ -11,7 +11,7 @@ import {
     type RpcWriteOutcome
 } from '@source-repo/rpc'
 import type { RpcDataCache, RpcQuestion } from '@source-repo/query'
-import { ActionForm, actionsFor, canUpdate, editableFields, leavesUnder, RecordForm, scopeTree, staticSource, storeSource, Uncertain, useCommanding, ValueGrid, writableIn, writeNamespace, type BranchQuestion, type DescribedAction, type DescribedComponent, type DescribedMethod, type EditAffordance, type Link, type ObjectAccess, type PageQuestion, type Ref, type RowQuestion, type ScopedQuestion, type TypeNode, type WatchAffordance, type Where, type WriteOutcome } from '@source-repo/react'
+import { ActionForm, actionsFor, canUpdate, editableFields, leavesUnder, RecordForm, scopeTree, staticSource, storeSource, Uncertain, useCommanding, ValueGrid, writableIn, writeNamespace, type BranchQuestion, type DescribedAction, type DescribedComponent, type DescribedMethod, type Link, type ObjectAccess, type Ref, type RowQuestion, type ScopedQuestion, type TypeNode, type WatchAffordance, type Where, type WriteOutcome } from '@source-repo/react'
 import { SourceView, type SourceDocument } from './SourceView'
 import { overlayRefusal, type RpcSourceBinding, type RpcSourceCatalogue, type RpcActiveSourceIdentity } from '@source-repo/diagnostics/catalogue'
 import { ScopeTree } from './ScopeTree'
@@ -114,38 +114,6 @@ type DiagnosticsProxy = {
     activeSource(componentType: string): Promise<RpcActiveSourceIdentity | undefined>
     source(fileId: string): Promise<{ fileId: string; text: string; contentHash: string }>
     catalogue(): Promise<RpcSourceCatalogue>
-}
-
-/** How to call whatever claims a path: the method, and whether the path travels as an argument. */
-type Setter = { method: DescribedMethod; generic: boolean }
-
-/**
- * The method that claims this path, when one does.
- *
- * A declaration and nothing else: `sets` is matched against the path the row draws, so a nested
- * `zones.top.setpoint` is reachable where the old naming rule could only ever see a top-level field.
- *
- * A per-field claim wins over a generic one where both exist, and it should: the specific method is
- * the one whose body was written for that value, with whatever clamp and interlock belong to it,
- * where the generic setter is the blunt instrument that happens to reach the same place.
- *
- * The parameter counts are what stop a row inventing arguments. A per-field setter takes exactly the
- * one value this row sends; a generic one takes the path and the value and nothing else. Anything
- * with a third parameter changes something the row cannot describe, and guessing it is how a console
- * writes something nobody asked for. A method with *no* described signature is not refused, though:
- * a peer serving no schema publishes its declarations and no parameter lists, and the declaration is
- * the claim - the count only refines it where the contract carries one.
- */
-const takesArguments = (method: DescribedMethod, count: number) => method.params === undefined || method.params.length === count
-
-const setterMethod = (path: string[], methods: DescribedMethod[]): Setter | undefined => {
-    const wanted = path.join('.')
-    const named = methods.find((method) => method.sets === wanted && takesArguments(method, 1))
-    if (named) return { method: named, generic: false }
-    // `sets: '*'` reaches this host only when it opted in - describe() withholds the claim
-    // otherwise - so an editor drawn from one is an editor the next call will actually accept.
-    const generic = methods.find((method) => method.sets === '*' && takesArguments(method, 2))
-    return generic ? { method: generic, generic: true } : undefined
 }
 
 /**
@@ -274,7 +242,6 @@ export const ComponentPanel = ({
     const [observing, setObserving] = useState(false)
     const [error, setError] = useState<string | null>(null)
     const [busy, setBusy] = useState(false)
-    const [failed, setFailed] = useState<{ path: string; message: string } | undefined>()
     /** The action waiting on somebody: what it is about, and what to call the row while asking. */
     const [asking, setAsking] = useState<{ action: DescribedAction; id: string; resource: readonly string[]; label?: string } | undefined>()
     const [sending, setSending] = useState(false)
@@ -297,7 +264,6 @@ export const ComponentPanel = ({
      * operator has one hand and can only be waiting on one of them.
      */
     const commanding = useCommanding()
-    const pending = commanding.pending
     const [period, setPeriod] = useState<number | undefined>(5000)
     const [preview, setPreview] = useState(rememberedPreview)
     const [pageSize, setPageSize] = useState(rememberedPageSize)
@@ -315,8 +281,6 @@ export const ComponentPanel = ({
     const status = useChannelFact(store, statusOf, undefined)
 
     const tree = useMemo(() => scopeTree(component, types), [component, types])
-    // Nothing under any root: a list of choices rather than a hierarchy to walk.
-    const flatScope = tree.length > 0 && tree.every((node) => !node.children.length)
 
     /**
      * State first where there is one, and otherwise whatever the tree begins with.
@@ -476,7 +440,6 @@ export const ComponentPanel = ({
     const moveRow = async (id: string, position: number, resource: readonly string[]) => {
         const link = server.current
         if (!link) return
-        setFailed(undefined)
         setRefused(undefined)
         try {
             const proxy = await link.proxy<{ $write(verb: string, resource: string, params: unknown): Promise<{ status: string }> }>(writeNamespace(namespace), peer)
@@ -495,7 +458,6 @@ export const ComponentPanel = ({
     const runAction = async (action: DescribedAction, id: string, resource: readonly string[], rest: readonly unknown[] = [], label?: string) => {
         const link = server.current
         if (!link) return
-        setFailed(undefined)
         setRefused(undefined)
         setSending(true)
         let refusal: string | undefined
@@ -507,17 +469,14 @@ export const ComponentPanel = ({
             })
             .catch((e) => {
                 refusal = (e as { message?: string }).message ?? String(e)
-                setFailed({ path: id, message: refusal })
                 setRefused(refusal)
             })
         setSending(false)
         /**
          * A refusal keeps the panel, and opens one where there was none.
          *
-         * `setFailed` alone is not enough and looked like it was: it is drawn by the value tree
-         * against a path, and a row's id is not one - so a `write` the server refused closed the
-         * form and said nothing at all, which is the worst thing this screen can do. The panel is
-         * where the action was answered, so it is where the answer belongs, and leaving it open
+         * The panel is where the action was answered, so it is where the answer belongs, and
+         * leaving it open
          * leaves the arguments in it: pressing again is another attempt at the same command,
          * under the same idempotency key, rather than a fresh one.
          */
@@ -575,22 +534,6 @@ export const ComponentPanel = ({
             setFetching(false)
         }
     }
-
-    /**
-     * One page of one collection, *named* rather than fetched.
-     *
-     * The panel says which question a grid is showing and the cache decides what asking it costs -
-     * which is the whole of the change: two panes on the same page ask it once, a page turned back
-     * to is answered from what is held, and a period tick over a page the component has published
-     * nothing since costs nothing at all.
-     */
-    const pageQuestion: PageQuestion = (resource, page, pageSize, filter, sort) => ({
-        target: peer,
-        namespace,
-        method: 'getList',
-        resource,
-        params: { pagination: { page, pageSize }, ...(filter ? { filter } : {}), ...(sort ? { sort } : {}) }
-    })
 
     /**
      * One branch of a tree resource, named the same way and answered from the same cache.
@@ -721,60 +664,15 @@ export const ComponentPanel = ({
         params: { ids: [...ids] }
     })
 
-    const scopedQuestion: ScopedQuestion = (resource, under, page, size, filter) => ({
+    const scopedQuestion: ScopedQuestion = (resource, under, page, size, filter, sort) => ({
         target: peer,
         namespace,
         method: 'getList',
         resource,
         // `recursive`, because this is the question that means *everything beneath this branch* -
         // which `getList` used to mean on its own and now says out loud.
-        params: { pagination: { page, pageSize: size }, recursive: true, ...(under !== undefined ? { under } : {}), ...(filter ? { filter } : {}) }
+        params: { pagination: { page, pageSize: size }, recursive: true, ...(under !== undefined ? { under } : {}), ...(filter ? { filter } : {}), ...(sort ? { sort } : {}) }
     })
-
-    /**
-     * State only: props are the host's inputs and are not the caller's to set. Depth is no longer
-     * the limit it was - a declaration can name `zones.top.setpoint` - so a path renders with an
-     * editor exactly when some method claims it, and without one when none does, which is the
-     * honest answer rather than a guess that ran out of rope.
-     */
-    const edit: EditAffordance = {
-        setterFor: (path) => {
-            const setter = setterMethod(path, methods)
-            if (!setter) return undefined
-            const { method, generic } = setter
-            return {
-                method: method.name,
-                call: async (value: unknown) => {
-                    const link = server.current
-                    if (!link) return
-                    setFailed(undefined)
-                    await commanding
-                        .run(path.join('.'), async (idempotencyKey) => {
-                            const proxy = await link.proxy<Record<string, (...args: unknown[]) => Promise<unknown>>>(namespace, peer)
-                            const commanded = proxy.$with(commandOptions(idempotencyKey, method.semantics))
-                            // The generic form is told where to write; the per-field one already knows.
-                            await (generic ? commanded[method.name](path, value) : commanded[method.name](value))
-                            // Nothing is written locally on success. The value on screen changes when
-                            // the component publishes its next snapshot, which is the only report that
-                            // the plant agrees - an optimistic row would show a setpoint the oven
-                            // refused. A subscribed leaf gets that by itself; a pulled page would not
-                            // until its period came round, so what this method claims to have changed
-                            // is asked again now. Waiting five seconds to learn whether the plant
-                            // accepted a command is the one place a period is plainly wrong.
-                            //
-                            // The path is the claim, and it came from a `sets` declaration - an editor
-                            // is drawn on this row precisely because some method said it writes here.
-                            // A page of a record elsewhere in the same component is not re-asked, which
-                            // is what the counter this replaces could not express.
-                            data.settled({ target: peer, namespace, resource: path })
-                        })
-                        .catch((e) => setFailed({ path: path.join('.'), message: (e as { message?: string }).message ?? String(e) }))
-                }
-            }
-        },
-        ...(pending ? { pending } : {}),
-        ...(failed ? { failed } : {})
-    }
 
     const stale = status === 'stale'
     const fullPageHref = `${window.location.pathname}?observe=${encodeURIComponent(peer)}&ns=${encodeURIComponent(namespace)}`
@@ -835,42 +733,18 @@ export const ComponentPanel = ({
             {!observing && !error && <p className="muted">Cached props and state, read without a call. Observe to subscribe.</p>}
             {observing && (
                 <div className="component-body">
-                    {/* A pane when the scope has depth, a selector when it has not.
-                     *
-                     * `props` and `state` are a real hierarchy and the tree is the way to read one.
-                     * A provider that has neither - an aspect provider, a rack, anything whose
-                     * scope is a list of the resources it serves - gets roots with no children,
-                     * and a tree of those is a flat list wearing a tree's clothes, holding a whole
-                     * column to do it. Derived from the scope rather than declared, because a list
-                     * of choices with nothing under them is something the console can see for
-                     * itself.
-                     *
-                     * The choice matters more on such a node, not less: on an aspect provider it is
-                     * the choice of *which structure* is being looked at, which is the most
-                     * consequential control on the screen. So it moves to the top of it. */}
-                    {flatScope ? (
-                        <div className="scope-pick">
-                            <label className="muted" htmlFor="scope-pick">
-                                scope
-                            </label>
-                            <select id="scope-pick" className="period" value={scope.join('.')} onChange={(event) => setScope(tree.find((node) => node.path.join('.') === event.target.value)?.path ?? scope)}>
-                                {tree.map((node) => (
-                                    <option key={node.path.join('.')} value={node.path.join('.')}>
-                                        {node.name}
-                                    </option>
-                                ))}
-                            </select>
+                    {/* One scoping language everywhere. A component serving only flat resources
+                        used to replace this tree with a select, making Stock on a depot look like a
+                        different kind of view. Depth changes how a scope expands, not how it is
+                        selected: a flat resource is a root branch whose rows still belong in the
+                        same value grid and preview beside it. */}
+                    <div className="scope-pane">
+                        <h4>
+                            scope
                             {addToWatch}
-                        </div>
-                    ) : (
-                        <div className="scope-pane">
-                            <h4>
-                                scope
-                                {addToWatch}
-                            </h4>
-                            <ScopeTree nodes={tree} selected={scope.join('.')} onSelect={setScope} />
-                        </div>
-                    )}
+                        </h4>
+                        <ScopeTree nodes={tree} selected={scope.join('.')} onSelect={setScope} />
+                    </div>
                     <div className="value-table">
                         <h4>
                             {listing ? listing.document.fileId : scope.join('.')}
@@ -887,7 +761,7 @@ export const ComponentPanel = ({
                             // channel of its own and can show nothing the grid could not.
                             <SourceView document={listing.document} bindings={listing.bindings} source={source} stale={stale} refusal={listing.refusal} />
                         ) : (
-                            <ValueGrid component={component} types={types} scope={scope} source={source} edit={edit} branchQuestion={branchQuestion} rowQuestion={rowQuestion} preview={preview}
+                            <ValueGrid component={component} types={types} scope={scope} branchQuestion={branchQuestion} rowQuestion={rowQuestion} preview={preview}
                                 onPreview={(on) => {
                                     setPreview(on)
                                     rememberPreview(on)
@@ -897,7 +771,7 @@ export const ComponentPanel = ({
                                 onPageSize={(size) => {
                                     setPageSize(size)
                                     rememberPageSize(size)
-                                }} objectAccess={objectAccess} cache={data} pageQuestion={pageQuestion} period={period} actionsFor={(path) => actionsFor(component, path, methods)} manyQuestion={manyQuestion} editable={(path) => canUpdate(writableIn(resourceAt(path)), resourceAt(path)?.presentation?.edit)} onEdit={(resource, id) => void openEditor(resource, id)} resourceAt={resourceAt} onAction={(action, id, resource, label) => pressAction(action, id, resource, label)} onMove={(id, position, resource) => void moveRow(id, position, resource)} />
+                                }} objectAccess={objectAccess} cache={data} period={period} actionsFor={(path) => actionsFor(component, path, methods)} manyQuestion={manyQuestion} editable={(path) => canUpdate(writableIn(resourceAt(path)), resourceAt(path)?.presentation?.edit)} onEdit={(resource, id) => void openEditor(resource, id)} onAction={(action, id, resource, label) => pressAction(action, id, resource, label)} onMove={(id, position, resource) => void moveRow(id, position, resource)} />
                         )}
                         {/* Under the rows rather than over them: the table is what somebody is
                             reading while they decide, and a form that covered it would hide the

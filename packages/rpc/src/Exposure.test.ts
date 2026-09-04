@@ -237,6 +237,10 @@ test('a peer that can do something dangerous says so, and says it loudest when n
     const client = new RpcClient('http://localhost:3944', { name: peer('asker3944'), defaultTarget: peer('elev3944') })
     const described = await (await client.proxy<Introspection>('msgrpc')).describe()
 
+    t.deepEqual(described.transports, [
+        { name: peer('elev3944'), protocol: 'socket.io', role: 'listen', endpoint: 'http://127.0.0.1:3944' }
+    ])
+
     // Gathered from what is exposed rather than from what somebody remembered to declare, which is
     // the point: forgetting is the failure this exists to catch.
     t.is(described.elevated?.length, 1)

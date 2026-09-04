@@ -51,7 +51,8 @@ time {
 }
 
 .search-head .control {
-    flex: 1 1 22rem;
+    flex: 0 1 32rem;
+    width: min(100%, 32rem);
     min-width: 0;
 }
 
@@ -378,6 +379,80 @@ textarea.control {
 
 .value-grid {
     min-width: 0;
+}
+
+.scope-summary {
+    margin: 0 0 0.65rem;
+    padding: 0.55rem 0.7rem;
+    border: 1px solid rgba(127, 127, 127, 0.25);
+    border-radius: 5px;
+    background: rgba(127, 127, 127, 0.045);
+}
+
+.scope-summary-head {
+    display: flex;
+    align-items: baseline;
+    gap: 0.55rem;
+    margin-bottom: 0.4rem;
+    font-size: 0.9em;
+}
+
+.scope-summary-fields {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.3rem 1.2rem;
+    margin: 0;
+    font-size: 0.82em;
+}
+
+.scope-summary-field {
+    display: flex;
+    gap: 0.4rem;
+    min-width: 0;
+}
+
+.scope-summary-field dd {
+    margin: 0;
+    max-width: 32rem;
+    overflow-wrap: anywhere;
+}
+
+.scope-summary-scalar {
+    font-size: 0.82em;
+    overflow-wrap: anywhere;
+}
+
+.network-result-notice {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 6px 12px;
+    margin: 8px 0;
+    padding: 8px 10px;
+    border: 1px solid var(--warn, #d7a83d);
+    border-radius: 5px;
+    font-size: 12px;
+}
+
+.network-result-notice details {
+    flex-basis: 100%;
+}
+
+.network-result-notice ul {
+    margin: 6px 0 0;
+    padding-left: 20px;
+}
+
+.branch-table-tools {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-bottom: 7px;
+}
+
+.branch-table-tools .filter-box {
+    flex: 1;
+    min-width: 8rem;
 }
 
 /* One box for the pane rather than one per collection: the subscribed fields and the paged rows
