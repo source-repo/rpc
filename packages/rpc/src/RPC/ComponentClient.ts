@@ -9,7 +9,17 @@ import {
     type RpcComponentSnapshot,
     type RpcProjectionEntry
 } from './Component.js'
-import type { RpcGetListParams, RpcGetListResult, RpcGetManyParams, RpcGetManyReferenceParams, RpcGetManyResult } from './DataProvider.js'
+import type {
+    RpcGetChildrenParams,
+    RpcGetChildrenResult,
+    RpcGetListParams,
+    RpcGetListResult,
+    RpcGetManyParams,
+    RpcGetManyReferenceParams,
+    RpcGetManyResult,
+    RpcGetOneParams,
+    RpcGetOneResult
+} from './DataProvider.js'
 import type { RpcCallOptions, RpcClientHandler, WithOptions } from './RpcClientHandler.js'
 import { snapshotKey, type RpcSnapshotPersistence } from './Snapshots.js'
 
@@ -212,10 +222,14 @@ export type RpcComponentProxy<T extends RpcComponentLike> = T & {
      * runs once, answers once, and leaves nothing behind on the server. See `DataProvider.ts`.
      */
     $data(method: 'getList', resource: readonly string[], params?: RpcGetListParams): Promise<RpcGetListResult>
+    /** One row by id, optionally richer than the row returned in a list. */
+    $data(method: 'getOne', resource: readonly string[], params: RpcGetOneParams): Promise<RpcGetOneResult>
     /** Rows by id, for a caller that already knows them - a page of foreign keys, in one call. */
     $data(method: 'getMany', resource: readonly string[], params: RpcGetManyParams): Promise<RpcGetManyResult>
     /** The rows of this resource pointing at one row of another: the orders of this customer. */
     $data(method: 'getManyReference', resource: readonly string[], params: RpcGetManyReferenceParams): Promise<RpcGetListResult>
+    /** One level of a tree resource: roots when parentId is absent, otherwise that branch's children. */
+    $data(method: 'getChildren', resource: readonly string[], params?: RpcGetChildrenParams): Promise<RpcGetChildrenResult>
     readonly [rpcComponent]: RpcComponentStore<ComponentProps<T>, ComponentState<T>>
 }
 

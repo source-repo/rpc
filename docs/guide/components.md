@@ -244,7 +244,8 @@ class Store extends RpcComponent<StoreProps, StoreState> implements RpcDataResou
 
 #### The provider contract, exactly
 
-`RpcDataResources` is the host-side DataProvider interface. A component implementing it supplies
+`RpcDataProvider` is the host-side DataProvider interface; `RpcDataResources` remains an exact
+compatibility alias. A component implementing it supplies
 both of these methods:
 
 - `dataResources()` synchronously declares the resources discoverable by `describe()`;
@@ -256,6 +257,7 @@ resource, and the minimum depends on what the resource claims to be:
 | Resource behaviour | Verbs it must declare and answer | What that enables |
 | --- | --- | --- |
 | flat rows in the generic grid | `getList` | paging, filtering and sorting |
+| browse-only tree | `getChildren`; `shape: 'tree'` | lazy branches, one level at a time |
 | scoped tree with leaf grid | `getList`, `getChildren`; `shape: 'tree'` | lazy branches and recursive leaves beneath a selected scope |
 | same-shape row preview and reference resolution | `getMany` | selected rows and many ids in one bounded call |
 | richer row preview | `getOne` | detail fields that need not be populated by `getList` |
@@ -263,9 +265,13 @@ resource, and the minimum depends on what the resource claims to be:
 
 The first row is the baseline DataProvider. Everything after it is an advertised capability. A
 preview is optional: a viewer prefers `getOne` when present and otherwise uses
-`getMany({ ids: [id] })`; a resource with neither remains listable but cannot open a row. A tree
-needs `getList` as well as `getChildren` because the latter enumerates branches while the former is
-the bounded, filtered question for every leaf in the selected scope.
+`getMany({ ids: [id] })`; a resource with neither remains listable but cannot open a row. A
+browse-only tree is valid. A tree used for a scoped leaf grid additionally needs `getList`, because
+`getChildren` enumerates one branch while recursive `getList` is the bounded, filtered question for
+every leaf in the selected scope. A viewer must not synthesize that answer by walking the tree.
+
+The complete normative contract—including request/result shapes, positional invariants, tree
+semantics, freshness claims and an implementer checklist—is [Data providers](./data-providers.md).
 
 Every declaration has a stable `path` and a truthful `verbs` list. A useful generic provider also
 declares `row`; without it values can still be shown, but columns, field filters, references and

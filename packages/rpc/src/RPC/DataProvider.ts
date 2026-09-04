@@ -793,7 +793,7 @@ export const componentDataResources = (_component?: { readonly props?: TypeNode;
 /**
  * The complete read protocol, in one place.
  *
- * `RpcDataResources` uses the unions because its dispatcher receives a verb at runtime. Generic
+ * `RpcDataProvider` uses the unions because its dispatcher receives a verb at runtime. Generic
  * callers use the indexed forms to keep a concrete verb paired with exactly its request and answer
  * shapes: `RpcDataParamsFor<'getMany'>` cannot accidentally become list parameters.
  */
@@ -810,7 +810,7 @@ export type RpcDataResultFor<M extends RpcDataMethod> = RpcDataContract[M]['resu
 export type RpcDataParams = RpcDataParamsFor<RpcDataMethod>
 export type RpcDataResult = RpcDataResultFor<RpcDataMethod>
 
-export interface RpcDataResources {
+export interface RpcDataProvider {
     /** What this component serves. Read at describe time, so it may change as the store does. */
     dataResources(): readonly RpcDataResource[]
     /**
@@ -832,6 +832,14 @@ export interface RpcDataResources {
         params: RpcDataParams
     ): RpcDataResult | Promise<RpcDataResult>
 }
+
+/**
+ * The original name of `RpcDataProvider`, kept because existing component implementations use it.
+ *
+ * `RpcDataProvider` names the concept; this alias names what a component contributes to describe().
+ * They are exactly the same contract, not a base and an extension.
+ */
+export type RpcDataResources = RpcDataProvider
 
 /**
  * Whether a component serves resources of its own.

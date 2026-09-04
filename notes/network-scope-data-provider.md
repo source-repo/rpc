@@ -62,15 +62,18 @@ not know. A distributed continuation cursor can follow after the model has been 
 ## Provider contract used by the view
 
 The network composition does not define a second DataProvider interface. Its normative input is
-`RpcDataResources` from `@source-repo/rpc`: `dataResources()` declares each resource and
+`RpcDataProvider` from `@source-repo/rpc` (with `RpcDataResources` retained as its compatibility
+alias): `dataResources()` declares each resource and
 `dataRequest()` answers exactly the verbs it declares. The method-to-parameter-to-result mapping is
-`RpcDataContract`.
+`RpcDataContract`. The complete implementer-facing specification, including the required positional,
+paging, filtering and tree invariants, is in [Data providers](../docs/guide/data-providers.md).
 
 For this view the capability profiles are precise:
 
 - a flat resource needs `getList`;
-- a tree needs `shape: 'tree'`, `getChildren` for branch discovery, and `getList` with
-  `under`/`recursive` for the leaf grid;
+- a browse-only tree needs `shape: 'tree'` and `getChildren` for branch discovery;
+- a tree participating in the scoped leaf grid additionally needs `getList` with
+  `under`/`recursive`; the viewer does not emulate it with an unbounded branch walk;
 - preview is optional and uses `getOne` when its detail is richer, otherwise `getMany([id])`;
 - `getManyReference`, row actions and writes are separately advertised extensions.
 

@@ -43,6 +43,7 @@ export default defineConfig({
                     // other half of what a peer offers - a device is as much what it holds as what
                     // it can be told to do, and a reader who stops early should have met both.
                     { text: 'State and observable components', link: '/guide/components' },
+                    { text: 'Data providers', link: '/guide/data-providers' },
                     { text: 'Commands', link: '/guide/commands' },
                     { text: 'Events and reconnection', link: '/guide/events' },
                     { text: 'Command authority', link: '/guide/authority' },
